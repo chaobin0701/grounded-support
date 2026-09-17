@@ -16,18 +16,29 @@ services:
       timeout: 3s
       retries: 20
 
+  migrate:
+    build: ./server
+    image: grounded-support-server:local
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: ./server
     image: grounded-support-server:local
     command: ["node", "dist/main.js"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
       PORT: "3000"
     volumes:
       - uploads:/data/uploads
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s

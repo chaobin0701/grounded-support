@@ -1,12 +1,16 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { Pool } from 'pg';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/node-postgres';
+import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
+import * as schema from './db/schema';
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   private readonly pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  readonly db = drizzle(this.pool, { schema });
 
   async onModuleInit(): Promise<void> {
-    await this.pool.query('SELECT 1');
+    await this.check();
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -14,6 +18,25 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   }
 
   async check(): Promise<void> {
-    await this.pool.query('SELECT 1');
+    await this.db.execute(sql`SELECT 1`);
+  }
+
+  query<T extends QueryResultRow>(statement: string, values: unknown[] = []): Promise<QueryResult<T>> {
+    return this.pool.query<T>(statement, values);
+  }
+
+  async transaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
