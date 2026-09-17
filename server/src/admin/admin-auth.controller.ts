@@ -16,6 +16,6 @@ export class AdminAuthController {
   @Get('me')
   @UseGuards(AdminAuthGuard)
   me(@Req() request: AdminRequest) {
-    return request.admin;
+    return this.auth.me(request.admin!);
   }
 }

@@ -8,7 +8,11 @@
     "db:migrate": "node-pg-migrate up -m migrations --no-verbose",
     "start:api": "node dist/main.js",
     "start:worker": "node dist/worker.js",
-    "admin:bootstrap": "node dist/admin/bootstrap.js"
+    "admin:bootstrap": "node dist/admin/bootstrap.js",
+    "samples:prepare": "node scripts/prepare-sample-knowledge.mjs",
+    "samples:reprocess": "node scripts/reprocess-sample-knowledge.mjs",
+    "documents:reindex": "node scripts/reindex-all-documents.mjs",
+    "eval:retrieval": "node scripts/evaluate-retrieval.mjs"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.2",

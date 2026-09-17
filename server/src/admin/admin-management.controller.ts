@@ -19,7 +19,7 @@ export class AdminManagementController {
   }
 
   @Get('roles')
-  @RequirePermission('roles.manage')
+  @RequirePermission('roles.manage', 'admins.manage')
   listRoles() {
     return this.management.listRoles();
   }

@@ -11,6 +11,7 @@ import {
   timestamp,
   uniqueIndex,
   varchar,
+  vector,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -92,6 +93,8 @@ export const documentChunks = pgTable('document_chunks', {
   content: text('content').notNull(),
   sourceStartLine: integer('source_start_line').notNull(),
   sourceEndLine: integer('source_end_line').notNull(),
+  embedding: vector('embedding', { dimensions: 2048 }),
+  embeddingModel: varchar('embedding_model', { length: 120 }),
 }, (table) => [
   uniqueIndex('document_chunks_document_id_ordinal_key').on(table.documentId, table.ordinal),
   index('document_chunks_document_id_idx').on(table.documentId),

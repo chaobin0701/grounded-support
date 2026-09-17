@@ -33,6 +33,12 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-doubao-embedding-vision-251215}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-1-flash-260910}
       PORT: "3000"
     volumes:
       - uploads:/data/uploads
@@ -51,6 +57,9 @@ services:
     command: ["node", "dist/worker.js"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-doubao-embedding-vision-251215}
     depends_on:
       api:
         condition: service_healthy

@@ -3,12 +3,14 @@ import { AdminModule } from '../admin/admin.module';
 import { DocumentController } from './document.controller';
 import { DocumentQueueService } from './document-queue.service';
 import { DocumentService } from './document.service';
+import { EmbeddingService } from './embedding.service';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
 
 @Module({
   imports: [AdminModule],
   controllers: [DocumentController, SearchController],
-  providers: [DocumentQueueService, DocumentService, SearchService],
+  providers: [DocumentQueueService, DocumentService, EmbeddingService, SearchService],
+  exports: [SearchService],
 })
 export class DocumentModule {}
