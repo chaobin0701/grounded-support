@@ -6,7 +6,7 @@ import { PgBoss } from 'pg-boss';
 import { DOCUMENT_INGEST_QUEUE } from './documents/document-queue.service';
 import { documentPath } from './documents/document-storage';
 import { EmbeddingService } from './documents/embedding.service';
-import { parseMarkdownDocument } from './documents/extract-markdown';
+import { parseDocument, ScannedPdfError } from './documents/extract-document';
 
 type DocumentJob = { documentId: number };
 const embeddings = new EmbeddingService();
@@ -26,9 +26,7 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
     if (bytes.length !== document.byte_size || createHash('sha256').update(bytes).digest('hex') !== document.sha256) {
       throw new Error('Stored file failed integrity check');
     }
-    const source = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-    const parsed = parseMarkdownDocument(source);
-    if (!parsed.extractedText || parsed.chunks.length === 0) throw new Error('No readable Markdown text');
+    const parsed = await parseDocument(bytes, document.storage_key);
     const vectors = embeddings.enabled
       ? await embeddings.embed(parsed.chunks.map((chunk) => `${chunk.headingPath}\n${chunk.content}`))
       : [];
@@ -72,8 +70,9 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
     }
   } catch (error) {
     await pool.query(
-      `UPDATE documents SET status = 'failed', error_message = 'Unable to process document', updated_at = now()
-       WHERE id = $1 AND archived_at IS NULL AND status = 'processing'`, [documentId],
+      `UPDATE documents SET status = 'failed', error_message = $2, updated_at = now()
+       WHERE id = $1 AND archived_at IS NULL AND status = 'processing'`,
+      [documentId, error instanceof ScannedPdfError ? error.message : 'Unable to process document'],
     );
     throw error;
   }
@@ -91,7 +90,7 @@ async function bootstrap(): Promise<void> {
   await boss.work<DocumentJob>(DOCUMENT_INGEST_QUEUE, async ([job]) => {
     await processDocument(pool, job.data.documentId);
   });
-  console.log(`Worker ready for Markdown extraction and chunking; embeddings ${embeddings.enabled ? 'enabled' : 'disabled'}.`);
+  console.log(`Worker ready for document extraction and chunking; embeddings ${embeddings.enabled ? 'enabled' : 'disabled'}.`);
 
   const shutdown = async (): Promise<void> => {
     await boss.stop();

@@ -7,9 +7,11 @@ import {
   jsonb,
   pgTable,
   primaryKey,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
+  uuid,
   varchar,
   vector,
 } from 'drizzle-orm/pg-core';
@@ -98,4 +100,83 @@ export const documentChunks = pgTable('document_chunks', {
 }, (table) => [
   uniqueIndex('document_chunks_document_id_ordinal_key').on(table.documentId, table.ordinal),
   index('document_chunks_document_id_idx').on(table.documentId),
+]);
+
+export const visitorSessions = pgTable('visitor_sessions', {
+  id: uuid('id').primaryKey(),
+  tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const mcpCapabilities = pgTable('mcp_capabilities', {
+  id: varchar('id', { length: 80 }).primaryKey(),
+  name: varchar('name', { length: 120 }).notNull(),
+  transport: varchar('transport', { length: 20 }).notNull(),
+  manifestKey: varchar('manifest_key', { length: 120 }).notNull().unique(),
+  enabled: boolean('enabled').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: bigint('updated_by', { mode: 'number' }).references(() => admins.id, { onDelete: 'set null' }),
+});
+
+export const mcpToolPolicies = pgTable('mcp_tool_policies', {
+  capabilityId: varchar('capability_id', { length: 80 }).notNull().references(() => mcpCapabilities.id, { onDelete: 'cascade' }),
+  toolName: varchar('tool_name', { length: 120 }).notNull(),
+  displayName: varchar('display_name', { length: 120 }).notNull(),
+  enabled: boolean('enabled').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: bigint('updated_by', { mode: 'number' }).references(() => admins.id, { onDelete: 'set null' }),
+}, (table) => [primaryKey({ columns: [table.capabilityId, table.toolName] })]);
+
+export const chatDisplaySettings = pgTable('chat_display_settings', {
+  id: smallint('id').primaryKey(),
+  publicProgressEnabled: boolean('public_progress_enabled').notNull().default(false),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedBy: bigint('updated_by', { mode: 'number' }).references(() => admins.id, { onDelete: 'set null' }),
+});
+
+export const conversations = pgTable('conversations', {
+  id: uuid('id').primaryKey(),
+  visitorSessionId: uuid('visitor_session_id').notNull().references(() => visitorSessions.id, { onDelete: 'cascade' }),
+  title: varchar('title', { length: 120 }).notNull().default('新对话'),
+  summary: text('summary').notNull().default(''),
+  summaryThroughMessageId: bigint('summary_through_message_id', { mode: 'number' }),
+  busyUntil: timestamp('busy_until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('conversations_visitor_updated_idx').on(table.visitorSessionId, table.updatedAt)]);
+
+export const conversationMessages = pgTable('conversation_messages', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  role: varchar('role', { length: 12 }).notNull(),
+  content: text('content').notNull(),
+  refused: boolean('refused'),
+  citations: jsonb('citations').notNull().default([]),
+  toolSteps: jsonb('tool_steps').notNull().default([]),
+  progressEvents: jsonb('progress_events').notNull().default([]),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('conversation_messages_conversation_id_idx').on(table.conversationId, table.id)]);
+
+export const chatTraces = pgTable('chat_traces', {
+  id: uuid('id').primaryKey(),
+  kind: varchar('kind', { length: 20 }).notNull().default('answer'),
+  conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
+  userMessageId: bigint('user_message_id', { mode: 'number' }).references(() => conversationMessages.id, { onDelete: 'set null' }),
+  question: text('question').notNull(),
+  contextSnapshot: jsonb('context_snapshot').notNull().default({}),
+  model: varchar('model', { length: 120 }),
+  rawModelOutput: text('raw_model_output'),
+  finalAnswer: text('final_answer'),
+  refused: boolean('refused'),
+  status: varchar('status', { length: 20 }).notNull(),
+  errorCode: varchar('error_code', { length: 80 }),
+  inputTokens: integer('input_tokens'),
+  outputTokens: integer('output_tokens'),
+  totalTokens: integer('total_tokens'),
+  durationMs: integer('duration_ms').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index('chat_traces_created_at_idx').on(table.createdAt),
+  index('chat_traces_conversation_id_idx').on(table.conversationId, table.createdAt),
 ]);

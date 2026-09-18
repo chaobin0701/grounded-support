@@ -50,6 +50,7 @@ export interface AdminItem {
 }
 
 export interface PermissionItem { code: string; description: string }
+export interface ChatDisplaySettings { publicProgressEnabled: boolean }
 export interface AuditItem {
   id: number;
   actorAdminId: number;
@@ -58,6 +59,53 @@ export interface AuditItem {
   targetId: string;
   details: Record<string, unknown>;
   createdAt: string;
+}
+
+export interface McpCapabilityItem {
+  id: string;
+  name: string;
+  transport: 'stdio' | 'http';
+  manifestKey: string;
+  enabled: boolean;
+  updatedAt: string;
+  tools: { name: string; displayName: string; enabled: boolean }[];
+}
+
+export interface ChatTraceItem {
+  id: string;
+  kind: 'answer' | 'summary';
+  conversationId: string | null;
+  question: string;
+  model: string | null;
+  finalAnswer: string | null;
+  refused: boolean | null;
+  status: 'completed' | 'failed';
+  errorCode: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number;
+  createdAt: string;
+}
+
+export interface ChatTraceDetail extends ChatTraceItem {
+  contextSnapshot: {
+    promptVersion?: string;
+    systemPrompt?: string;
+    previousSummary?: string;
+    messages?: { role: string; content: string }[];
+    summary?: string;
+    history?: { question: string; answer: string }[];
+    recentMessages?: { role: string; content: string }[];
+    retrievalQuery?: string;
+    sources?: { chunkId: number; title: string; heading: string; content: string }[];
+    dataSource?: string;
+    toolSteps?: { id: string; label: string; status: string; detail?: string; durationMs?: number }[];
+    categories?: { id: string; name: string }[];
+    products?: { id: string; name: string }[];
+    productDetails?: { id: string; name: string; specifications: Record<string, string> }[];
+  };
+  rawModelOutput: string | null;
 }
 
 export class AdminApiError extends Error {
@@ -114,4 +162,11 @@ export const adminApi = {
   assignRoles: (token: string, id: number, roleIds: number[]) => request(`/admins/${id}/roles`, { method: 'PATCH', body: JSON.stringify({ roleIds }) }, token),
   setStatus: (token: string, id: number, disabled: boolean) => request(`/admins/${id}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) }, token),
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
+  mcpCapabilities: (token: string) => request<McpCapabilityItem[]>('/mcp/capabilities', {}, token),
+  chatSettings: (token: string) => request<ChatDisplaySettings>('/chat-settings', {}, token),
+  setChatSettings: (token: string, publicProgressEnabled: boolean) => request<ChatDisplaySettings>('/chat-settings', { method: 'PATCH', body: JSON.stringify({ publicProgressEnabled }) }, token),
+  setMcpCapability: (token: string, id: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
+  setMcpTool: (token: string, id: string, name: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
+  chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
+  chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
 };

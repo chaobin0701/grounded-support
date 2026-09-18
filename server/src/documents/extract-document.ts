@@ -1,0 +1,99 @@
+import { extname } from 'node:path';
+import mammoth from 'mammoth';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { DocumentChunk, parseMarkdownDocument } from './extract-markdown';
+
+const MAX_EXTRACTED_CHARS = 100_000;
+const MAX_CHUNKS = 200;
+const MAX_PDF_PAGES = 100;
+const CHUNK_CHARS = 800;
+const OVERLAP_CHARS = 60;
+
+export class ScannedPdfError extends Error {
+  constructor() { super('PDF contains no selectable text; scanned PDFs are not supported'); }
+}
+
+type ParsedDocument = { extractedText: string; chunks: DocumentChunk[] };
+type TextBlock = { headingPath: string; content: string; sourceStartLine: number; sourceEndLine: number };
+
+function chunkPlainText(blocks: TextBlock[]): DocumentChunk[] {
+  const chunks: DocumentChunk[] = [];
+  let current: TextBlock | undefined;
+  const flush = () => {
+    if (current) chunks.push({ ...current, ordinal: chunks.length + 1 });
+    current = undefined;
+  };
+  for (const block of blocks) {
+    const characters = Array.from(block.content);
+    const pieces: string[] = [];
+    if (characters.length <= CHUNK_CHARS) pieces.push(block.content);
+    else {
+      for (let start = 0; start < characters.length;) {
+        const end = Math.min(start + CHUNK_CHARS, characters.length);
+        pieces.push(characters.slice(start, end).join('').trim());
+        if (end === characters.length) break;
+        start = Math.max(start + 1, end - OVERLAP_CHARS);
+      }
+    }
+    for (const piece of pieces.filter(Boolean)) {
+      if (current && (current.headingPath !== block.headingPath || Array.from(current.content).length + piece.length + 2 > CHUNK_CHARS)) flush();
+      current = current
+        ? { ...current, content: `${current.content}\n\n${piece}`, sourceEndLine: block.sourceEndLine }
+        : { ...block, content: piece };
+    }
+  }
+  flush();
+  return chunks;
+}
+
+function ensureLimits(parsed: ParsedDocument): ParsedDocument {
+  if (!parsed.extractedText.trim() || !parsed.chunks.length) throw new Error('Document contains no readable text');
+  if (Array.from(parsed.extractedText).length > MAX_EXTRACTED_CHARS || parsed.chunks.length > MAX_CHUNKS) {
+    throw new Error('Document exceeds text or chunk limit');
+  }
+  return parsed;
+}
+
+async function parseDocx(bytes: Buffer): Promise<ParsedDocument> {
+  const result = await mammoth.extractRawText({ buffer: bytes });
+  const paragraphs = result.value.split(/\n\s*\n/u).map((part) => part.replace(/\s+/gu, ' ').trim()).filter(Boolean);
+  return ensureLimits({
+    extractedText: paragraphs.join('\n\n'),
+    chunks: chunkPlainText(paragraphs.map((content, index) => ({
+      headingPath: '正文', content, sourceStartLine: index + 1, sourceEndLine: index + 1,
+    }))),
+  });
+}
+
+async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
+  const task = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true, disableFontFace: true });
+  try {
+    const document = await task.promise;
+    if (document.numPages > MAX_PDF_PAGES) throw new Error('PDF exceeds page limit');
+    const blocks: TextBlock[] = [];
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      const text = content.items.map((item) => ('str' in item ? `${item.str}${item.hasEOL ? '\n' : ''}` : ''))
+        .join('').replace(/[ \t]+/gu, ' ').replace(/\n+/gu, '\n').trim();
+      if (text) blocks.push({ headingPath: `第 ${pageNumber} 页`, content: text, sourceStartLine: pageNumber, sourceEndLine: pageNumber });
+      page.cleanup();
+    }
+    if (!blocks.length) throw new ScannedPdfError();
+    return ensureLimits({
+      extractedText: blocks.map((block) => `${block.headingPath}\n${block.content}`).join('\n\n'),
+      chunks: chunkPlainText(blocks),
+    });
+  } finally {
+    await task.destroy();
+  }
+}
+
+export async function parseDocument(bytes: Buffer, storageKey: string): Promise<ParsedDocument> {
+  switch (extname(storageKey)) {
+    case '.md': return ensureLimits(parseMarkdownDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
+    case '.docx': return parseDocx(bytes);
+    case '.pdf': return parsePdf(bytes);
+    default: throw new Error('Unsupported stored document format');
+  }
+}

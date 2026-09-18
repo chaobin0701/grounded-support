@@ -7,6 +7,8 @@ import { AdminManagementController } from './admin-management.controller';
 import { AdminManagementService } from './admin-management.service';
 import { PermissionGuard } from './permission.guard';
 import { DatabaseService } from '../database.service';
+import { McpCapabilityAdminController } from '../mcp/mcp-capability-admin.controller';
+import { McpCapabilityAdminService } from '../mcp/mcp-capability-admin.service';
 
 function jwtSecret(): string {
   const secret = process.env.JWT_SECRET;
@@ -18,8 +20,8 @@ function jwtSecret(): string {
 
 @Module({
   imports: [JwtModule.register({ secret: jwtSecret(), signOptions: { expiresIn: '15m' } })],
-  controllers: [AdminAuthController, AdminManagementController],
-  providers: [DatabaseService, AdminAuthService, AdminManagementService, AdminAuthGuard, PermissionGuard],
+  controllers: [AdminAuthController, AdminManagementController, McpCapabilityAdminController],
+  providers: [DatabaseService, AdminAuthService, AdminManagementService, McpCapabilityAdminService, AdminAuthGuard, PermissionGuard],
   exports: [JwtModule, DatabaseService, AdminAuthGuard, PermissionGuard],
 })
 export class AdminModule {}

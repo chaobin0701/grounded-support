@@ -13,25 +13,32 @@ export class DocumentService {
   constructor(private readonly database: DatabaseService, private readonly queue: DocumentQueueService) {}
 
   async upload(actorId: number, file: Express.Multer.File | undefined, rawTitle: string | undefined) {
-    if (!file) throw new BadRequestException('A Markdown file is required');
+    if (!file) throw new BadRequestException('A document file is required');
     const filename = basename(file.originalname).normalize('NFC');
-    if (!['.md', '.markdown'].includes(extname(filename).toLowerCase())) {
-      throw new BadRequestException('Only Markdown files are supported');
+    const extension = extname(filename).toLowerCase();
+    if (!['.md', '.markdown', '.docx', '.pdf'].includes(extension)) {
+      throw new BadRequestException('Only Markdown, DOCX, and PDF files are supported');
     }
     if (!filename || filename.length > 255 || file.size === 0 || file.size > MAX_BYTES) {
       throw new BadRequestException('Invalid filename or file size');
     }
-    let content: string;
-    try {
-      content = new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
-    } catch {
-      throw new BadRequestException('File must be UTF-8 text');
+    if (extension === '.md' || extension === '.markdown') {
+      let content: string;
+      try {
+        content = new TextDecoder('utf-8', { fatal: true }).decode(file.buffer);
+      } catch {
+        throw new BadRequestException('Markdown file must be UTF-8 text');
+      }
+      if (!content.trim() || content.includes('\0')) throw new BadRequestException('Markdown content is empty or invalid');
+    } else if (extension === '.pdf' && file.buffer.subarray(0, 5).toString() !== '%PDF-') {
+      throw new BadRequestException('Invalid PDF file');
+    } else if (extension === '.docx' && file.buffer.subarray(0, 4).toString('hex') !== '504b0304') {
+      throw new BadRequestException('Invalid DOCX file');
     }
-    if (!content.trim() || content.includes('\0')) throw new BadRequestException('Markdown content is empty or invalid');
 
-    const title = rawTitle?.trim() || filename.replace(/\.(md|markdown)$/i, '');
+    const title = rawTitle?.trim() || filename.replace(/\.(md|markdown|docx|pdf)$/i, '');
     if (title.length > 200) throw new BadRequestException('Title is too long');
-    const storageKey = `${randomUUID()}.md`;
+    const storageKey = `${randomUUID()}.${extension === '.markdown' ? 'md' : extension.slice(1)}`;
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     await mkdir(DOCUMENTS_DIR, { recursive: true });
     await writeFile(documentPath(storageKey), file.buffer, { flag: 'wx' });

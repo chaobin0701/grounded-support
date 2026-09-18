@@ -12,10 +12,14 @@
     "samples:prepare": "node scripts/prepare-sample-knowledge.mjs",
     "samples:reprocess": "node scripts/reprocess-sample-knowledge.mjs",
     "documents:reindex": "node scripts/reindex-all-documents.mjs",
-    "eval:retrieval": "node scripts/evaluate-retrieval.mjs"
+    "eval:retrieval": "node scripts/evaluate-retrieval.mjs",
+    "smoke:formats": "node scripts/smoke-document-formats.mjs"
   },
   "dependencies": {
     "@inquirer/prompts": "^8.7.2",
+    "@langchain/core": "^1.2.11",
+    "@langchain/openai": "^1.5.13",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@nestjs/common": "^12.0.3",
     "@nestjs/core": "^12.0.3",
     "@nestjs/jwt": "^12.0.2",
@@ -24,19 +28,24 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "drizzle-orm": "^0.45.2",
+    "langchain": "^1.5.11",
+    "mammoth": "^1.12.3",
     "markdown-it": "^15.0.2",
     "multer": "^2.4.0",
     "node-pg-migrate": "^9.0.0",
+    "pdfjs-dist": "^6.3.289",
     "pg": "^8.23.0",
     "pg-boss": "^12.33.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.20.3",
     "@types/pg": "^8.23.1",
+    "jszip": "^3.10.2",
     "typescript": "~5.9.3"
   }
 }

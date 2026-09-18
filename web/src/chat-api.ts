@@ -11,6 +11,37 @@ export interface ChatAnswer {
   answer: string;
   refused: boolean;
   citations: Citation[];
+  toolSteps?: ToolStep[];
+  progressEvents?: ProcessEvent[];
+}
+
+export interface ToolStep {
+  id: string;
+  label: string;
+  status: 'running' | 'completed';
+  detail?: string;
+  durationMs?: number;
+}
+export type CommentaryEvent = { id: string; type: 'commentary'; text: string };
+export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent;
+
+export interface PreviousTurn { question: string; answer: string }
+export interface ConversationItem {
+  id: string;
+  title: string;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+export interface ConversationMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  refused: boolean | null;
+  citations: Citation[];
+  toolSteps: ToolStep[];
+  progressEvents: ProcessEvent[];
+  createdAt: string;
 }
 
 export class ChatApiError extends Error {
@@ -19,15 +50,7 @@ export class ChatApiError extends Error {
   }
 }
 
-export async function askQuestion(question: string): Promise<ChatAnswer> {
-  const response = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question }),
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!response.ok) throw new ChatApiError(response.status);
-  const payload: unknown = await response.json();
+function parseAnswer(payload: unknown): ChatAnswer {
   if (!payload || typeof payload !== 'object') throw new Error('Invalid chat response');
   const answer = payload as Record<string, unknown>;
   if (typeof answer.answer !== 'string' || typeof answer.refused !== 'boolean' || !Array.isArray(answer.citations)) {
@@ -35,3 +58,89 @@ export async function askQuestion(question: string): Promise<ChatAnswer> {
   }
   return answer as unknown as ChatAnswer;
 }
+
+export async function askQuestion(question: string, history: PreviousTurn[] = []): Promise<ChatAnswer> {
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, history }),
+    signal: AbortSignal.timeout(65_000),
+  });
+  if (!response.ok) throw new ChatApiError(response.status);
+  return parseAnswer(await response.json());
+}
+
+export async function askQuestionStream(question: string, history: PreviousTurn[], onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
+  return streamAnswer('/api/chat/stream', { question, history }, onDelta, onStep, onCommentary);
+}
+
+export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
+  return streamAnswer(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, { question }, onDelta, onStep, onCommentary);
+}
+
+async function streamAnswer(path: string, body: object, onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(65_000),
+  });
+  if (!response.ok) throw new ChatApiError(response.status);
+  if (!response.body) throw new Error('Streaming is unavailable');
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalAnswer: ChatAnswer | undefined;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const event = frame.match(/^event: (.+)$/m)?.[1];
+        const data = frame.match(/^data: (.+)$/m)?.[1];
+        if (data && event === 'delta') {
+          const payload: unknown = JSON.parse(data);
+          if (!payload || typeof payload !== 'object' || typeof (payload as { text?: unknown }).text !== 'string') throw new Error('Invalid stream delta');
+          onDelta((payload as { text: string }).text);
+        } else if (data && event === 'step') {
+          const payload: unknown = JSON.parse(data);
+          if (!payload || typeof payload !== 'object' || typeof (payload as ToolStep).id !== 'string' || typeof (payload as ToolStep).label !== 'string') throw new Error('Invalid tool step');
+          onStep?.(payload as ToolStep);
+        } else if (data && event === 'commentary') {
+          const payload: unknown = JSON.parse(data);
+          if (!payload || typeof payload !== 'object' || (payload as CommentaryEvent).type !== 'commentary' || typeof (payload as CommentaryEvent).text !== 'string') throw new Error('Invalid commentary');
+          onCommentary?.(payload as CommentaryEvent);
+        } else if (data && event === 'error') {
+          throw new ChatApiError(503);
+        } else if (data && event === 'done') {
+          finalAnswer = parseAnswer(JSON.parse(data));
+        }
+        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) break;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  if (!finalAnswer) throw new Error('Stream ended without an answer');
+  return finalAnswer;
+}
+
+async function conversationRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const response = await fetch(`/api/chat/conversations${path}`, { ...options, cache: 'no-store' });
+  if (!response.ok) throw new ChatApiError(response.status);
+  return response.json() as Promise<T>;
+}
+
+export const conversationApi = {
+  list: () => conversationRequest<ConversationItem[]>(''),
+  create: () => conversationRequest<ConversationItem>('', { method: 'POST' }),
+  messages: (id: string) => conversationRequest<ConversationMessage[]>(`/${encodeURIComponent(id)}/messages`),
+  remove: async (id: string) => {
+    const response = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!response.ok) throw new ChatApiError(response.status);
+  },
+};
