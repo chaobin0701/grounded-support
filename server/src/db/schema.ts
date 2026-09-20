@@ -109,25 +109,6 @@ export const visitorSessions = pgTable('visitor_sessions', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
-export const mcpCapabilities = pgTable('mcp_capabilities', {
-  id: varchar('id', { length: 80 }).primaryKey(),
-  name: varchar('name', { length: 120 }).notNull(),
-  transport: varchar('transport', { length: 20 }).notNull(),
-  manifestKey: varchar('manifest_key', { length: 120 }).notNull().unique(),
-  enabled: boolean('enabled').notNull().default(false),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedBy: bigint('updated_by', { mode: 'number' }).references(() => admins.id, { onDelete: 'set null' }),
-});
-
-export const mcpToolPolicies = pgTable('mcp_tool_policies', {
-  capabilityId: varchar('capability_id', { length: 80 }).notNull().references(() => mcpCapabilities.id, { onDelete: 'cascade' }),
-  toolName: varchar('tool_name', { length: 120 }).notNull(),
-  displayName: varchar('display_name', { length: 120 }).notNull(),
-  enabled: boolean('enabled').notNull().default(false),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedBy: bigint('updated_by', { mode: 'number' }).references(() => admins.id, { onDelete: 'set null' }),
-}, (table) => [primaryKey({ columns: [table.capabilityId, table.toolName] })]);
-
 export const chatDisplaySettings = pgTable('chat_display_settings', {
   id: smallint('id').primaryKey(),
   publicProgressEnabled: boolean('public_progress_enabled').notNull().default(false),

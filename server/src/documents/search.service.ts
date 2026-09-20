@@ -7,6 +7,27 @@ import { fuseSearchResults, SearchHit } from './fuse-search-results';
 export class SearchService {
   constructor(private readonly database: DatabaseService, private readonly embeddings: EmbeddingService) {}
 
+  /**
+   * Agent-facing search boundary. The diagnostic endpoint keeps detailed
+   * lexical/vector fields for administrators, while tools only need the
+   * retrieved evidence and a small amount of retrieval metadata.
+   */
+  async searchForAgent(query: string, limit = 5): Promise<{
+    hits: SearchHit[];
+    retrievalMode: 'hybrid' | 'lexical-only';
+    vectorIndexedChunks: number;
+  }> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
+      throw new BadRequestException('topK must be an integer between 1 and 8');
+    }
+    const result = await this.diagnose(query, limit, undefined);
+    return {
+      hits: result.fusionResults,
+      retrievalMode: result.retrievalMode as 'hybrid' | 'lexical-only',
+      vectorIndexedChunks: result.vectorIndexedChunks,
+    };
+  }
+
   async diagnose(rawQuery: unknown, limit: number, rawMinScore: unknown) {
     if (typeof rawQuery !== 'string') throw new BadRequestException('q must be a search query');
     const query = rawQuery.trim();

@@ -6,7 +6,7 @@ export type Product = {
   specifications: Record<string, string>;
 };
 
-// Fictional catalogue for the MCP learning exercise; it is not commercial inventory.
+// Fictional catalogue used by the demo. It is not commercial inventory.
 export const categories = [
   { id: 'heating', name: '取暖电器' },
   { id: 'lighting', name: '照明电器' },

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceDetail, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type McpCapabilityItem, type PermissionItem, type RoleItem } from './admin-api';
+import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceDetail, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import './admin.css';
 
-type View = 'documents' | 'conversations' | 'mcp' | 'admins' | 'roles' | 'audit';
+type View = 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
 onMounted(() => { document.title = '暖巢电器 · 管理中心'; });
 const session = ref<{ token: string; me: AdminMe } | null>(null);
 const email = ref('');
@@ -27,7 +27,6 @@ const admins = ref<AdminItem[]>([]);
 const roles = ref<RoleItem[]>([]);
 const permissions = ref<PermissionItem[]>([]);
 const audits = ref<AuditItem[]>([]);
-const mcpCapabilities = ref<McpCapabilityItem[]>([]);
 const chatTraces = ref<ChatTraceItem[]>([]);
 const selectedTrace = ref<ChatTraceDetail | null>(null);
 const newAdmin = ref({ email: '', displayName: '', password: '', roleIds: [] as number[] });
@@ -38,7 +37,6 @@ const roleForm = ref({ id: null as number | null, code: '', name: '', permission
 const views: { id: View; label: string; permissions: string[] }[] = [
   { id: 'documents', label: '资料库', permissions: ['documents.read', 'documents.upload'] },
   { id: 'conversations', label: '对话轨迹', permissions: ['conversations.read'] },
-  { id: 'mcp', label: 'MCP 能力', permissions: ['mcp.read', 'mcp.manage'] },
   { id: 'admins', label: '管理员', permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', permissions: ['audit.read'] },
@@ -90,7 +88,6 @@ function signOut() {
   admins.value = [];
   roles.value = [];
   audits.value = [];
-  mcpCapabilities.value = [];
   chatTraces.value = [];
   selectedTrace.value = null;
   error.value = '';
@@ -130,7 +127,6 @@ async function refresh() {
     if (view.value === 'admins') [admins.value, roles.value] = await Promise.all([adminApi.admins(token), adminApi.roles(token)]);
     if (view.value === 'roles') [roles.value, permissions.value] = await Promise.all([adminApi.roles(token), adminApi.permissions(token)]);
     if (view.value === 'audit') audits.value = await adminApi.audit(token);
-    if (view.value === 'mcp') mcpCapabilities.value = await adminApi.mcpCapabilities(token);
     if (view.value === 'conversations' && can('conversations.read')) chatTraces.value = await adminApi.chatTraces(token);
   } catch (cause) {
     error.value = describeError(cause);
@@ -236,22 +232,6 @@ async function toggleAdmin(item: AdminItem) {
   await action((token) => adminApi.setStatus(token, item.id, disable), disable ? '管理员已停用。' : '管理员已启用。', async () => {
     if (session.value) admins.value = await adminApi.admins(session.value.token);
   });
-}
-
-async function toggleMcpCapability(item: McpCapabilityItem) {
-  const enabled = !item.enabled;
-  await action((token) => adminApi.setMcpCapability(token, item.id, enabled),
-    enabled ? 'MCP 能力已启用。' : 'MCP 能力已关闭；后续工具调用将被拒绝。', async () => {
-      if (session.value) mcpCapabilities.value = await adminApi.mcpCapabilities(session.value.token);
-    });
-}
-
-async function toggleMcpTool(item: McpCapabilityItem, tool: McpCapabilityItem['tools'][number]) {
-  const enabled = !tool.enabled;
-  await action((token) => adminApi.setMcpTool(token, item.id, tool.name, enabled),
-    enabled ? '工具已授权。' : '工具已停用；后续调用将被拒绝。', async () => {
-      if (session.value) mcpCapabilities.value = await adminApi.mcpCapabilities(session.value.token);
-    });
 }
 
 function editRole(item?: RoleItem) {
@@ -382,17 +362,6 @@ function sourceLocation(filename: string, start: number, end: number): string {
             <details v-if="selectedTrace.rawModelOutput" class="admin-details"><summary>查看模型原始输出</summary><pre>{{ selectedTrace.rawModelOutput }}</pre></details>
             <p v-if="selectedTrace.errorCode" class="admin-error">失败代码：{{ selectedTrace.errorCode }}</p>
           </section>
-        </section>
-
-        <section v-else-if="view === 'mcp'">
-          <div class="admin-heading"><div><p class="section-label">能力治理</p><h1>MCP 能力</h1><p>管理已审核的 MCP 服务与工具。模型只能选择本轮获准的工具，调用前后端会再次校验。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></div>
-          <div v-for="item in mcpCapabilities" :key="item.id" class="mcp-capability">
-            <div class="mcp-capability-head"><div><h2>{{ item.name }}</h2><p>{{ item.id }} · 内置 {{ item.transport }} 服务 · {{ item.manifestKey }}</p></div><div class="mcp-capability-state"><span class="admin-status" :class="item.enabled ? 'ready' : 'archived'">{{ item.enabled ? '已启用' : '已关闭' }}</span><button v-if="can('mcp.manage')" type="button" :disabled="busy" @click="toggleMcpCapability(item)">{{ item.enabled ? '关闭能力' : '启用能力' }}</button></div></div>
-            <div class="admin-section-head"><h3>工具授权</h3><span>{{ item.tools.filter((tool) => tool.enabled).length }} / {{ item.tools.length }} 已授权</span></div>
-            <div v-for="tool in item.tools" :key="tool.name" class="mcp-tool-row"><div><strong>{{ tool.displayName }}</strong><small>{{ tool.name }}</small></div><span class="admin-status" :class="item.enabled && tool.enabled ? 'ready' : 'archived'">{{ !item.enabled ? '随服务关闭' : tool.enabled ? '可供 Agent 使用' : '已停用' }}</span><button v-if="can('mcp.manage')" type="button" :disabled="busy" @click="toggleMcpTool(item, tool)">{{ tool.enabled ? '停用工具' : '授权工具' }}</button></div>
-          </div>
-          <p v-if="!mcpCapabilities.length && !busy" class="admin-muted">尚无已登记的 MCP 能力。</p>
-          <p class="admin-muted">本阶段仅管理内置服务；工具发现审批和外部服务接入尚未开放。</p>
         </section>
 
         <section v-else-if="view === 'admins'">

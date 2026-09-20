@@ -7,14 +7,13 @@ import { ChatRateLimitService } from './chat-rate-limit.service';
 import { ChatService } from './chat.service';
 import { LlmService } from './llm.service';
 import { ConversationService } from './conversation.service';
-import { ProductMcpService } from './product-mcp.service';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
-import { McpCapabilityGateway } from '../mcp/mcp-capability.gateway';
 import { AiModule } from '../ai/ai.module';
+import { ToolsModule } from '../ai/tools/tools.module';
 
 @Module({
-  imports: [DocumentModule, AdminModule, AiModule],
+  imports: [DocumentModule, AdminModule, AiModule, ToolsModule],
   controllers: [ChatController, AdminChatTraceController],
-  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ProductMcpService, McpCapabilityGateway, ChatOrchestratorService],
+  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ChatOrchestratorService],
 })
 export class ChatModule {}

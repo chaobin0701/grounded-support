@@ -150,19 +150,17 @@ curl -X POST http://localhost:8081/api/chat \
 
 当前普通 JSON 接口是核心实现；第六阶段增加了独立 SSE 传输层。后端先完成工具调用、最终答案和来源校验，再把已校验正文分段发送，因此这是答案传输流式化，不是模型私有思考过程，也不会公开工具过程。模型调用遇到网络错误、限流、5xx 或空响应最多重试一次；容器日志不记密钥、请求正文或供应商原始响应。
 
-### Mock 产品 MCP
+### ToolRegistry 与本地工具
 
-`server/src/mcp/product-server.ts` 使用官方 MCP TypeScript SDK 提供三个只读工具：`list_product_categories`、`list_products`、`get_product_detail`。它以 stdio 子进程运行，不开放网络端口；`ProductMcpService` 通过官方客户端连接，且只给子进程最小环境变量，不传数据库或模型密钥。五款产品和三个分类都写在 `server/src/mcp/mock-products.ts`，均为虚构演示数据，不对应真实库存、售价或购买服务。
+当前不引入 LangChain Agent，也暂不启用 MCP。`ChatOrchestratorService` 自己实现“模型规划 JSON → 后端校验 → `ToolRegistry` 查找工具 → 执行工具 → 把结果交回模型”的循环，最多六次调用。
 
-当前不引入 LangChain Agent。`ChatOrchestratorService` 自己实现“模型规划 JSON → 后端校验 → 执行工具 → 把结果交回模型”的循环，最多六次调用。后端固定注册资料检索和本地产品 MCP 工具，不使用关键词路由。模型也可以直接请求最终回答，但最终回答必须通过来源 ID 校验；MCP 和资料返回值都是不可信数据，不能被当作指令执行。
+`server/src/ai/tools/` 提供统一的 `AgentTool`、`ToolContext`、`ToolResult` 和 `ToolRegistry`。当前注册的工具包括 `search_knowledge`、`list_product_categories`、`list_products`、`get_product_detail`。产品目录由进程内的 `ProductCatalogService` 读取虚构数据，不对应真实库存、售价或购买服务。
 
-### MCP 能力管理（第一阶段）
+工具负责执行能力，不负责决定是否调用、生成最终答案或绕过引用校验。模型和工具返回值都被视为不可信数据，最终回答仍必须通过来源 ID 或已取得的产品 ID 校验。本阶段移除了 MCP 子进程、MCP 客户端和后台 MCP 管理页面；未来若重新接入 MCP，可通过 `McpToolAdapter implements AgentTool` 接入同一个 Registry，而不修改 Agent 主流程。
 
-内置 `product_catalog` 能力及其三个工具由迁移 `0009_mcp_capability_policy.sql` 登记，初始保持启用。具有 `mcp.read` 或 `mcp.manage` 权限的管理员可在后台“MCP 能力”查看状态；只有 `mcp.manage` 可启停整项能力或单个工具，变更写入管理员审计日志。对应 API 为 `GET /api/admin/mcp/capabilities`、`PATCH /api/admin/mcp/capabilities/:id` 和 `PATCH /api/admin/mcp/capabilities/:id/tools/:name`，PATCH 请求体为 `{"enabled":true|false}`。
+旧迁移 `0009_mcp_capability_policy.sql` 保留在迁移历史中，但当前 Drizzle schema 和运行时代码不再使用这些表；暂不执行删除表迁移，避免破坏已有数据库的回滚和后续学习记录。
 
-此阶段不提供远程 MCP 配置，也不允许管理员填写命令、URL 或密钥。产品 MCP 仅作为固定的本地 stdio 学习实现；后台 MCP 页面只用于查看当前内置能力，后续可移除动态开关。
-
-本地验证：在 `server/` 运行 `npm test`（含真实 stdio MCP 客户端测试）；启动服务后分别询问资料政策和产品目录，再在同一会话追问规格。不要将 mock 产品目录当作真实商品信息。
+本地验证：在 `server/` 运行 `npm test`，然后启动服务后分别询问资料政策和产品目录，再在同一会话追问规格。不要将 mock 产品目录当作真实商品信息。
 
 单 API 实例目前按访客 IP 每分钟最多 10 次问答、全局最多 5 个并发请求；经本项目 Nginx 转发时使用代理传来的真实 IP。限流保存在进程内，多实例部署需换成 Redis 等共享限流。不要把真实客户隐私或生产资料上传到此学习项目；问题、有限历史和检索片段会发送到所配置的火山方舟服务。
 

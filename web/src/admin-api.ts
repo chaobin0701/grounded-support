@@ -60,16 +60,6 @@ export interface AuditItem {
   createdAt: string;
 }
 
-export interface McpCapabilityItem {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'http';
-  manifestKey: string;
-  enabled: boolean;
-  updatedAt: string;
-  tools: { name: string; displayName: string; enabled: boolean }[];
-}
-
 export interface ChatTraceItem {
   id: string;
   kind: 'answer' | 'summary';
@@ -161,9 +151,6 @@ export const adminApi = {
   assignRoles: (token: string, id: number, roleIds: number[]) => request(`/admins/${id}/roles`, { method: 'PATCH', body: JSON.stringify({ roleIds }) }, token),
   setStatus: (token: string, id: number, disabled: boolean) => request(`/admins/${id}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) }, token),
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
-  mcpCapabilities: (token: string) => request<McpCapabilityItem[]>('/mcp/capabilities', {}, token),
-  setMcpCapability: (token: string, id: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
-  setMcpTool: (token: string, id: string, name: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
 };
