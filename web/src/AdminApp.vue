@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue';
-import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatDisplaySettings, type ChatTraceDetail, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type McpCapabilityItem, type PermissionItem, type RoleItem } from './admin-api';
+import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceDetail, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type McpCapabilityItem, type PermissionItem, type RoleItem } from './admin-api';
 import './admin.css';
 
-type View = 'documents' | 'conversations' | 'mcp' | 'settings' | 'admins' | 'roles' | 'audit';
+type View = 'documents' | 'conversations' | 'mcp' | 'admins' | 'roles' | 'audit';
 onMounted(() => { document.title = '暖巢电器 · 管理中心'; });
 const session = ref<{ token: string; me: AdminMe } | null>(null);
 const email = ref('');
@@ -28,7 +28,6 @@ const roles = ref<RoleItem[]>([]);
 const permissions = ref<PermissionItem[]>([]);
 const audits = ref<AuditItem[]>([]);
 const mcpCapabilities = ref<McpCapabilityItem[]>([]);
-const chatSettings = ref<ChatDisplaySettings | null>(null);
 const chatTraces = ref<ChatTraceItem[]>([]);
 const selectedTrace = ref<ChatTraceDetail | null>(null);
 const newAdmin = ref({ email: '', displayName: '', password: '', roleIds: [] as number[] });
@@ -40,7 +39,6 @@ const views: { id: View; label: string; permissions: string[] }[] = [
   { id: 'documents', label: '资料库', permissions: ['documents.read', 'documents.upload'] },
   { id: 'conversations', label: '对话轨迹', permissions: ['conversations.read'] },
   { id: 'mcp', label: 'MCP 能力', permissions: ['mcp.read', 'mcp.manage'] },
-  { id: 'settings', label: '访客展示', permissions: ['chat.settings.read', 'chat.settings.manage'] },
   { id: 'admins', label: '管理员', permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', permissions: ['audit.read'] },
@@ -93,7 +91,6 @@ function signOut() {
   roles.value = [];
   audits.value = [];
   mcpCapabilities.value = [];
-  chatSettings.value = null;
   chatTraces.value = [];
   selectedTrace.value = null;
   error.value = '';
@@ -134,7 +131,6 @@ async function refresh() {
     if (view.value === 'roles') [roles.value, permissions.value] = await Promise.all([adminApi.roles(token), adminApi.permissions(token)]);
     if (view.value === 'audit') audits.value = await adminApi.audit(token);
     if (view.value === 'mcp') mcpCapabilities.value = await adminApi.mcpCapabilities(token);
-    if (view.value === 'settings') chatSettings.value = await adminApi.chatSettings(token);
     if (view.value === 'conversations' && can('conversations.read')) chatTraces.value = await adminApi.chatTraces(token);
   } catch (cause) {
     error.value = describeError(cause);
@@ -255,15 +251,6 @@ async function toggleMcpTool(item: McpCapabilityItem, tool: McpCapabilityItem['t
   await action((token) => adminApi.setMcpTool(token, item.id, tool.name, enabled),
     enabled ? '工具已授权。' : '工具已停用；后续调用将被拒绝。', async () => {
       if (session.value) mcpCapabilities.value = await adminApi.mcpCapabilities(session.value.token);
-    });
-}
-
-async function togglePublicProgress() {
-  if (!chatSettings.value) return;
-  const enabled = !chatSettings.value.publicProgressEnabled;
-  await action((token) => adminApi.setChatSettings(token, enabled),
-    enabled ? '新对话将展示公开播报与工具步骤。' : '新对话将只展示最终回答。', async () => {
-      if (session.value) chatSettings.value = await adminApi.chatSettings(session.value.token);
     });
 }
 
@@ -390,7 +377,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
             <div v-if="selectedTrace.contextSnapshot.summary || selectedTrace.contextSnapshot.previousSummary" class="trace-field"><h3>本会话摘要</h3><p>{{ selectedTrace.contextSnapshot.summary || selectedTrace.contextSnapshot.previousSummary }}</p></div>
             <details v-if="selectedTrace.contextSnapshot.history?.length || selectedTrace.contextSnapshot.recentMessages?.length || selectedTrace.contextSnapshot.messages?.length" class="admin-details"><summary>查看传入的会话上下文</summary><pre>{{ JSON.stringify(selectedTrace.contextSnapshot.history || selectedTrace.contextSnapshot.recentMessages || selectedTrace.contextSnapshot.messages, null, 2) }}</pre></details>
             <details v-if="selectedTrace.contextSnapshot.sources?.length" class="admin-details"><summary>查看当轮检索片段（{{ selectedTrace.contextSnapshot.sources.length }}）</summary><div v-for="source in selectedTrace.contextSnapshot.sources" :key="source.chunkId" class="admin-chunk"><strong>#{{ source.chunkId }} · {{ source.title }}</strong><small>{{ source.heading }}</small><p>{{ source.content }}</p></div></details>
-            <details v-if="selectedTrace.contextSnapshot.toolSteps?.length" class="admin-details"><summary>查看 MCP 工具调用（{{ selectedTrace.contextSnapshot.toolSteps.length }}）</summary><div v-for="step in selectedTrace.contextSnapshot.toolSteps" :key="step.id" class="admin-chunk"><strong>{{ step.label }}</strong><small>{{ step.detail || '已完成' }} · {{ step.durationMs ?? '—' }} ms</small></div></details>
+            <details v-if="selectedTrace.contextSnapshot.toolCalls?.length" class="admin-details"><summary>查看工具调用（{{ selectedTrace.contextSnapshot.toolCalls.length }}）</summary><div v-for="(call, index) in selectedTrace.contextSnapshot.toolCalls" :key="`${call.name}-${index}`" class="admin-chunk"><strong>{{ call.name }}</strong><small>{{ call.ok ? '已完成' : '失败' }} · {{ call.durationMs }} ms</small><pre>{{ JSON.stringify(call.arguments, null, 2) }}</pre></div></details>
             <details v-if="selectedTrace.contextSnapshot.productDetails?.length" class="admin-details"><summary>查看本轮产品数据（mock）</summary><pre>{{ JSON.stringify(selectedTrace.contextSnapshot.productDetails, null, 2) }}</pre></details>
             <details v-if="selectedTrace.rawModelOutput" class="admin-details"><summary>查看模型原始输出</summary><pre>{{ selectedTrace.rawModelOutput }}</pre></details>
             <p v-if="selectedTrace.errorCode" class="admin-error">失败代码：{{ selectedTrace.errorCode }}</p>
@@ -406,14 +393,6 @@ function sourceLocation(filename: string, start: number, end: number): string {
           </div>
           <p v-if="!mcpCapabilities.length && !busy" class="admin-muted">尚无已登记的 MCP 能力。</p>
           <p class="admin-muted">本阶段仅管理内置服务；工具发现审批和外部服务接入尚未开放。</p>
-        </section>
-
-        <section v-else-if="view === 'settings'">
-          <div class="admin-heading"><div><p class="section-label">访客体验</p><h1>过程展示</h1><p>决定是否向访客公开 Agent 生成的简短播报及真实工具步骤，不影响 MCP 能力本身。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></div>
-          <div v-if="chatSettings" class="mcp-capability">
-            <div class="mcp-capability-head"><div><h2>公开过程播报</h2><p>开启后，新一轮提问会按顺序展示经检查的 AI 播报和工具调用；回答结束自动折叠。</p></div><div class="mcp-capability-state"><span class="admin-status" :class="chatSettings.publicProgressEnabled ? 'ready' : 'archived'">{{ chatSettings.publicProgressEnabled ? '向访客展示' : '仅展示最终回答' }}</span><button v-if="can('chat.settings.manage')" type="button" :disabled="busy" @click="togglePublicProgress">{{ chatSettings.publicProgressEnabled ? '关闭公开过程' : '开启公开过程' }}</button></div></div>
-            <p class="admin-muted">播报必须来自模型当轮工具调用消息；模型未生成合适播报时不会补写模板。内部轨迹仍保留供管理员检查。</p>
-          </div>
         </section>
 
         <section v-else-if="view === 'admins'">

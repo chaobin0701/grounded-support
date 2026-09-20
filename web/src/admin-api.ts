@@ -50,7 +50,6 @@ export interface AdminItem {
 }
 
 export interface PermissionItem { code: string; description: string }
-export interface ChatDisplaySettings { publicProgressEnabled: boolean }
 export interface AuditItem {
   id: number;
   actorAdminId: number;
@@ -100,7 +99,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
     retrievalQuery?: string;
     sources?: { chunkId: number; title: string; heading: string; content: string }[];
     dataSource?: string;
-    toolSteps?: { id: string; label: string; status: string; detail?: string; durationMs?: number }[];
+    toolCalls?: { name: string; arguments: Record<string, unknown>; ok: boolean; durationMs: number }[];
     categories?: { id: string; name: string }[];
     products?: { id: string; name: string }[];
     productDetails?: { id: string; name: string; specifications: Record<string, string> }[];
@@ -163,8 +162,6 @@ export const adminApi = {
   setStatus: (token: string, id: number, disabled: boolean) => request(`/admins/${id}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) }, token),
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
   mcpCapabilities: (token: string) => request<McpCapabilityItem[]>('/mcp/capabilities', {}, token),
-  chatSettings: (token: string) => request<ChatDisplaySettings>('/chat-settings', {}, token),
-  setChatSettings: (token: string, publicProgressEnabled: boolean) => request<ChatDisplaySettings>('/chat-settings', { method: 'PATCH', body: JSON.stringify({ publicProgressEnabled }) }, token),
   setMcpCapability: (token: string, id: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
   setMcpTool: (token: string, id: string, name: string, enabled: boolean) => request(`/mcp/capabilities/${encodeURIComponent(id)}/tools/${encodeURIComponent(name)}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),

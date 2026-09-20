@@ -4,7 +4,7 @@
 
 ## 当前阶段
 
-目前有可运行的 Vue 访客问答页、NestJS API、独立 Worker、PostgreSQL + pgvector、管理员权限管理，以及 Markdown、DOCX、文字版 PDF 上传、异步切片和管理员检索诊断。回答模型通过 LangChain.js 调用；同一浏览器可创建多段独立会话，管理员可查看受权限保护的回答轨迹。
+目前有可运行的 Vue 访客问答页、NestJS API、独立 Worker、PostgreSQL + pgvector、管理员权限管理，以及 Markdown、DOCX、文字版 PDF 上传、异步切片和管理员检索诊断。回答模型通过 OpenAI-compatible HTTP 接口调用；同一浏览器可创建多段独立会话，管理员可查看受权限保护的回答轨迹。
 
 ## 目录
 
@@ -124,7 +124,7 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 
 ## 访客问答 API
 
-在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `@langchain/openai` 的 `ChatOpenAI` 通过火山方舟兼容接口调用。`LLM_MODEL` 默认 `deepseek-v4-1-flash-260910`，也可设置为 `glm-5-3-flash-260828`；模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
+在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。`LLM_MODEL` 默认 `deepseek-v4-1-flash-260910`，也可设置为 `glm-5-3-flash-260828`；模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
 
 访客可直接打开 `http://localhost:8081` 使用 Vue 页面。页面可新建、切换和删除多段对话；同一浏览器刷新后可恢复。后端用 180 天有效的 `HttpOnly` 匿名 Cookie 将会话归属到当前浏览器，不提供登录或跨设备找回；清除 Cookie 后旧记录无法找回。删除对话会级联删除消息与调用轨迹。每段对话的摘要和历史严格独立，新会话从空上下文开始。
 
@@ -135,7 +135,7 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 | GET / POST | `/api/chat/conversations` | 列出 / 新建当前浏览器的会话 |
 | GET | `/api/chat/conversations/:id/messages` | 查看本会话完整消息 |
 | POST | `/api/chat/conversations/:id/messages` | 在本会话提问，返回 JSON |
-| POST | `/api/chat/conversations/:id/messages/stream` | 在本会话提问，返回 SSE |
+| POST | `/api/chat/conversations/:id/messages/stream` | 在本会话提问，返回已校验答案的 SSE 分段 |
 | DELETE | `/api/chat/conversations/:id` | 删除本会话、消息与轨迹 |
 
 以上接口均用匿名 Cookie 校验会话归属；其他浏览器请求该会话 ID 返回 404。一次会话同时只允许一个未完成回答。
@@ -146,27 +146,23 @@ curl -X POST http://localhost:8081/api/chat \
   -d '{"question":"暖风机保修多久？"}'
 ```
 
-请求问题限 2–200 个字符；回答返回 `answer`、`refused`、`citations`，启用公开过程时还会返回 `toolSteps` 与按时序排列的 `progressEvents`。资料问答的每条引用含资料 ID、片段 ID、资料名与出处位置；访客页面暂不显示文件名式引用，因为访客无法打开原文件，管理员仍可在调用轨迹里检查。Agent 的资料检索工具只返回未下架且已处理好的资料，每次最多五个片段；模型若拒答、没有有效来源 ID 或输出格式不合约定，API 返回“无法确定，建议联系人工。”。模型给出的引用 ID 必须属于本轮工具结果，但这只能验证引用来源，**不能自动证明回答的每一句都受资料支持**，重要政策仍需人工验收。模型无法查询真实订单或执行退款。
+请求问题限 2–200 个字符；回答返回 `answer`、`refused`、`citations`。后端自己的编排器最多执行六次工具调用，每次都校验工具名和参数；模型若拒答、没有有效来源 ID 或输出格式不合约定，API 返回“无法确定，建议联系人工。”。模型给出的引用 ID 必须属于本轮工具结果，但这只能验证引用来源，**不能自动证明回答的每一句都受资料支持**，重要政策仍需人工验收。模型无法查询真实订单或执行退款。
 
-Vue 页面使用会话专属 SSE 接口：`commentary` 传送模型在工具调用消息中实际生成、经限制检查的公开播报；`step` 报告真实工具开始/完成；`delta` 分段显示已校验的最终正文；`done` 给出结果。公开过程开启时，提问中按顺序展开播报，回答结束后默认折叠，可点击“查看公开过程与工具调用”回看。公开播报不是私有推理；模型未生成或未通过检查时不会补写模板。关闭公开过程时访客只看到最终回答，管理员仍可查看内部轨迹。为避免展示未经验证的答案，最终正文仍须先完成生成与来源校验，随后才分段发送；因此正文分段不会缩短模型生成时间。流已开始后的失败以 SSE `error` 事件返回；流开始前的限流仍用 HTTP 429。非 Agent 的模型请求对网络错误、限流、5xx 或空响应最多重试一次；Agent 模型请求不自动重试，以免重复执行工具。容器日志不记密钥、请求正文或供应商原始响应。
+当前普通 JSON 接口是核心实现；第六阶段增加了独立 SSE 传输层。后端先完成工具调用、最终答案和来源校验，再把已校验正文分段发送，因此这是答案传输流式化，不是模型私有思考过程，也不会公开工具过程。模型调用遇到网络错误、限流、5xx 或空响应最多重试一次；容器日志不记密钥、请求正文或供应商原始响应。
 
 ### Mock 产品 MCP
 
 `server/src/mcp/product-server.ts` 使用官方 MCP TypeScript SDK 提供三个只读工具：`list_product_categories`、`list_products`、`get_product_detail`。它以 stdio 子进程运行，不开放网络端口；`ProductMcpService` 通过官方客户端连接，且只给子进程最小环境变量，不传数据库或模型密钥。五款产品和三个分类都写在 `server/src/mcp/mock-products.ts`，均为虚构演示数据，不对应真实库存、售价或购买服务。
 
-现在使用 LangChain `createAgent`：模型在资料检索工具和获准的只读产品 MCP 工具之间自主选择，可按需要连续调用；后端不再使用关键词判定何时调用 MCP。LangChain 工具包装器经 `McpCapabilityGateway` 调用 `ProductMcpService`，它再通过官方 MCP 客户端访问独立的 stdio 服务。后端保留工具白名单、参数校验、最多六次调用、总体超时和最终来源 ID 校验。模型也可以不调用工具，但这种回答会被拒绝。MCP 和资料返回值都是不可信数据，不能被当作指令执行。步骤展示的是实际工具调用，不是模型内部思维。
+当前不引入 LangChain Agent。`ChatOrchestratorService` 自己实现“模型规划 JSON → 后端校验 → 执行工具 → 把结果交回模型”的循环，最多六次调用。后端固定注册资料检索和本地产品 MCP 工具，不使用关键词路由。模型也可以直接请求最终回答，但最终回答必须通过来源 ID 校验；MCP 和资料返回值都是不可信数据，不能被当作指令执行。
 
 ### MCP 能力管理（第一阶段）
 
 内置 `product_catalog` 能力及其三个工具由迁移 `0009_mcp_capability_policy.sql` 登记，初始保持启用。具有 `mcp.read` 或 `mcp.manage` 权限的管理员可在后台“MCP 能力”查看状态；只有 `mcp.manage` 可启停整项能力或单个工具，变更写入管理员审计日志。对应 API 为 `GET /api/admin/mcp/capabilities`、`PATCH /api/admin/mcp/capabilities/:id` 和 `PATCH /api/admin/mcp/capabilities/:id/tools/:name`，PATCH 请求体为 `{"enabled":true|false}`。
 
-### 访客公开过程设置
+此阶段不提供远程 MCP 配置，也不允许管理员填写命令、URL 或密钥。产品 MCP 仅作为固定的本地 stdio 学习实现；后台 MCP 页面只用于查看当前内置能力，后续可移除动态开关。
 
-迁移 `0010_public_progress.sql` 增加独立开关，默认关闭。拥有 `chat.settings.read` / `chat.settings.manage` 权限的管理员可在后台“访客展示”查看 / 调整，也可调用 `GET` / `PATCH /api/admin/chat-settings`（PATCH 请求体为 `{"publicProgressEnabled":true|false}`）。每轮请求开始时读取一次设置；关闭时不向访客发送播报或工具步骤，也不把它们存入访客会话消息，但管理员的内部轨迹仍保留。开启时按真实时序记录播报与工具事件；这不改变 MCP 工具是否可用。
-
-Agent 每轮仅接收当时已获准的产品工具；`McpCapabilityGateway` 在真正执行前再查询数据库，因此会话进行中被停用的工具也无法继续调用。资料检索是独立能力，不受产品 MCP 开关影响。此阶段只允许代码内登记的 stdio 服务和工具，后台不能填写任意命令、URL 或密钥；工具发现审批与远程 Streamable HTTP 接入尚未实现。
-
-本地验证：在 `server/` 运行 `npm test`（含真实 stdio MCP 客户端测试）；启动服务后向聊天框问“你家有多少产品，产品规格？”可看到按时间追加的“开始查询 → 获得结果 → 核对回答”过程。`toolSteps` 保存实际工具开始/完成事件、简短结果和耗时，刷新会话后仍可回看；不向访客暴露模型原始提示或完整内部数据。不要将该 mock 目录当作真实商品信息。
+本地验证：在 `server/` 运行 `npm test`（含真实 stdio MCP 客户端测试）；启动服务后分别询问资料政策和产品目录，再在同一会话追问规格。不要将 mock 产品目录当作真实商品信息。
 
 单 API 实例目前按访客 IP 每分钟最多 10 次问答、全局最多 5 个并发请求；经本项目 Nginx 转发时使用代理传来的真实 IP。限流保存在进程内，多实例部署需换成 Redis 等共享限流。不要把真实客户隐私或生产资料上传到此学习项目；问题、有限历史和检索片段会发送到所配置的火山方舟服务。
 

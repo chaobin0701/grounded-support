@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { nextTick, onMounted, ref } from 'vue';
-import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage, type ProcessEvent, type ToolStep } from './chat-api';
+import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage } from './chat-api';
 import AdminApp from './AdminApp.vue';
 
 const isAdminRoute = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/');
 
-type Message = { id: number; role: 'visitor'; text: string } | { id: number; role: 'assistant'; text: string; refused: boolean; progressEvents: ProcessEvent[] };
+type Message = { id: number; role: 'visitor'; text: string } | { id: number; role: 'assistant'; text: string; refused: boolean };
 
 const suggestions = ['暖风机保修多久？', '满多少钱免基础配送费？', '退款一般多久能到账？'];
 const messages = ref<Message[]>([]);
@@ -15,7 +15,6 @@ const isLoadingConversations = ref(false);
 const question = ref('');
 const isSending = ref(false);
 const draftAnswer = ref('');
-const pendingEvents = ref<ProcessEvent[]>([]);
 const errorMessage = ref('');
 const health = ref<'checking' | 'online' | 'offline'>('checking');
 const conversation = ref<HTMLElement | null>(null);
@@ -43,28 +42,7 @@ onMounted(async () => {
 function displayMessages(items: ConversationMessage[]): Message[] {
   return items.map((item) => item.role === 'user'
     ? { id: item.id, role: 'visitor', text: item.content }
-    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused), progressEvents: item.progressEvents?.length ? item.progressEvents : (item.toolSteps ?? []).map((step) => ({ type: 'tool' as const, ...step })) });
-}
-
-function stepNarration(step: ToolStep): string {
-  if (step.status === 'running') {
-    if (step.label === '查询产品分类') return '正在查看产品分类…';
-    if (step.label === '查询产品列表') return '正在查看产品目录…';
-    if (step.label === '检索资料') return '正在检索已上传的资料…';
-    return `${step.label.replace(/^查询/u, '正在查看')}…`;
-  }
-  if (!step.detail) return `${step.label}已完成。`;
-  if (step.detail.startsWith('找到')) return `已${step.detail}。`;
-  return `${step.detail}。`;
-}
-
-function allStepsFinished(events: ProcessEvent[]): boolean {
-  const steps = events.filter((event): event is ProcessEvent & ToolStep => event.type === 'tool');
-  return steps.length > 0 && steps.every((step) => step.status === 'completed' || steps.some((later) => later.id === step.id && later.status === 'completed'));
-}
-
-function toolCallCount(events: ProcessEvent[]): number {
-  return events.filter((event) => event.type === 'tool' && event.status === 'completed').length;
+    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused) });
 }
 
 async function openConversation(id: string) {
@@ -125,8 +103,6 @@ async function send(value = question.value) {
   errorMessage.value = '';
   question.value = '';
   isSending.value = true;
-  draftAnswer.value = '';
-  pendingEvents.value = [];
   let pushed = false;
   try {
     let id = activeConversationId.value;
@@ -142,14 +118,8 @@ async function send(value = question.value) {
     const result: ChatAnswer = await askInConversationStream(id, trimmed, (text) => {
       draftAnswer.value += text;
       void scrollToLatest();
-    }, (step) => {
-      pendingEvents.value.push({ type: 'tool', ...step });
-      void scrollToLatest();
-    }, (event) => {
-      pendingEvents.value.push(event);
-      void scrollToLatest();
     });
-    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused, progressEvents: result.progressEvents ?? pendingEvents.value });
+    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused });
     try { conversations.value = await conversationApi.list(); } catch { /* Answer was saved; list can refresh later. */ }
   } catch (error) {
     let recovered = false;
@@ -178,7 +148,6 @@ async function send(value = question.value) {
   } finally {
     isSending.value = false;
     draftAnswer.value = '';
-    pendingEvents.value = [];
     await scrollToLatest();
   }
 }
@@ -233,7 +202,7 @@ function chooseSuggestion(value: string) {
           <div class="welcome-symbol" aria-hidden="true"><span>暖</span></div>
           <p class="section-label">暖巢 · 智能客服</p>
           <h3>你好，有什么可以帮你？</h3>
-          <p>我会查询已收录的资料和演示产品目录，再根据结果回答。查询过程会显示在对话中。</p>
+          <p>我会查询已收录的资料和演示产品目录，再根据结果回答。</p>
           <div class="suggestions" aria-label="示例问题">
             <button v-for="item in suggestions" :key="item" type="button" :disabled="isSending" @click="chooseSuggestion(item)">{{ item }}<span aria-hidden="true">↗</span></button>
           </div>
@@ -242,9 +211,6 @@ function chooseSuggestion(value: string) {
         <div v-for="message in messages" :key="message.id" class="message" :class="message.role">
           <div class="message-meta"><span class="message-avatar" aria-hidden="true">{{ message.role === 'assistant' ? '暖' : '我' }}</span><span>{{ message.role === 'assistant' ? '资料助手' : '你' }}</span></div>
           <div class="message-body">
-            <template v-if="message.role === 'assistant'">
-              <details v-if="message.progressEvents.length" class="process-panel process-collapsible"><summary>查看公开过程与工具调用 <span>{{ toolCallCount(message.progressEvents) }} 次调用</span></summary><div class="process-content"><div v-for="(event, index) in message.progressEvents" :key="`${event.id}-${index}`" class="process-step" :class="event.type === 'commentary' ? 'commentary' : event.status"><span class="process-step-dot" aria-hidden="true"></span><span>{{ event.type === 'commentary' ? event.text : stepNarration(event) }}</span><small v-if="event.type === 'tool' && event.durationMs !== undefined">{{ event.durationMs }} ms</small></div><p>播报由模型生成；工具状态来自实际调用。均不是模型内部推理。</p></div></details>
-            </template>
             <p class="answer-text">{{ message.text }}</p>
             <p v-if="message.role === 'assistant' && message.refused" class="answer-note">可用数据不足，未生成推测性回答。</p>
           </div>
@@ -252,9 +218,8 @@ function chooseSuggestion(value: string) {
 
         <div v-if="isSending" class="message assistant pending" role="status">
           <div class="message-meta"><span class="message-avatar" aria-hidden="true">暖</span><span>资料助手</span></div>
-          <div v-if="!draftAnswer && !pendingEvents.length" class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>正在生成回答…</span></div>
-          <div v-if="pendingEvents.length" class="process-panel pending-process" aria-live="polite"><strong>{{ draftAnswer ? '本次公开过程' : '正在处理' }}</strong><div v-for="(event, index) in pendingEvents" :key="`${event.id}-${index}`" class="process-step" :class="event.type === 'commentary' ? 'commentary' : event.status"><span class="process-step-dot" aria-hidden="true"></span><span>{{ event.type === 'commentary' ? event.text : stepNarration(event) }}</span><small v-if="event.type === 'tool' && event.durationMs !== undefined">{{ event.durationMs }} ms</small></div><div v-if="!draftAnswer && allStepsFinished(pendingEvents)" class="process-finishing"><span class="process-step-dot" aria-hidden="true"></span>正在整理结果，必要时继续查询…</div><p>播报由模型生成；工具状态来自实际调用。</p></div>
-          <div v-if="draftAnswer" class="message-body"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在呈现已核对的回答…</p></div>
+          <div v-if="!draftAnswer" class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>正在查询资料并整理回答…</span></div>
+          <div v-else class="message-body"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在发送已校验的回答…</p></div>
         </div>
       </section>
 

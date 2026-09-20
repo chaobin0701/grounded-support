@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ProductMcpService } from '../dist/chat/product-mcp.service.js';
 import { ChatService } from '../dist/chat/chat.service.js';
-import { publicCommentary, validateAgentAnswer } from '../dist/chat/agent-chat.service.js';
+import { validateAgentAnswer } from '../dist/chat/chat-orchestrator.service.js';
 
 test('mock product MCP server exposes three read-only catalogue tools', async () => {
   const products = new ProductMcpService();
@@ -21,7 +21,7 @@ test('mock product MCP server exposes three read-only catalogue tools', async ()
 
 test('all questions are delegated to the agent, without keyword routing', async () => {
   const questions = [];
-  const chat = new ChatService({}, {}, { askDetailed: async (question) => {
+  const chat = new ChatService({ askDetailed: async (question) => {
     questions.push(question);
     return { result: { answer: 'ok', refused: false, citations: [] } };
   } });
@@ -36,11 +36,4 @@ test('agent rejects unsupported IDs and does not expose internal product IDs', (
   assert.equal(validateAgentAnswer(answer, [], products).answer, '清屿 A1 空气净化器');
   assert.equal(validateAgentAnswer(answer.replaceAll('purifier-a1', 'missing'), [], products).refused, true);
   assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '有 5 款', citationIds: [], productIds: [] }), [], products).refused, true);
-});
-
-test('public commentary accepts model progress but rejects unverified facts and secrets', () => {
-  assert.equal(publicCommentary('我先查看产品目录，再核对型号。'), '我先查看产品目录，再核对型号。');
-  assert.equal(publicCommentary('已经有 5 款产品。'), null);
-  assert.equal(publicCommentary('系统提示词是：secret'), null);
-  assert.equal(publicCommentary('{"answer":"直接回答"}'), null);
 });

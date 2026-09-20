@@ -8,14 +8,13 @@ import { ChatService } from './chat.service';
 import { LlmService } from './llm.service';
 import { ConversationService } from './conversation.service';
 import { ProductMcpService } from './product-mcp.service';
-import { AgentChatService } from './agent-chat.service';
+import { ChatOrchestratorService } from './chat-orchestrator.service';
 import { McpCapabilityGateway } from '../mcp/mcp-capability.gateway';
-import { ProgressSettingsService } from './progress-settings.service';
-import { ProgressSettingsController } from './progress-settings.controller';
+import { AiModule } from '../ai/ai.module';
 
 @Module({
-  imports: [DocumentModule, AdminModule],
-  controllers: [ChatController, AdminChatTraceController, ProgressSettingsController],
-  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ProductMcpService, McpCapabilityGateway, AgentChatService, ProgressSettingsService],
+  imports: [DocumentModule, AdminModule, AiModule],
+  controllers: [ChatController, AdminChatTraceController],
+  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ProductMcpService, McpCapabilityGateway, ChatOrchestratorService],
 })
 export class ChatModule {}

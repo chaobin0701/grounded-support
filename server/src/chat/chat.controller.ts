@@ -4,7 +4,6 @@ import { AskQuestionDto } from './chat.dto';
 import { ChatRateLimitService } from './chat-rate-limit.service';
 import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
-import type { CommentaryEvent, ToolStep } from './chat.service';
 
 @Controller('chat')
 export class ChatController {
@@ -49,8 +48,7 @@ export class ChatController {
     return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', async () => {
       this.beginStream(response);
       try {
-        const answer = await this.conversations.ask(owner, id, body.question,
-          (step) => this.writeStep(response, step), (event) => this.writeCommentary(response, event));
+        const answer = await this.conversations.ask(owner, id, body.question);
         await this.writeAnswerStream(response, answer);
       } catch {
         this.writeStreamError(response);
@@ -70,9 +68,7 @@ export class ChatController {
     return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', async () => {
       this.beginStream(response);
       try {
-        // Do not reveal model tokens until the complete answer has passed validation.
-        const run = await this.chat.askDetailed(body.question, body.history, '', undefined,
-          (step) => this.writeStep(response, step), (event) => this.writeCommentary(response, event));
+        const run = await this.chat.askDetailed(body.question, body.history);
         await this.writeAnswerStream(response, run.result);
       } catch {
         this.writeStreamError(response);
@@ -87,14 +83,6 @@ export class ChatController {
     response.flushHeaders();
   }
 
-  private writeStep(response: Response, step: ToolStep) {
-    if (!response.destroyed) response.write(`event: step\ndata: ${JSON.stringify(step)}\n\n`);
-  }
-
-  private writeCommentary(response: Response, event: CommentaryEvent) {
-    if (!response.destroyed) response.write(`event: commentary\ndata: ${JSON.stringify(event)}\n\n`);
-  }
-
   private writeStreamError(response: Response) {
     if (!response.destroyed) {
       response.write(`event: error\ndata: ${JSON.stringify({ message: '回答服务暂时不可用，请稍后重试。' })}\n\n`);
@@ -103,16 +91,17 @@ export class ChatController {
   }
 
   private async writeAnswerStream(response: Response, answer: Awaited<ReturnType<ChatService['ask']>>) {
-      if (!answer.refused) {
-        for (const text of answer.answer.match(/[\s\S]{1,8}/gu) || []) {
-          if (response.destroyed) return;
-          response.write(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
-          await new Promise((resolve) => setTimeout(resolve, 35));
-        }
+    if (!answer.refused) {
+      for (const text of answer.answer.match(/[\s\S]{1,8}/gu) || []) {
+        if (response.destroyed) return;
+        response.write(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
+        await new Promise((resolve) => setTimeout(resolve, 35));
       }
-      if (!response.destroyed) {
-        response.write(`event: done\ndata: ${JSON.stringify(answer)}\n\n`);
-        response.end();
-      }
+    }
+    if (!response.destroyed) {
+      response.write(`event: done\ndata: ${JSON.stringify(answer)}\n\n`);
+      response.end();
+    }
   }
+
 }

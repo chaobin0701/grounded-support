@@ -11,19 +11,7 @@ export interface ChatAnswer {
   answer: string;
   refused: boolean;
   citations: Citation[];
-  toolSteps?: ToolStep[];
-  progressEvents?: ProcessEvent[];
 }
-
-export interface ToolStep {
-  id: string;
-  label: string;
-  status: 'running' | 'completed';
-  detail?: string;
-  durationMs?: number;
-}
-export type CommentaryEvent = { id: string; type: 'commentary'; text: string };
-export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent;
 
 export interface PreviousTurn { question: string; answer: string }
 export interface ConversationItem {
@@ -39,8 +27,6 @@ export interface ConversationMessage {
   content: string;
   refused: boolean | null;
   citations: Citation[];
-  toolSteps: ToolStep[];
-  progressEvents: ProcessEvent[];
   createdAt: string;
 }
 
@@ -70,19 +56,22 @@ export async function askQuestion(question: string, history: PreviousTurn[] = []
   return parseAnswer(await response.json());
 }
 
-export async function askQuestionStream(question: string, history: PreviousTurn[], onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
-  return streamAnswer('/api/chat/stream', { question, history }, onDelta, onStep, onCommentary);
+export async function askInConversation(conversationId: string, question: string): Promise<ChatAnswer> {
+  const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+    signal: AbortSignal.timeout(65_000),
+  });
+  if (!response.ok) throw new ChatApiError(response.status);
+  return parseAnswer(await response.json());
 }
 
-export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
-  return streamAnswer(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, { question }, onDelta, onStep, onCommentary);
-}
-
-async function streamAnswer(path: string, body: object, onDelta: (text: string) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatAnswer> {
-  const response = await fetch(path, {
+export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void): Promise<ChatAnswer> {
+  const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ question }),
     signal: AbortSignal.timeout(65_000),
   });
   if (!response.ok) throw new ChatApiError(response.status);
@@ -102,17 +91,9 @@ async function streamAnswer(path: string, body: object, onDelta: (text: string) 
         const event = frame.match(/^event: (.+)$/m)?.[1];
         const data = frame.match(/^data: (.+)$/m)?.[1];
         if (data && event === 'delta') {
-          const payload: unknown = JSON.parse(data);
-          if (!payload || typeof payload !== 'object' || typeof (payload as { text?: unknown }).text !== 'string') throw new Error('Invalid stream delta');
-          onDelta((payload as { text: string }).text);
-        } else if (data && event === 'step') {
-          const payload: unknown = JSON.parse(data);
-          if (!payload || typeof payload !== 'object' || typeof (payload as ToolStep).id !== 'string' || typeof (payload as ToolStep).label !== 'string') throw new Error('Invalid tool step');
-          onStep?.(payload as ToolStep);
-        } else if (data && event === 'commentary') {
-          const payload: unknown = JSON.parse(data);
-          if (!payload || typeof payload !== 'object' || (payload as CommentaryEvent).type !== 'commentary' || typeof (payload as CommentaryEvent).text !== 'string') throw new Error('Invalid commentary');
-          onCommentary?.(payload as CommentaryEvent);
+          const payload = JSON.parse(data) as { text?: unknown };
+          if (typeof payload.text !== 'string') throw new Error('Invalid stream delta');
+          onDelta(payload.text);
         } else if (data && event === 'error') {
           throw new ChatApiError(503);
         } else if (data && event === 'done') {

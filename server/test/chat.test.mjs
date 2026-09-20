@@ -36,19 +36,9 @@ test('limits anonymous requests per IP', async () => {
   assert.equal(await limiter.run('another', async () => 'ok'), 'ok');
 });
 
-test('follow-up question expands retrieval query but still answers from fresh sources', async () => {
-  const searches = [];
-  const prompts = [];
-  const chat = new ChatService(
-    { diagnose: async (query) => { searches.push(query); return { fusionResults: [hit] }; } },
-    { completeDetailed: async (_system, user) => { prompts.push(JSON.parse(user)); return { content: JSON.stringify({ status: 'answered', answer: '七天内可申请。', citationIds: [12] }), model: 'fake', inputTokens: 10, outputTokens: 5, totalTokens: 15 }; } },
-  );
+test('follow-up question expands retrieval query before the orchestrator runs', () => {
   const history = [{ question: '退货政策是什么？', answer: '七天内可申请。' }];
-  const result = await chat.ask('那它需要什么条件？', history);
-  assert.equal(searches[0], '退货政策是什么？ 那它需要什么条件？');
-  assert.deepEqual(prompts[0].history, history);
-  assert.equal(prompts[0].sources[0].chunkId, 12);
-  assert.equal(result.citations[0].chunkId, 12);
+  assert.equal(retrievalQuery('那它需要什么条件？', history), '退货政策是什么？ 那它需要什么条件？');
   assert.equal(retrievalQuery('保修多久？', history), '保修多久？');
 });
 
