@@ -4,6 +4,7 @@ import type { Request, Response } from 'express';
 import { DatabaseService } from '../database.service';
 import { ChatService, ChatAnswer, ChatRun, CommentaryEvent, ProcessEvent, ToolStep } from './chat.service';
 import { LlmService, ModelFailure } from './llm.service';
+import { ConversationSnapshot } from './conversation-snapshot';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -70,6 +71,32 @@ export class ConversationService {
     return result.rows[0];
   }
 
+  async snapshot(ownerId: string, id: string): Promise<ConversationSnapshot> {
+    const conversation = await this.get(ownerId, id);
+    const recent = await this.database.query<MessageRow>(
+      `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", created_at AS "createdAt"
+       FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 12`, [id],
+    );
+    const recentMessages = recent.rows.reverse();
+    const history: { question: string; answer: string }[] = [];
+    for (let index = 0; index + 1 < recentMessages.length; index += 2) {
+      const user = recentMessages[index];
+      const assistant = recentMessages[index + 1];
+      if (user.role === 'user' && assistant.role === 'assistant' && !assistant.refused) {
+        history.push({ question: user.content, answer: assistant.content });
+      }
+    }
+    return {
+      conversationId: conversation.id,
+      summary: conversation.summary,
+      summaryThroughMessageId: conversation.summaryThroughMessageId,
+      recentMessages: recentMessages.map(({ id: messageId, role, content, refused }) => ({
+        id: messageId, role, content, refused,
+      })),
+      history,
+    };
+  }
+
   async messages(ownerId: string, id: string) {
     await this.get(ownerId, id);
     const result = await this.database.query<MessageRow>(
@@ -97,33 +124,21 @@ export class ConversationService {
       throw new ConflictException('Conversation is already answering a question');
     }
     const started = Date.now();
-    let summary = '';
-    let recentMessages: MessageRow[] = [];
+    let snapshot: ConversationSnapshot | null = null;
     let contextSnapshot: Record<string, unknown> | null = null;
     try {
-      const conversation = await this.get(ownerId, id);
-      summary = conversation.summary;
-      const recent = await this.database.query<MessageRow>(
-        `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", created_at AS "createdAt"
-         FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 12`, [id],
-      );
-      recentMessages = recent.rows.reverse();
-      const history: { question: string; answer: string }[] = [];
-      for (let index = 0; index + 1 < recentMessages.length; index += 2) {
-        const user = recentMessages[index];
-        const assistant = recentMessages[index + 1];
-        if (user.role === 'user' && assistant.role === 'assistant' && !assistant.refused) {
-          history.push({ question: user.content, answer: assistant.content });
-        }
-      }
-      const run = await this.chat.askDetailed(question, history, summary, (context) => { contextSnapshot = context; }, onStep, onCommentary);
+      snapshot = await this.snapshot(ownerId, id);
+      const run = await this.chat.askDetailed(question, snapshot.history, snapshot.summary, (context) => { contextSnapshot = context; }, onStep, onCommentary);
       await this.saveResult(id, question, run, Date.now() - started);
-      void this.updateSummary(id, summary).catch(() => this.logger.warn('Conversation summary update failed'));
+      void this.updateSummary(id, snapshot.summary).catch(() => this.logger.warn('Conversation summary update failed'));
       return run.result;
     } catch (error) {
       await this.recordTrace({
         id: randomUUID(), conversationId: id, userMessageId: null, question,
-        contextSnapshot: contextSnapshot ?? { summary, recentMessages: recentMessages.map(({ role, content }) => ({ role, content })) },
+        contextSnapshot: contextSnapshot ?? {
+          summary: snapshot?.summary ?? '',
+          recentMessages: snapshot?.recentMessages.map(({ role, content }) => ({ role, content })) ?? [],
+        },
         model: this.llm.model, rawModelOutput: null, finalAnswer: null,
         refused: null, status: 'failed', errorCode: 'answer_failed',
         inputTokens: error instanceof ModelFailure ? error.usage.inputTokens : null,

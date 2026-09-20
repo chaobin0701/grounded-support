@@ -66,10 +66,7 @@ export class ChatService {
   }
 
   async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatRun> {
-    const boundedHistory = history.slice(-3).map(({ question: previousQuestion, answer }) => ({
-      question: previousQuestion.trim().slice(0, 200), answer: answer.trim().slice(0, 1200),
-    }));
-    return this.orchestrator.askDetailed(question, boundedHistory, summary, onContext, onStep, onCommentary);
+    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary);
   }
 
 }

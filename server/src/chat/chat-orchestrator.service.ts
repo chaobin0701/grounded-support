@@ -4,6 +4,7 @@ import { SearchHit } from '../documents/fuse-search-results';
 import { ToolContext } from '../ai/tools/tool-context';
 import { ToolRegistry } from '../ai/tools/tool-registry';
 import { PreviousTurnDto } from './chat.dto';
+import { ContextBuilder } from './context-builder';
 import { ProductDetail, ProductSummary } from '../ai/tools/product-catalog/product-catalog.service';
 import { ChatRun, ToolStep, validateAnswer } from './chat.service';
 import { LlmService } from './llm.service';
@@ -33,14 +34,13 @@ export class ChatOrchestratorService {
   constructor(
     private readonly llm: LlmService,
     private readonly tools: ToolRegistry,
+    private readonly contextBuilder: ContextBuilder = new ContextBuilder(),
   ) {}
 
   async askDetailed(question: string, history: PreviousTurnDto[], summary: string,
     onContext?: (context: Record<string, unknown>) => void, _onStep?: (step: ToolStep) => void,
     _onCommentary?: (event: never) => void): Promise<ChatRun> {
-    const boundedHistory = history.slice(-3).map((turn) => ({
-      question: turn.question.trim().slice(0, 200), answer: turn.answer.trim().slice(0, 1200),
-    }));
+    const initialContext = this.contextBuilder.build({ question, summary, recentHistory: history, toolResults: [] });
     const hits = new Map<number, SearchHit>();
     const products = new Map<string, ProductSummary | ProductDetail>();
     const toolContext: ToolContext = {
@@ -51,9 +51,10 @@ export class ChatOrchestratorService {
     const contextSnapshot: Record<string, unknown> = {
       promptVersion: 'custom-orchestrator-v1',
       systemPrompt: PLANNER_PROMPT,
-      question: question.trim(),
-      summary: summary.slice(0, 1500),
-      history: boundedHistory,
+      question: initialContext.question,
+      summary: initialContext.summary,
+      history: initialContext.history,
+      contextMetadata: initialContext.metadata,
       toolCalls,
     };
     onContext?.(contextSnapshot);
@@ -67,12 +68,9 @@ export class ChatOrchestratorService {
     const seenToolCalls = new Set<string>();
 
     for (let round = 0; round < MAX_TOOL_CALLS; round += 1) {
-      const userPrompt = JSON.stringify({
-        question: question.trim(),
-        summary: summary.slice(0, 1500),
-        history: boundedHistory,
-        toolResults,
-      });
+      const builtContext = this.contextBuilder.build({ question, summary, recentHistory: history, toolResults });
+      const userPrompt = builtContext.userPrompt;
+      contextSnapshot.contextMetadata = builtContext.metadata;
       const model = await this.llm.completeDetailed(PLANNER_PROMPT, userPrompt, this.llm.model, 'planner');
       finalRaw = model.content;
       if (model.inputTokens !== null || model.outputTokens !== null || model.totalTokens !== null) usageSeen = true;

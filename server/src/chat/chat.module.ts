@@ -8,12 +8,13 @@ import { ChatService } from './chat.service';
 import { LlmService } from './llm.service';
 import { ConversationService } from './conversation.service';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
+import { ContextBuilder } from './context-builder';
 import { AiModule } from '../ai/ai.module';
 import { ToolsModule } from '../ai/tools/tools.module';
 
 @Module({
   imports: [DocumentModule, AdminModule, AiModule, ToolsModule],
   controllers: [ChatController, AdminChatTraceController],
-  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ChatOrchestratorService],
+  providers: [ChatService, ChatRateLimitService, LlmService, ConversationService, ContextBuilder, ChatOrchestratorService],
 })
 export class ChatModule {}
