@@ -19,7 +19,7 @@ test('OpenAI-compatible provider normalizes text, tool calls, usage and duration
     }), { status: 200 });
   };
   try {
-    const provider = new OpenAICompatibleProvider({ apiKey: 'test-key', model: 'test-model', supportedModels: ['test-model'] });
+    const provider = new OpenAICompatibleProvider({ apiKey: 'test-key', baseUrl: 'https://test.example.invalid/api/v3', model: 'test-model', timeoutMs: 1000, supportedModels: ['test-model'] });
     const result = await provider.chat({
       model: 'test-model',
       messages: [{ role: 'system', content: 'system' }, { role: 'user', content: 'question' }],
@@ -38,15 +38,15 @@ test('OpenAI-compatible provider normalizes text, tool calls, usage and duration
 test('provider maps authentication, rate limit and timeout failures', async () => {
   const originalFetch = globalThis.fetch;
   try {
-    const noKey = new OpenAICompatibleProvider({ apiKey: '', model: 'test-model', supportedModels: ['test-model'] });
+    const noKey = new OpenAICompatibleProvider({ apiKey: '', baseUrl: 'https://test.example.invalid/api/v3', model: 'test-model', timeoutMs: 1000, supportedModels: ['test-model'] });
     await assert.rejects(() => noKey.chat({ model: 'test-model', messages: [] }), ProviderAuthenticationError);
 
     globalThis.fetch = async () => new Response('{}', { status: 429 });
-    const rateLimited = new OpenAICompatibleProvider({ apiKey: 'test-key', model: 'test-model', supportedModels: ['test-model'] });
+    const rateLimited = new OpenAICompatibleProvider({ apiKey: 'test-key', baseUrl: 'https://test.example.invalid/api/v3', model: 'test-model', timeoutMs: 1000, supportedModels: ['test-model'] });
     await assert.rejects(() => rateLimited.chat({ model: 'test-model', messages: [] }), ProviderRateLimitError);
 
     globalThis.fetch = async () => { throw new DOMException('timeout', 'TimeoutError'); };
-    const timedOut = new OpenAICompatibleProvider({ apiKey: 'test-key', model: 'test-model', supportedModels: ['test-model'] });
+    const timedOut = new OpenAICompatibleProvider({ apiKey: 'test-key', baseUrl: 'https://test.example.invalid/api/v3', model: 'test-model', timeoutMs: 1000, supportedModels: ['test-model'] });
     await assert.rejects(() => timedOut.chat({ model: 'test-model', messages: [] }), ProviderTimeoutError);
   } finally {
     globalThis.fetch = originalFetch;

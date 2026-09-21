@@ -124,7 +124,7 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 
 ## 访客问答 API
 
-在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。`LLM_MODEL` 默认 `deepseek-v4-1-flash-260910`，也可设置为 `glm-5-3-flash-260828`；模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
+在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。配置先由 `AppConfigService` 校验，再由 `ProviderRegistry` 创建 `OpenAICompatibleProvider`；Provider 本身不读取环境变量。可配置 `LLM_PROVIDER`（当前仅支持 `openai-compatible`）、`LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_TIMEOUT_MS`。`LLM_MODEL` 默认 `deepseek-v4-1-flash-260910`，也可设置为 `glm-5-3-flash-260828`；模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
 
 访客可直接打开 `http://localhost:8081` 使用 Vue 页面。页面可新建、切换和删除多段对话；同一浏览器刷新后可恢复。后端用 180 天有效的 `HttpOnly` 匿名 Cookie 将会话归属到当前浏览器，不提供登录或跨设备找回；清除 Cookie 后旧记录无法找回。删除对话会级联删除消息与调用轨迹。每段对话的摘要和历史严格独立，新会话从空上下文开始。
 
@@ -157,6 +157,8 @@ curl -X POST http://localhost:8081/api/chat \
 当前不引入 LangChain Agent，也暂不启用 MCP。`ChatOrchestratorService` 自己实现“模型规划 JSON → 后端校验 → `ToolRegistry` 查找工具 → 执行工具 → 把结果交回模型”的循环，最多六次调用。
 
 `server/src/ai/tools/` 提供统一的 `AgentTool`、`ToolContext`、`ToolResult` 和 `ToolRegistry`。当前注册的工具包括 `search_knowledge`、`list_product_categories`、`list_products`、`get_product_detail`。产品目录由进程内的 `ProductCatalogService` 读取虚构数据，不对应真实库存、售价或购买服务。
+
+工具调用会经过 `ToolPolicy` 和 `ToolExecutionService`：参数先按工具 Schema 校验，单轮最多六次调用，相同名称和参数不会重复执行；工具有 30 秒超时，面向模型的结果最多 12,000 字符，异常会转换为安全错误码并记录耗时。工具结果中的结构化 `data` 仍由后端用于引用和产品校验。
 
 工具负责执行能力，不负责决定是否调用、生成最终答案或绕过引用校验。模型和工具返回值都被视为不可信数据，最终回答仍必须通过来源 ID 或已取得的产品 ID 校验。本阶段移除了 MCP 子进程、MCP 客户端和后台 MCP 管理页面；未来若重新接入 MCP，可通过 `McpToolAdapter implements AgentTool` 接入同一个 Registry，而不修改 Agent 主流程。
 

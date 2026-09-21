@@ -3,6 +3,16 @@ import test from 'node:test';
 import { ChatService, retrievalQuery, validateAnswer } from '../dist/chat/chat.service.js';
 import { ChatRateLimitService } from '../dist/chat/chat-rate-limit.service.js';
 import { LlmService } from '../dist/chat/llm.service.js';
+import { OpenAICompatibleProvider } from '../dist/ai/providers/openai-compatible.provider.js';
+
+function testLlmProvider(apiKey) {
+  return new OpenAICompatibleProvider({
+    apiKey,
+    baseUrl: 'https://test.example.invalid/api/v3',
+    model: 'deepseek-v4-1-flash-260910',
+    timeoutMs: 1000,
+  });
+}
 
 const hit = {
   chunkId: 12, documentId: 3, documentTitle: '退货政策', originalFilename: 'returns.md',
@@ -53,7 +63,7 @@ test('answer model retries an empty response without logging secrets or prompt t
     return new Response(JSON.stringify({ id: `test-${attempts}`, object: 'chat.completion', created: 1, model: 'deepseek-v4-1-flash-260910', choices: [{ index: 0, finish_reason: attempts === 1 ? 'length' : 'stop', message: { role: 'assistant', content: attempts === 1 ? '' : 'valid' } }], usage: { prompt_tokens: 12, completion_tokens: 4, total_tokens: 16 } }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const llm = new LlmService();
+    const llm = new LlmService(testLlmProvider(process.env.LLM_API_KEY));
     llm.logger.warn = (message) => warnings.push(message);
     const result = await llm.completeDetailed('private system', 'private user');
     assert.equal(result.content, 'valid');
@@ -78,7 +88,7 @@ test('answer model fails closed after two empty responses', async () => {
     return new Response(JSON.stringify({ id: `test-${attempts}`, object: 'chat.completion', created: 1, model: 'deepseek-v4-1-flash-260910', choices: [{ index: 0, finish_reason: 'length', message: { role: 'assistant', content: '' } }] }), { status: 200, headers: { 'content-type': 'application/json' } });
   };
   try {
-    const llm = new LlmService();
+    const llm = new LlmService(testLlmProvider(process.env.LLM_API_KEY));
     llm.logger.warn = () => {};
     await assert.rejects(() => llm.complete('system', 'user'), (error) => error.getStatus() === 503);
     assert.equal(attempts, 2);

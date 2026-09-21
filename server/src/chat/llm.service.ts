@@ -1,6 +1,5 @@
-import { Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
-import { OpenAICompatibleProvider } from '../ai/providers/openai-compatible.provider';
 import { ProviderError } from '../ai/providers/provider-errors';
 import { LlmMessage } from '../ai/providers/provider.types';
 
@@ -22,10 +21,10 @@ export class ModelFailure extends ServiceUnavailableException {
 export class LlmService {
   readonly logger = new Logger(LlmService.name);
 
-  constructor(@Optional() @Inject(LLM_PROVIDER) private readonly provider?: LlmProvider) {}
+  constructor(@Inject(LLM_PROVIDER) private readonly provider: LlmProvider) {}
 
   get model(): string {
-    return (this.provider ?? new OpenAICompatibleProvider()).model;
+    return this.provider.model;
   }
 
   async complete(system: string, user: string, model = this.model): Promise<string> {
@@ -33,7 +32,7 @@ export class LlmService {
   }
 
   async completeDetailed(system: string, user: string, model = this.model, purpose: 'answer' | 'summary' | 'planner' = 'answer'): Promise<ModelResult> {
-    const provider = this.provider ?? new OpenAICompatibleProvider();
+    const provider = this.provider;
     const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, seen: false };
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       let reason = 'network_error';

@@ -47,7 +47,7 @@ Provider 不负责：
 
 它用于连接火山方舟等兼容 `/chat/completions` 协议的服务，负责：
 
-- 读取 `LLM_API_KEY`、`LLM_BASE_URL` 和 `LLM_MODEL`；
+- 接收配置层传入的 API Key、Base URL、模型和超时；
 - 转换消息和工具定义；
 - 解析文本与标准 Tool Call；
 - 解析 Token 用量和完成原因；
@@ -55,6 +55,12 @@ Provider 不负责：
 - 处理超时、限流、认证失败和无效响应。
 
 当前支持的模型由 `SUPPORTED_LLM_MODELS` 限制。增加模型前，应先确认接口协议、响应结构和安全限制。
+
+Provider 不直接读取 `process.env`。环境变量由 `config/` 中的 `AppConfigService` 校验，Provider 实例由 `provider-registry.ts` 创建。
+
+### `provider-registry.ts`
+
+根据 `LLM_PROVIDER` 创建统一的 `LlmProvider`。当前只注册 `openai-compatible`，未来增加 Provider 时应在 Registry 中增加清晰的工厂映射，不把选择逻辑散落到业务服务中。
 
 ### `provider-errors.ts`
 

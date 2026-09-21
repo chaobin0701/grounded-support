@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { KnowledgeSearchTool } from '../dist/ai/tools/knowledge-search.tool.js';
 import { ChatOrchestratorService } from '../dist/chat/chat-orchestrator.service.js';
+import { ContextBuilder } from '../dist/chat/context-builder.js';
+import { ToolExecutionService } from '../dist/ai/tools/tool-execution.js';
+import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
 
 const hit = {
   chunkId: 12, documentId: 3, documentTitle: '退货政策', originalFilename: 'returns.md',
@@ -42,8 +45,8 @@ test('agent refuses repeated identical tool calls instead of looping', async () 
     execute: async () => ({ success: true, content: '退货政策：七天内可申请退货。', data: { hits: [hit] } }),
   };
   const registry = { get: () => tool };
-  const orchestrator = new ChatOrchestratorService(llm, registry);
+  const orchestrator = new ChatOrchestratorService(llm, new ContextBuilder(), new ToolExecutionService(registry, new ToolPolicy()));
   const run = await orchestrator.askDetailed('退货政策是什么？', [], '');
   assert.equal(run.result.refused, true);
-  assert.equal(run.contextSnapshot.toolCalls[1].error, 'duplicate_tool_call');
+  assert.equal(run.contextSnapshot.toolCalls[1].errorCode, 'duplicate_tool_call');
 });

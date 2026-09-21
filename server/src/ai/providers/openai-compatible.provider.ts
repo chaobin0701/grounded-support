@@ -14,10 +14,10 @@ import { LlmRequest, LlmResponse } from './provider.types';
 export const SUPPORTED_LLM_MODELS = ['deepseek-v4-1-flash-260910', 'glm-5-3-flash-260828'] as const;
 
 export interface OpenAICompatibleProviderOptions {
-  apiKey?: string;
-  baseUrl?: string;
-  model?: string;
-  timeoutMs?: number;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  timeoutMs: number;
   supportedModels?: readonly string[];
 }
 
@@ -41,11 +41,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private readonly supportedModels: readonly string[];
   private readonly logger = new Logger(OpenAICompatibleProvider.name);
 
-  constructor(options: OpenAICompatibleProviderOptions = {}) {
-    this.apiKey = options.apiKey ?? process.env.LLM_API_KEY?.trim() ?? '';
-    this.baseUrl = (options.baseUrl ?? process.env.LLM_BASE_URL?.trim() ?? 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
-    this.model = options.model ?? process.env.LLM_MODEL?.trim() ?? SUPPORTED_LLM_MODELS[0];
-    this.timeoutMs = options.timeoutMs ?? 20_000;
+  constructor(options: OpenAICompatibleProviderOptions) {
+    this.apiKey = options.apiKey;
+    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.model = options.model;
+    this.timeoutMs = options.timeoutMs;
     this.supportedModels = options.supportedModels ?? SUPPORTED_LLM_MODELS;
   }
 

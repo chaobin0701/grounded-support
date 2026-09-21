@@ -6,6 +6,8 @@ import { ProductCategoryTool } from './product-catalog/product-category.tool';
 import { ProductDetailTool } from './product-catalog/product-detail.tool';
 import { ProductListTool } from './product-catalog/product-list.tool';
 import { ProductCatalogService } from './product-catalog/product-catalog.service';
+import { ToolExecutionService } from './tool-execution';
+import { ToolPolicy } from './tool-policy';
 import { ToolRegistry } from './tool-registry';
 
 @Module({
@@ -16,9 +18,11 @@ import { ToolRegistry } from './tool-registry';
     ProductListTool,
     ProductDetailTool,
     KnowledgeSearchTool,
+    ToolPolicy,
+    ToolExecutionService,
     ToolRegistry,
   ],
-  exports: [ToolRegistry, ProductCatalogService],
+  exports: [ToolRegistry, ToolExecutionService, ProductCatalogService],
 })
 export class ToolsModule implements OnModuleInit {
   constructor(

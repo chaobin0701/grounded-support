@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import { SearchHit } from '../documents/fuse-search-results';
 import { ToolContext } from '../ai/tools/tool-context';
-import { ToolRegistry } from '../ai/tools/tool-registry';
+import { ToolExecutionService } from '../ai/tools/tool-execution';
 import { PreviousTurnDto } from './chat.dto';
 import { ContextBuilder } from './context-builder';
 import { ProductDetail, ProductSummary } from '../ai/tools/product-catalog/product-catalog.service';
@@ -10,7 +10,6 @@ import { ChatRun, ToolStep, validateAnswer } from './chat.service';
 import { LlmService } from './llm.service';
 
 const REFUSAL = '无法确定，建议联系人工。';
-const MAX_TOOL_CALLS = 6;
 
 const PLANNER_PROMPT = `你是暖巢电器客服的工具规划器。你只能根据工具返回的事实回答，不能使用常识补足。
 你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。每次只能输出一个 JSON 对象，不要输出 Markdown、解释或思考过程。
@@ -33,8 +32,8 @@ type PlannerToolCall = z.infer<typeof plannerToolSchema>;
 export class ChatOrchestratorService {
   constructor(
     private readonly llm: LlmService,
-    private readonly tools: ToolRegistry,
-    private readonly contextBuilder: ContextBuilder = new ContextBuilder(),
+    private readonly contextBuilder: ContextBuilder,
+    private readonly toolExecution: ToolExecutionService,
   ) {}
 
   async askDetailed(question: string, history: PreviousTurnDto[], summary: string,
@@ -47,6 +46,7 @@ export class ChatOrchestratorService {
       permissions: [],
       state: new Map([['knownProductIds', new Set<string>()]]),
     };
+    const executionState = this.toolExecution.createState();
     const toolCalls: Array<Record<string, unknown>> = [];
     const contextSnapshot: Record<string, unknown> = {
       promptVersion: 'custom-orchestrator-v1',
@@ -65,9 +65,8 @@ export class ChatOrchestratorService {
     let usageSeen = false;
     let finalRaw = '';
     const toolResults: Array<Record<string, unknown>> = [];
-    const seenToolCalls = new Set<string>();
 
-    for (let round = 0; round < MAX_TOOL_CALLS; round += 1) {
+    for (let round = 0; round < this.toolExecution.maxToolCalls; round += 1) {
       const builtContext = this.contextBuilder.build({ question, summary, recentHistory: history, toolResults });
       const userPrompt = builtContext.userPrompt;
       contextSnapshot.contextMetadata = builtContext.metadata;
@@ -104,60 +103,38 @@ export class ChatOrchestratorService {
       const toolCall = plannerToolSchema.safeParse(parsed);
       if (!toolCall.success) return this.refused(contextSnapshot, finalRaw, usageSeen, inputTokens, outputTokens, totalTokens);
       const call = toolCall.data;
-      const callKey = JSON.stringify({ name: call.name, arguments: call.arguments });
-      if (seenToolCalls.has(callKey)) {
-        toolCalls.push({ name: call.name, arguments: call.arguments, durationMs: 0, ok: false, error: 'duplicate_tool_call' });
-        contextSnapshot.toolCalls = toolCalls;
-        return this.refused(contextSnapshot, finalRaw, usageSeen, inputTokens, outputTokens, totalTokens);
-      }
-      seenToolCalls.add(callKey);
-      const started = Date.now();
-      let value: unknown;
-      try {
-        value = await this.execute(call, toolContext, hits, products);
-      } catch {
-        value = { error: 'tool_unavailable' };
-      }
-      const record = { name: call.name, arguments: call.arguments, durationMs: Date.now() - started, ok: !isToolError(value) };
-      toolCalls.push(record);
-      toolResults.push({ tool: call.name, result: value });
+      const execution = await this.toolExecution.execute(call.name, call.arguments, toolContext, executionState);
+      toolCalls.push(execution.trace);
+      if (execution.result.success) this.collectToolData(call.name, execution.result.data, hits, products, toolContext);
+      toolResults.push({ tool: call.name, result: execution.result.success ? execution.result.content : { error: execution.result.errorCode ?? 'tool_failed' } });
       contextSnapshot.toolCalls = toolCalls;
-      if (isToolError(value)) return this.refused(contextSnapshot, finalRaw, usageSeen, inputTokens, outputTokens, totalTokens);
+      if (!execution.result.success) return this.refused(contextSnapshot, finalRaw, usageSeen, inputTokens, outputTokens, totalTokens);
     }
 
     return this.refused(contextSnapshot, finalRaw, usageSeen, inputTokens, outputTokens, totalTokens);
   }
 
-  private async execute(
-    call: PlannerToolCall,
-    context: ToolContext,
+  private collectToolData(
+    name: PlannerToolCall['name'],
+    data: unknown,
     hits: Map<number, SearchHit>,
     products: Map<string, ProductSummary | ProductDetail>,
-  ): Promise<unknown> {
-    const tool = this.tools.get(call.name);
-    const input = tool.inputSchema.safeParse(call.arguments);
-    if (!input.success) return { error: 'invalid_arguments' };
-
-    const result = await tool.execute(input.data, context);
-    if (!result.success) return { error: result.errorCode ?? 'tool_failed' };
-
-    if (call.name === 'search_knowledge' && result.data && typeof result.data === 'object' && 'hits' in result.data) {
-      const searchResult = result.data as { hits: SearchHit[] };
+    context: ToolContext,
+  ): void {
+    if (name === 'search_knowledge' && data && typeof data === 'object' && 'hits' in data) {
+      const searchResult = data as { hits: SearchHit[] };
       for (const hit of searchResult.hits) hits.set(hit.chunkId, hit);
     }
-    if (call.name === 'list_products' && result.data && typeof result.data === 'object' && 'products' in result.data) {
-      const productResult = result.data as { products: ProductSummary[] };
+    if (name === 'list_products' && data && typeof data === 'object' && 'products' in data) {
+      const productResult = data as { products: ProductSummary[] };
       for (const product of productResult.products) products.set(product.id, product);
       const knownProductIds = context.state.get('knownProductIds');
       if (knownProductIds instanceof Set) for (const product of productResult.products) knownProductIds.add(product.id);
     }
-    if (call.name === 'get_product_detail' && result.data && typeof result.data === 'object' && 'id' in result.data) {
-      const product = result.data as ProductDetail;
+    if (name === 'get_product_detail' && data && typeof data === 'object' && 'id' in data) {
+      const product = data as ProductDetail;
       products.set(product.id, product);
     }
-    // `content` is the model-facing evidence; `data` remains available to
-    // the orchestrator for citation and product validation.
-    return result.content;
   }
 
   private refused(contextSnapshot: Record<string, unknown>, raw: string, usageSeen: boolean, input: number, output: number, total: number): ChatRun {
@@ -182,10 +159,6 @@ function parseFinalOutput(value: unknown): Record<string, unknown> | null {
   if (result.type !== 'final') return null;
   if (result.status !== 'answered' && result.status !== 'refused') return null;
   return result;
-}
-
-function isToolError(value: unknown): value is { error: string } {
-  return Boolean(value && typeof value === 'object' && 'error' in value);
 }
 
 export function validateAgentAnswer(raw: string, hits: SearchHit[], products: Array<ProductSummary | ProductDetail>): Pick<ChatRun['result'], 'answer' | 'refused' | 'citations'> {

@@ -1,9 +1,18 @@
 import { Module } from '@nestjs/common';
+import { ConfigModule } from '../config/config.module';
+import { ProviderRegistry } from './providers/provider-registry';
 import { LLM_PROVIDER } from './providers/llm-provider';
-import { OpenAICompatibleProvider } from './providers/openai-compatible.provider';
 
 @Module({
-  providers: [OpenAICompatibleProvider, { provide: LLM_PROVIDER, useExisting: OpenAICompatibleProvider }],
-  exports: [LLM_PROVIDER, OpenAICompatibleProvider],
+  imports: [ConfigModule],
+  providers: [
+    ProviderRegistry,
+    {
+      provide: LLM_PROVIDER,
+      useFactory: (registry: ProviderRegistry) => registry.createLlmProvider(),
+      inject: [ProviderRegistry],
+    },
+  ],
+  exports: [LLM_PROVIDER, ProviderRegistry],
 })
 export class AiModule {}

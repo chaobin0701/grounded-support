@@ -36,9 +36,11 @@ services:
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-doubao-embedding-vision-251215}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai-compatible}
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
       LLM_MODEL: ${LLM_MODEL:-deepseek-v4-1-flash-260910}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-20000}
       PORT: "3000"
     volumes:
       - uploads:/data/uploads
