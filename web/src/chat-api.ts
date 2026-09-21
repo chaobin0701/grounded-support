@@ -30,6 +30,18 @@ export interface ConversationMessage {
   createdAt: string;
 }
 
+export interface ConversationRun {
+  id: string;
+  clientRequestId: string;
+  question: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'expired';
+  expiresAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  errorCode: string | null;
+  createdAt: string;
+}
+
 export class ChatApiError extends Error {
   constructor(readonly status: number) {
     super(`Chat API returned HTTP ${status}`);
@@ -56,10 +68,10 @@ export async function askQuestion(question: string, history: PreviousTurn[] = []
   return parseAnswer(await response.json());
 }
 
-export async function askInConversation(conversationId: string, question: string): Promise<ChatAnswer> {
+export async function askInConversation(conversationId: string, question: string, idempotencyKey?: string): Promise<ChatAnswer> {
   const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
     body: JSON.stringify({ question }),
     signal: AbortSignal.timeout(65_000),
   });
@@ -67,10 +79,10 @@ export async function askInConversation(conversationId: string, question: string
   return parseAnswer(await response.json());
 }
 
-export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void): Promise<ChatAnswer> {
+export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, idempotencyKey?: string): Promise<ChatAnswer> {
   const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
     body: JSON.stringify({ question }),
     signal: AbortSignal.timeout(65_000),
   });
@@ -95,7 +107,8 @@ export async function askInConversationStream(conversationId: string, question: 
           if (typeof payload.text !== 'string') throw new Error('Invalid stream delta');
           onDelta(payload.text);
         } else if (data && event === 'error') {
-          throw new ChatApiError(503);
+          const payload = JSON.parse(data) as { status?: unknown };
+          throw new ChatApiError(typeof payload.status === 'number' ? payload.status : response.status || 503);
         } else if (data && event === 'done') {
           finalAnswer = parseAnswer(JSON.parse(data));
         }
@@ -120,6 +133,7 @@ export const conversationApi = {
   list: () => conversationRequest<ConversationItem[]>(''),
   create: () => conversationRequest<ConversationItem>('', { method: 'POST' }),
   messages: (id: string) => conversationRequest<ConversationMessage[]>(`/${encodeURIComponent(id)}/messages`),
+  runs: (id: string) => conversationRequest<ConversationRun[]>(`/${encodeURIComponent(id)}/runs`),
   remove: async (id: string) => {
     const response = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
     if (!response.ok) throw new ChatApiError(response.status);

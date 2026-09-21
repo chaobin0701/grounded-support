@@ -138,9 +138,12 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 | GET | `/api/chat/conversations/:id/messages` | 查看本会话完整消息 |
 | POST | `/api/chat/conversations/:id/messages` | 在本会话提问，返回 JSON |
 | POST | `/api/chat/conversations/:id/messages/stream` | 在本会话提问，返回已校验答案的 SSE 分段 |
+| GET | `/api/chat/conversations/:id/runs` | 查看本会话最近的请求运行状态 |
 | DELETE | `/api/chat/conversations/:id` | 删除本会话、消息与轨迹 |
 
 以上接口均用匿名 Cookie 校验会话归属；其他浏览器请求该会话 ID 返回 404。一次会话同时只允许一个未完成回答。
+
+页面会在 `localStorage` 保存当前会话 ID，以及尚未完成请求的本地 request ID。刷新或重新打开同一浏览器后，前端会重新加载会话、完整消息和运行记录；已完成运行直接从持久化消息恢复，仍处于 `queued`/`running` 的运行会显示为待恢复状态。每次带 `Idempotency-Key` 的请求都会写入 `conversation_runs`，相同请求键重试不会重复写入消息；同一请求键提交不同问题会返回 409。运行超过 5 分钟后由查询接口惰性标记为 `expired`，之后允许使用同一请求键重新执行；当前没有后台清理任务。旧请求若在过期后才完成，不会再写入消息。
 
 ```bash
 curl -X POST http://localhost:8081/api/chat \

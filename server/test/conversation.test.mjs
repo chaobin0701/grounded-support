@@ -56,3 +56,25 @@ test('conversation snapshot keeps summary and recent history inside one conversa
   assert.deepEqual(snapshot.history, [{ question: 'H2 有多大功率？', answer: 'H2 的额定功率是 1500 W。' }]);
   await assert.rejects(() => service.snapshot('browser-b', 'conversation-a'), (error) => error.getStatus() === 404);
 });
+
+test('an expired run cannot persist a late answer', async () => {
+  const statements = [];
+  const client = {
+    query: async (sql) => {
+      statements.push(sql);
+      if (sql.includes('FROM conversation_runs') && sql.includes("status = 'running'")) return { rows: [] };
+      throw new Error(`Unexpected query after expired run guard: ${sql}`);
+    },
+  };
+  const database = { transaction: async (callback) => callback(client) };
+  const service = new ConversationService(database, {}, { model: 'test-model' });
+  await assert.rejects(
+    () => service.saveResult?.('conversation-a', '晚到的问题', {
+      result: { answer: '不应保存', refused: false, citations: [] },
+      contextSnapshot: {}, rawModelOutput: null,
+      inputTokens: null, outputTokens: null, totalTokens: null,
+    }, 10, 'run-a'),
+    (error) => error.getStatus() === 409,
+  );
+  assert.equal(statements.length, 1);
+});

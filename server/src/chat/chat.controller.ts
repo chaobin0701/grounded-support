@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpException, Param, ParseUUIDPipe, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AskQuestionDto } from './chat.dto';
 import { ChatRateLimitService } from './chat-rate-limit.service';
@@ -28,6 +28,11 @@ export class ChatController {
     return this.conversations.messages(await this.conversations.session(request, response), id);
   }
 
+  @Get('conversations/:id/runs')
+  async listRuns(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    return this.conversations.runs(await this.conversations.session(request, response), id);
+  }
+
   @Delete('conversations/:id')
   @HttpCode(204)
   async deleteConversation(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
@@ -38,7 +43,7 @@ export class ChatController {
   @HttpCode(200)
   async askInConversation(@Param('id', ParseUUIDPipe) id: string, @Body() body: AskQuestionDto, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const owner = await this.conversations.session(request, response);
-    return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', () => this.conversations.ask(owner, id, body.question));
+    return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', () => this.conversations.ask(owner, id, body.question, undefined, undefined, this.idempotencyKey(request)));
   }
 
   @Post('conversations/:id/messages/stream')
@@ -48,10 +53,10 @@ export class ChatController {
     return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', async () => {
       this.beginStream(response);
       try {
-        const answer = await this.conversations.ask(owner, id, body.question);
+        const answer = await this.conversations.ask(owner, id, body.question, undefined, undefined, this.idempotencyKey(request));
         await this.writeAnswerStream(response, answer);
-      } catch {
-        this.writeStreamError(response);
+      } catch (error) {
+        this.writeStreamError(response, error);
       }
     });
   }
@@ -83,11 +88,19 @@ export class ChatController {
     response.flushHeaders();
   }
 
-  private writeStreamError(response: Response) {
+  private writeStreamError(response: Response, error?: unknown) {
     if (!response.destroyed) {
-      response.write(`event: error\ndata: ${JSON.stringify({ message: '回答服务暂时不可用，请稍后重试。' })}\n\n`);
+      const status = error instanceof HttpException ? error.getStatus() : 503;
+      response.statusCode = status;
+      const message = status === 409 ? '上一轮请求仍在处理中，请稍后查看会话。' : status === 400 ? '请求参数无效，请重新发送。' : '回答服务暂时不可用，请稍后重试。';
+      response.write(`event: error\ndata: ${JSON.stringify({ status, message })}\n\n`);
       response.end();
     }
+  }
+
+  private idempotencyKey(request: Request): string | undefined {
+    const value = request.headers['idempotency-key'];
+    return Array.isArray(value) ? value[0] : value;
   }
 
   private async writeAnswerStream(response: Response, answer: Awaited<ReturnType<ChatService['ask']>>) {

@@ -139,6 +139,25 @@ export const conversationMessages = pgTable('conversation_messages', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [index('conversation_messages_conversation_id_idx').on(table.conversationId, table.id)]);
 
+export const conversationRuns = pgTable('conversation_runs', {
+  id: uuid('id').primaryKey(),
+  conversationId: uuid('conversation_id').notNull().references(() => conversations.id, { onDelete: 'cascade' }),
+  clientRequestId: varchar('client_request_id', { length: 120 }).notNull(),
+  question: text('question').notNull(),
+  status: varchar('status', { length: 20 }).notNull(),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  errorCode: varchar('error_code', { length: 80 }),
+  userMessageId: bigint('user_message_id', { mode: 'number' }).references(() => conversationMessages.id, { onDelete: 'set null' }),
+  assistantMessageId: bigint('assistant_message_id', { mode: 'number' }).references(() => conversationMessages.id, { onDelete: 'set null' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex('conversation_runs_conversation_request_key').on(table.conversationId, table.clientRequestId),
+  index('conversation_runs_conversation_created_idx').on(table.conversationId, table.createdAt),
+  index('conversation_runs_expiry_idx').on(table.status, table.expiresAt),
+]);
+
 export const chatTraces = pgTable('chat_traces', {
   id: uuid('id').primaryKey(),
   kind: varchar('kind', { length: 20 }).notNull().default('answer'),

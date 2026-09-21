@@ -4,6 +4,8 @@ import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer
 import AdminApp from './AdminApp.vue';
 
 const isAdminRoute = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/');
+const ACTIVE_CONVERSATION_KEY = 'grounded.activeConversationId';
+const PENDING_REQUEST_KEY = 'grounded.pendingChatRequest';
 
 type Message = { id: number; role: 'visitor'; text: string } | { id: number; role: 'assistant'; text: string; refused: boolean };
 
@@ -20,6 +22,28 @@ const health = ref<'checking' | 'online' | 'offline'>('checking');
 const conversation = ref<HTMLElement | null>(null);
 let nextId = -1;
 
+type PendingRequest = { conversationId: string; requestId: string; question: string };
+
+function readPendingRequest(): PendingRequest | null {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(PENDING_REQUEST_KEY) || 'null') as Partial<PendingRequest> | null;
+    if (value && typeof value.conversationId === 'string' && typeof value.requestId === 'string' && typeof value.question === 'string') return value as PendingRequest;
+  } catch { /* Ignore malformed browser state and start a new request. */ }
+  return null;
+}
+
+function savePendingRequest(value: PendingRequest) {
+  window.localStorage.setItem(PENDING_REQUEST_KEY, JSON.stringify(value));
+}
+
+function clearPendingRequest() {
+  window.localStorage.removeItem(PENDING_REQUEST_KEY);
+}
+
+function newRequestId(): string {
+  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 onMounted(async () => {
   if (isAdminRoute) return;
   isLoadingConversations.value = true;
@@ -31,7 +55,10 @@ onMounted(async () => {
   }
   try {
     conversations.value = await conversationApi.list();
-    if (conversations.value[0]) await openConversation(conversations.value[0].id);
+    const savedId = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+    const preferred = conversations.value.find((item) => item.id === savedId) || conversations.value[0];
+    if (preferred) await openConversation(preferred.id);
+    else await newConversation();
   } catch {
     errorMessage.value = '暂时无法加载历史对话，请稍后刷新。';
   } finally {
@@ -50,8 +77,10 @@ async function openConversation(id: string) {
   try {
     const items = await conversationApi.messages(id);
     activeConversationId.value = id;
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, id);
     messages.value = displayMessages(items);
     errorMessage.value = '';
+    await recoverPendingRequest(id);
     await scrollToLatest();
   } catch {
     errorMessage.value = '无法打开这段对话，请重试。';
@@ -64,6 +93,7 @@ async function newConversation() {
     const item = await conversationApi.create();
     conversations.value.unshift(item);
     activeConversationId.value = item.id;
+    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, item.id);
     messages.value = [];
     question.value = '';
     errorMessage.value = '';
@@ -79,11 +109,40 @@ async function removeConversation(item: ConversationItem) {
     conversations.value = conversations.value.filter((entry) => entry.id !== item.id);
     if (activeConversationId.value === item.id) {
       activeConversationId.value = null;
+      window.localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
+      const pending = readPendingRequest();
+      if (pending?.conversationId === item.id) clearPendingRequest();
       messages.value = [];
       if (conversations.value[0]) await openConversation(conversations.value[0].id);
+      else await newConversation();
     }
   } catch {
     errorMessage.value = '删除对话失败，请重试。';
+  }
+}
+
+async function recoverPendingRequest(id: string) {
+  try {
+    const runs = await conversationApi.runs(id);
+    const pending = readPendingRequest();
+    const run = pending?.conversationId === id
+      ? runs.find((item) => item.clientRequestId === pending.requestId)
+      : runs.find((item) => item.status === 'queued' || item.status === 'running');
+    if (!run) return;
+    if (run.status === 'completed') {
+      if (pending?.conversationId === id) clearPendingRequest();
+      return;
+    }
+    const runQuestion = pending?.conversationId === id ? pending.question : run.question;
+    question.value = runQuestion;
+    if (run.status === 'queued' || run.status === 'running') {
+      errorMessage.value = '上一轮请求仍在处理中，稍后可继续查看。';
+    } else {
+      errorMessage.value = '上一轮请求未完成，可以重新发送。';
+      if (pending?.conversationId === id) clearPendingRequest();
+    }
+  } catch {
+    // Conversation history remains usable when status recovery is unavailable.
   }
 }
 
@@ -103,23 +162,30 @@ async function send(value = question.value) {
   errorMessage.value = '';
   question.value = '';
   isSending.value = true;
+  draftAnswer.value = '';
   let pushed = false;
+  let requestId: string | undefined;
   try {
     let id = activeConversationId.value;
     if (!id) {
       const item = await conversationApi.create();
       conversations.value.unshift(item);
       activeConversationId.value = item.id;
+      window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, item.id);
       id = item.id;
     }
+    const pending = readPendingRequest();
+    requestId = pending?.conversationId === id && pending.question === trimmed ? pending.requestId : newRequestId();
+    savePendingRequest({ conversationId: id, requestId, question: trimmed });
     messages.value.push({ id: nextId--, role: 'visitor', text: trimmed });
     pushed = true;
     await scrollToLatest();
     const result: ChatAnswer = await askInConversationStream(id, trimmed, (text) => {
       draftAnswer.value += text;
       void scrollToLatest();
-    });
+    }, requestId);
     messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused });
+    clearPendingRequest();
     try { conversations.value = await conversationApi.list(); } catch { /* Answer was saved; list can refresh later. */ }
   } catch (error) {
     let recovered = false;
@@ -130,6 +196,7 @@ async function send(value = question.value) {
         if (last[0]?.role === 'user' && last[0].content === trimmed && last[1]?.role === 'assistant') {
           messages.value = displayMessages(saved);
           errorMessage.value = '连接中断，但回答已保存并恢复。';
+          clearPendingRequest();
           recovered = true;
         }
       } catch { /* Keep the original request error. */ }
@@ -139,6 +206,7 @@ async function send(value = question.value) {
         errorMessage.value = '提问有些频繁，请稍后再试。';
       } else if (error instanceof ChatApiError && error.status === 503) {
         errorMessage.value = '回答服务暂时不可用，请稍后再试。';
+        clearPendingRequest();
       } else {
         errorMessage.value = '发送失败，请检查网络后重试。';
       }
