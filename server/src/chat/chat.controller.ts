@@ -4,6 +4,7 @@ import { AskQuestionDto } from './chat.dto';
 import { ChatRateLimitService } from './chat-rate-limit.service';
 import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
+import { ChatApplicationService } from './chat-application.service';
 
 @Controller('chat')
 export class ChatController {
@@ -11,6 +12,7 @@ export class ChatController {
     private readonly chat: ChatService,
     private readonly rateLimit: ChatRateLimitService,
     private readonly conversations: ConversationService,
+    private readonly application: ChatApplicationService,
   ) {}
 
   @Get('conversations')
@@ -43,7 +45,7 @@ export class ChatController {
   @HttpCode(200)
   async askInConversation(@Param('id', ParseUUIDPipe) id: string, @Body() body: AskQuestionDto, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
     const owner = await this.conversations.session(request, response);
-    return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', () => this.conversations.ask(owner, id, body.question, undefined, undefined, this.idempotencyKey(request)));
+    return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', () => this.application.ask({ channel: 'browser', conversationId: id, ownerId: owner, question: body.question, clientRequestId: this.idempotencyKey(request), requestId: this.requestId(request) }));
   }
 
   @Post('conversations/:id/messages/stream')
@@ -53,7 +55,7 @@ export class ChatController {
     return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', async () => {
       this.beginStream(response);
       try {
-        const answer = await this.conversations.ask(owner, id, body.question, undefined, undefined, this.idempotencyKey(request));
+        const answer = await this.application.ask({ channel: 'browser', conversationId: id, ownerId: owner, question: body.question, clientRequestId: this.idempotencyKey(request), requestId: this.requestId(request) });
         await this.writeAnswerStream(response, answer);
       } catch (error) {
         this.writeStreamError(response, error);
@@ -101,6 +103,11 @@ export class ChatController {
   private idempotencyKey(request: Request): string | undefined {
     const value = request.headers['idempotency-key'];
     return Array.isArray(value) ? value[0] : value;
+  }
+
+  private requestId(request: Request): string {
+    const value = request.headers['x-request-id'];
+    return (Array.isArray(value) ? value[0] : value) ?? `${request.method}:${request.originalUrl}`;
   }
 
   private async writeAnswerStream(response: Response, answer: Awaited<ReturnType<ChatService['ask']>>) {

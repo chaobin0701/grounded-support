@@ -8,10 +8,11 @@ import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
 import { AgentModule } from '../ai/agent/agent.module';
+import { ChatApplicationService } from './chat-application.service';
 
 @Module({
   imports: [DocumentModule, AdminModule, AgentModule],
   controllers: [ChatController, AdminChatTraceController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService],
 })
 export class ChatModule {}
