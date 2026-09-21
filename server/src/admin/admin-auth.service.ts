@@ -6,10 +6,11 @@ import { DatabaseService } from '../database.service';
 import { admins } from '../db/schema';
 import { AdminLoginDto } from './auth.dto';
 import { AdminPrincipal } from './admin.types';
+import { AppConfigService } from '../config/config.service';
 
 @Injectable()
 export class AdminAuthService {
-  constructor(private readonly database: DatabaseService, private readonly jwt: JwtService) {}
+  constructor(private readonly database: DatabaseService, private readonly jwt: JwtService, private readonly config: AppConfigService) {}
 
   async me(admin: AdminPrincipal) {
     const [roles, permissions] = await Promise.all([
@@ -41,7 +42,7 @@ export class AdminAuthService {
     return {
       accessToken: await this.jwt.signAsync({ sub: String(admin.id) }),
       tokenType: 'Bearer',
-      expiresIn: 900,
+      expiresIn: this.config.jwt.expiresInSeconds,
       admin: { id: admin.id, email: admin.email, displayName: admin.displayName },
     };
   }

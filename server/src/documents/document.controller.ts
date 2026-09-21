@@ -4,20 +4,30 @@ import { AdminAuthGuard } from '../admin/admin-auth.guard';
 import { AdminRequest } from '../admin/admin.types';
 import { RequirePermission } from '../admin/permission.decorator';
 import { PermissionGuard } from '../admin/permission.guard';
+import { SecurityRateLimitService } from '../security/security-rate-limit.service';
 import { UploadDocumentDto } from './document.dto';
 import { DocumentService } from './document.service';
 
 @Controller('admin/documents')
 @UseGuards(AdminAuthGuard, PermissionGuard)
 export class DocumentController {
-  constructor(private readonly documents: DocumentService) {}
+  constructor(private readonly documents: DocumentService, private readonly rateLimit: SecurityRateLimitService) {}
 
   @Post()
   @HttpCode(202)
   @RequirePermission('documents.upload')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1 } }))
+  @UseInterceptors(FileInterceptor('file', {
+    limits: {
+      fileSize: 2 * 1024 * 1024,
+      files: 1,
+      fields: 1,
+      parts: 2,
+      fieldSize: 8 * 1024,
+    },
+  }))
   upload(@Req() request: AdminRequest, @UploadedFile() file: Express.Multer.File, @Body() body: UploadDocumentDto) {
-    return this.documents.upload(request.admin!.id, file, body.title);
+    const source = request as AdminRequest & { ip?: string; socket?: { remoteAddress?: string } };
+    return this.rateLimit.run('document-upload', source.ip || source.socket?.remoteAddress || `admin:${request.admin!.id}`, () => this.documents.upload(request.admin!.id, file, body.title));
   }
 
   @Get()

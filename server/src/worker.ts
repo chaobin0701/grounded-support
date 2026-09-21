@@ -7,9 +7,11 @@ import { DOCUMENT_INGEST_QUEUE } from './documents/document-queue.service';
 import { documentPath } from './documents/document-storage';
 import { EmbeddingService } from './documents/embedding.service';
 import { parseDocument, ScannedPdfError } from './documents/extract-document';
+import { AppConfigService } from './config/config.service';
 
 type DocumentJob = { documentId: number };
-const embeddings = new EmbeddingService();
+const runtimeConfig = new AppConfigService();
+const embeddings = new EmbeddingService(runtimeConfig);
 
 async function processDocument(pool: Pool, documentId: number): Promise<void> {
   if (!Number.isSafeInteger(documentId) || documentId <= 0) throw new Error('Invalid document ID');
@@ -22,7 +24,7 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
   if (!document) return;
 
   try {
-    const bytes = await readFile(documentPath(document.storage_key));
+    const bytes = await readFile(documentPath(document.storage_key, runtimeConfig));
     if (bytes.length !== document.byte_size || createHash('sha256').update(bytes).digest('hex') !== document.sha256) {
       throw new Error('Stored file failed integrity check');
     }
@@ -79,7 +81,7 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
 }
 
 async function bootstrap(): Promise<void> {
-  const connectionString = process.env.DATABASE_URL;
+  const connectionString = runtimeConfig.databaseUrl;
   if (!connectionString) throw new Error('DATABASE_URL is required');
 
   const boss = new PgBoss(connectionString);

@@ -162,6 +162,12 @@ curl -X POST http://localhost:8081/api/chat \
 
 工具负责执行能力，不负责决定是否调用、生成最终答案或绕过引用校验。模型和工具返回值都被视为不可信数据，最终回答仍必须通过来源 ID 或已取得的产品 ID 校验。本阶段移除了 MCP 子进程、MCP 客户端和后台 MCP 管理页面；未来若重新接入 MCP，可通过 `McpToolAdapter implements AgentTool` 接入同一个 Registry，而不修改 Agent 主流程。
 
+### Agent Runtime
+
+当前 Agent 执行边界位于 `server/src/ai/agent/`：`AgentLoop` 处理一次“模型规划 → 工具执行或最终答案”的步骤，`AgentRunner` 创建单次运行状态并执行最多六轮循环。它们只依赖 `LlmService`、`ContextBuilder` 和 `ToolExecutionService`，不访问 HTTP、数据库、Cookie 或会话持久化。
+
+`ChatOrchestratorService` 现在只负责把会话问题、摘要和最近历史转换为 `AgentInput`，再把 `AgentResult` 转成现有 `ChatRun`。因此，Agent Runtime 可以使用 fake provider 和 fake tools 独立测试，后续增加其他传输方式时不需要复制 Agent 循环。一次运行的工具轨迹、资料命中、产品结果和 Token 用量仍通过现有 `contextSnapshot` 与 `chat_traces` 保存。
+
 旧迁移 `0009_mcp_capability_policy.sql` 保留在迁移历史中，但当前 Drizzle schema 和运行时代码不再使用这些表；暂不执行删除表迁移，避免破坏已有数据库的回滚和后续学习记录。
 
 本地验证：在 `server/` 运行 `npm test`，然后启动服务后分别询问资料政策和产品目录，再在同一会话追问规格。不要将 mock 产品目录当作真实商品信息。

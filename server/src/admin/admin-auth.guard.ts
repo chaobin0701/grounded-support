@@ -4,10 +4,11 @@ import { eq } from 'drizzle-orm';
 import { DatabaseService } from '../database.service';
 import { admins } from '../db/schema';
 import { AdminRequest } from './admin.types';
+import { AppConfigService } from '../config/config.service';
 
 @Injectable()
 export class AdminAuthGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService, private readonly database: DatabaseService) {}
+  constructor(private readonly jwt: JwtService, private readonly database: DatabaseService, private readonly config: AppConfigService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AdminRequest>();
@@ -16,7 +17,10 @@ export class AdminAuthGuard implements CanActivate {
 
     let subject: string;
     try {
-      const claims = await this.jwt.verifyAsync<{ sub: string }>(token);
+      const claims = await this.jwt.verifyAsync<{ sub: string }>(token, {
+        issuer: this.config.jwt.issuer,
+        audience: this.config.jwt.audience,
+      });
       subject = claims.sub;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');

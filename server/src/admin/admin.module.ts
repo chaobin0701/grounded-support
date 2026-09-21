@@ -7,17 +7,20 @@ import { AdminManagementController } from './admin-management.controller';
 import { AdminManagementService } from './admin-management.service';
 import { PermissionGuard } from './permission.guard';
 import { DatabaseService } from '../database.service';
-
-function jwtSecret(): string {
-  const secret = process.env.JWT_SECRET;
-  if (!secret || Buffer.byteLength(secret, 'utf8') < 32) {
-    throw new Error('JWT_SECRET must be at least 32 bytes');
-  }
-  return secret;
-}
+import { AppConfigService } from '../config/config.service';
 
 @Module({
-  imports: [JwtModule.register({ secret: jwtSecret(), signOptions: { expiresIn: '15m' } })],
+  imports: [JwtModule.registerAsync({
+    inject: [AppConfigService],
+    useFactory: (config: AppConfigService) => {
+      const secret = config.jwt.secret;
+      if (!secret || Buffer.byteLength(secret, 'utf8') < 32) throw new Error('JWT_SECRET must be at least 32 bytes');
+      return {
+        secret,
+        signOptions: { expiresIn: config.jwt.expiresInSeconds, issuer: config.jwt.issuer, audience: config.jwt.audience },
+      };
+    },
+  })],
   controllers: [AdminAuthController, AdminManagementController],
   providers: [DatabaseService, AdminAuthService, AdminManagementService, AdminAuthGuard, PermissionGuard],
   exports: [JwtModule, DatabaseService, AdminAuthGuard, PermissionGuard],

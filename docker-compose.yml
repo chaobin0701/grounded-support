@@ -33,6 +33,20 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      JWT_ISSUER: ${JWT_ISSUER:-grounded-support}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-grounded-support-admin}
+      JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-900}
+      UPLOAD_ROOT: ${UPLOAD_ROOT:-/data/uploads}
+      TRUST_PROXY: ${TRUST_PROXY:-1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8081}
+      CHAT_RATE_WINDOW_MS: ${CHAT_RATE_WINDOW_MS:-60000}
+      CHAT_RATE_LIMIT: ${CHAT_RATE_LIMIT:-10}
+      CHAT_CONCURRENCY: ${CHAT_CONCURRENCY:-5}
+      ADMIN_LOGIN_RATE_WINDOW_MS: ${ADMIN_LOGIN_RATE_WINDOW_MS:-60000}
+      ADMIN_LOGIN_RATE_LIMIT: ${ADMIN_LOGIN_RATE_LIMIT:-5}
+      DOCUMENT_UPLOAD_RATE_WINDOW_MS: ${DOCUMENT_UPLOAD_RATE_WINDOW_MS:-60000}
+      DOCUMENT_UPLOAD_RATE_LIMIT: ${DOCUMENT_UPLOAD_RATE_LIMIT:-10}
+      DOCUMENT_UPLOAD_CONCURRENCY: ${DOCUMENT_UPLOAD_CONCURRENCY:-2}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-doubao-embedding-vision-251215}
@@ -59,6 +73,7 @@ services:
     command: ["node", "dist/worker.js"]
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-grounded}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-grounded_support}
+      UPLOAD_ROOT: ${UPLOAD_ROOT:-/data/uploads}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-https://ark.cn-beijing.volces.com/api/v3}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-doubao-embedding-vision-251215}

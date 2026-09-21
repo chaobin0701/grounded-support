@@ -1,12 +1,18 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PgBoss } from 'pg-boss';
 import { PoolClient } from 'pg';
+import { AppConfigService } from '../config/config.service';
 
 export const DOCUMENT_INGEST_QUEUE = 'document-ingest';
 
 @Injectable()
 export class DocumentQueueService implements OnModuleInit, OnModuleDestroy {
-  private readonly boss = new PgBoss(process.env.DATABASE_URL!);
+  private readonly boss: PgBoss;
+
+  constructor(config: AppConfigService) {
+    if (!config.databaseUrl) throw new Error('DATABASE_URL is required');
+    this.boss = new PgBoss(config.databaseUrl);
+  }
 
   async onModuleInit(): Promise<void> {
     await this.boss.start();

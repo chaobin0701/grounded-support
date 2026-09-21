@@ -3,11 +3,18 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { Pool, PoolClient, QueryResult, QueryResultRow } from 'pg';
 import * as schema from './db/schema';
+import { AppConfigService } from './config/config.service';
 
 @Injectable()
 export class DatabaseService implements OnModuleInit, OnModuleDestroy {
-  private readonly pool = new Pool({ connectionString: process.env.DATABASE_URL });
-  readonly db = drizzle(this.pool, { schema });
+  private readonly pool: Pool;
+  readonly db: ReturnType<typeof drizzle<typeof schema>>;
+
+  constructor(config: AppConfigService) {
+    if (!config.databaseUrl) throw new Error('DATABASE_URL is required');
+    this.pool = new Pool({ connectionString: config.databaseUrl });
+    this.db = drizzle(this.pool, { schema });
+  }
 
   async onModuleInit(): Promise<void> {
     await this.check();

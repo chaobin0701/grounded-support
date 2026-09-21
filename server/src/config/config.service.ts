@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { AppConfig, LlmConfig, readConfigEnvironment } from './config.schema';
+import { AppConfig, EmbeddingConfig, JwtConfig, LlmConfig, readConfigEnvironment, SecurityConfig } from './config.schema';
 
 @Injectable()
 export class AppConfigService {
@@ -15,5 +15,25 @@ export class AppConfigService {
 
   get llm(): LlmConfig {
     return this.config.llm;
+  }
+
+  get databaseUrl(): string {
+    return this.config.databaseUrl;
+  }
+
+  get uploadRoot(): string {
+    return this.config.uploadRoot;
+  }
+
+  get jwt(): JwtConfig {
+    return this.config.jwt;
+  }
+
+  get security(): SecurityConfig {
+    return this.config.security;
+  }
+
+  get embedding(): EmbeddingConfig {
+    return this.config.embedding;
   }
 }

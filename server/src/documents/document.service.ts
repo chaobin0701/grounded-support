@@ -4,13 +4,14 @@ import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { basename, extname } from 'node:path';
 import { DatabaseService } from '../database.service';
 import { DocumentQueueService } from './document-queue.service';
-import { DOCUMENTS_DIR, documentPath } from './document-storage';
+import { documentsDir, documentPath } from './document-storage';
+import { AppConfigService } from '../config/config.service';
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
 @Injectable()
 export class DocumentService {
-  constructor(private readonly database: DatabaseService, private readonly queue: DocumentQueueService) {}
+  constructor(private readonly database: DatabaseService, private readonly queue: DocumentQueueService, private readonly config: AppConfigService) {}
 
   async upload(actorId: number, file: Express.Multer.File | undefined, rawTitle: string | undefined) {
     if (!file) throw new BadRequestException('A document file is required');
@@ -40,8 +41,8 @@ export class DocumentService {
     if (title.length > 200) throw new BadRequestException('Title is too long');
     const storageKey = `${randomUUID()}.${extension === '.markdown' ? 'md' : extension.slice(1)}`;
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
-    await mkdir(DOCUMENTS_DIR, { recursive: true });
-    await writeFile(documentPath(storageKey), file.buffer, { flag: 'wx' });
+    await mkdir(documentsDir(this.config), { recursive: true });
+    await writeFile(documentPath(storageKey, this.config), file.buffer, { flag: 'wx' });
 
     try {
       return await this.database.transaction(async (client) => {
@@ -64,7 +65,7 @@ export class DocumentService {
       // Keep the file if we cannot prove the transaction rolled back.
       try {
         const found = await this.database.query('SELECT 1 FROM documents WHERE storage_key = $1', [storageKey]);
-        if (!found.rows[0]) await unlink(documentPath(storageKey));
+        if (!found.rows[0]) await unlink(documentPath(storageKey, this.config));
       } catch {
         // Leave a possible orphan for later reconciliation rather than break a committed document.
       }

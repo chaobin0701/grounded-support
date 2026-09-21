@@ -1,10 +1,12 @@
 import { input, password } from '@inquirer/prompts';
 import { hash } from 'bcryptjs';
 import { Pool } from 'pg';
+import { readConfigEnvironment } from '../config/config.schema';
 
 async function main(): Promise<void> {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const config = readConfigEnvironment();
+  if (!config.databaseUrl) throw new Error('DATABASE_URL is required');
+  const pool = new Pool({ connectionString: config.databaseUrl });
   try {
     const existing = await pool.query('SELECT 1 FROM admins LIMIT 1');
     if (existing.rowCount) {

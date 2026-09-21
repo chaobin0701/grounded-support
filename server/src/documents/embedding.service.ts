@@ -1,4 +1,5 @@
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import { AppConfigService } from '../config/config.service';
 
 export const EMBEDDING_DIMENSIONS = 2048;
 
@@ -8,9 +9,18 @@ type EmbeddingResponse = {
 
 @Injectable()
 export class EmbeddingService {
-  readonly model = process.env.EMBEDDING_MODEL?.trim() || 'doubao-embedding-vision-251215';
-  readonly enabled = Boolean(process.env.EMBEDDING_API_KEY?.trim());
-  private readonly baseUrl = (process.env.EMBEDDING_BASE_URL?.trim() || 'https://ark.cn-beijing.volces.com/api/v3').replace(/\/+$/, '');
+  readonly model: string;
+  readonly enabled: boolean;
+  private readonly apiKey: string;
+  private readonly baseUrl: string;
+
+  constructor(config?: AppConfigService) {
+    const embedding = (config ?? new AppConfigService()).embedding;
+    this.apiKey = embedding.apiKey;
+    this.model = embedding.model;
+    this.enabled = Boolean(this.apiKey);
+    this.baseUrl = embedding.baseUrl.replace(/\/+$/, '');
+  }
 
   async embed(inputs: string[]): Promise<number[][]> {
     if (!this.enabled) throw new ServiceUnavailableException('Embedding provider is not configured');
@@ -23,7 +33,7 @@ export class EmbeddingService {
         response = await fetch(`${this.baseUrl}/embeddings/multimodal`, {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${process.env.EMBEDDING_API_KEY}`,
+            Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ model: this.model, input: [{ type: 'text', text: input }], encoding_format: 'float' }),
