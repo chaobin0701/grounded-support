@@ -5,6 +5,8 @@ import type { AgentResult } from './agent-result';
 import type { AgentState } from './agent-state';
 import { REFUSAL } from './agent-answer';
 import { AgentLoop } from './agent-loop';
+import { customerSupportSkill } from '../skills/built-in/customer-support.skill';
+import type { SkillDefinition } from '../skills/skill.types';
 
 @Injectable()
 export class AgentRunner {
@@ -20,10 +22,11 @@ export class AgentRunner {
       recentHistory: input.recentHistory,
       toolResults: [],
     });
-    const state = this.createState(initialContext);
+    const skill = input.skill ?? customerSupportSkill;
+    const state = this.createState(initialContext, skill);
     callbacks.onContext?.(state.contextSnapshot);
 
-    for (let round = 0; round < this.loop.maxToolCalls; round += 1) {
+    for (let round = 0; round < skill.maxToolCalls; round += 1) {
       const step = await this.loop.step(input, state);
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
@@ -31,31 +34,33 @@ export class AgentRunner {
     return this.toResult(state, { answer: REFUSAL, refused: true, citations: [] });
   }
 
-  private createState(initialContext: ReturnType<ContextBuilder['build']>): AgentState {
+  private createState(initialContext: ReturnType<ContextBuilder['build']>, skill: SkillDefinition): AgentState {
     return {
       toolContext: {
-        permissions: [],
+        permissions: skill.allowedTools,
         state: new Map([['knownProductIds', new Set<string>()]]),
       },
-      executionState: this.loop.createExecutionState(),
+      executionState: this.loop.createExecutionStateForSkill(skill.allowedTools, skill.maxToolCalls),
       toolCalls: [],
       toolResults: [],
       hits: new Map(),
       products: new Map(),
       contextSnapshot: {
         promptVersion: 'custom-orchestrator-v1',
-        systemPrompt: this.loop.prompt,
+        systemPrompt: `${this.loop.prompt}\n${skill.systemInstructions}`,
         question: initialContext.question,
         summary: initialContext.summary,
         history: initialContext.history,
         contextMetadata: initialContext.metadata,
         toolCalls: [],
+        skill: { id: skill.id, version: skill.version },
       },
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
       usageSeen: false,
       finalRaw: '',
+      skill,
     };
   }
 
@@ -79,6 +84,7 @@ export class AgentRunner {
       toolResults: state.toolResults,
       sources: [...state.hits.values()],
       products: [...state.products.values()],
+      skill: { id: state.skill.id, version: state.skill.version },
     };
   }
 }

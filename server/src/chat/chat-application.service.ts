@@ -23,7 +23,7 @@ export class ChatApplicationService {
     await this.messageBus.publish({ ...base, type: 'message.received', question: message.question });
     await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'run.started' });
     try {
-      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId);
+      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId, message.skillId);
       await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'message.completed', answer: answer.answer, refused: answer.refused, citations: answer.citations });
       return answer;
     } catch (error) {

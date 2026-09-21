@@ -7,4 +7,6 @@ export type InboundMessage = {
   question: string;
   clientRequestId?: string;
   requestId: string;
+  /** Optional controlled override; the server only accepts registered skills. */
+  skillId?: string;
 };

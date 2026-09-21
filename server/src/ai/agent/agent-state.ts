@@ -3,6 +3,7 @@ import type { ProductDetail, ProductSummary } from '../tools/product-catalog/pro
 import type { ToolContext } from '../tools/tool-context';
 import type { ToolExecutionTrace } from '../tools/tool-execution';
 import type { ToolExecutionState } from '../tools/tool-policy';
+import type { SkillDefinition } from '../skills/skill.types';
 
 export type AgentState = {
   toolContext: ToolContext;
@@ -17,4 +18,5 @@ export type AgentState = {
   totalTokens: number;
   usageSeen: boolean;
   finalRaw: string;
+  skill: SkillDefinition;
 };

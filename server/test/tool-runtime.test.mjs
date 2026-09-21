@@ -58,3 +58,19 @@ test('tool execution converts timeout and unknown tool failures to safe error co
   const unknown = await runtime.execute('missing', {}, context, runtime.createState());
   assert.equal(unknown.result.errorCode, 'unknown_tool');
 });
+
+test('tool execution enforces a skill tool allowlist and call limit', async () => {
+  const tool = (name) => ({
+    name,
+    inputSchema: { safeParse: (input) => ({ success: true, data: input }) },
+    execute: async () => ({ success: true, content: name }),
+  });
+  const runtime = new ToolExecutionService({ get: (name) => tool(name) }, new ToolPolicy());
+  const state = runtime.createStateForSkill(['allowed'], 1);
+  const denied = await runtime.execute('blocked', {}, context, state);
+  assert.equal(denied.result.errorCode, 'tool_not_allowed');
+  const allowed = await runtime.execute('allowed', {}, context, state);
+  assert.equal(allowed.result.success, true);
+  const limited = await runtime.execute('allowed-again', {}, context, state);
+  assert.equal(limited.result.errorCode, 'tool_not_allowed');
+});

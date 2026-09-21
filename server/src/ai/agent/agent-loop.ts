@@ -51,6 +51,10 @@ export class AgentLoop {
     return this.toolExecution.createState();
   }
 
+  createExecutionStateForSkill(allowedTools: readonly string[], maxToolCalls: number) {
+    return this.toolExecution.createStateForSkill(allowedTools, maxToolCalls);
+  }
+
   async step(input: AgentInput, state: AgentState): Promise<AgentStepResult> {
     const builtContext = this.contextBuilder.build({
       question: input.question,
@@ -60,7 +64,8 @@ export class AgentLoop {
     });
     state.contextSnapshot.contextMetadata = builtContext.metadata;
 
-    const model = await this.llm.completeDetailed(PLANNER_PROMPT, builtContext.userPrompt, this.llm.model, 'planner');
+    const skillPrompt = input.skill ? `\n当前 Skill：${input.skill.name}\nSkill 规则：${input.skill.systemInstructions}` : '';
+    const model = await this.llm.completeDetailed(`${PLANNER_PROMPT}${skillPrompt}`, builtContext.userPrompt, this.llm.model, 'planner');
     state.finalRaw = model.content;
     if (model.inputTokens !== null || model.outputTokens !== null || model.totalTokens !== null) state.usageSeen = true;
     state.inputTokens += model.inputTokens ?? 0;

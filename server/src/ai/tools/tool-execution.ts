@@ -34,6 +34,10 @@ export class ToolExecutionService {
     return this.policy.createState();
   }
 
+  createStateForSkill(allowedTools: readonly string[], maxToolCalls: number): ToolExecutionState {
+    return this.policy.createState({ allowedTools, maxToolCalls });
+  }
+
   async execute(
     name: string,
     args: Record<string, unknown>,

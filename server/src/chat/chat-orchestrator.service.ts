@@ -2,12 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { AgentRunner } from '../ai/agent/agent-runner';
 import type { PreviousTurnDto } from './chat.dto';
 import type { ChatRun, CommentaryEvent, ToolStep } from './chat.service';
+import { SkillSelector } from '../ai/skills/skill-selector';
+import { customerSupportSkill } from '../ai/skills/built-in/customer-support.skill';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
 @Injectable()
 export class ChatOrchestratorService {
-  constructor(private readonly agentRunner: AgentRunner) {}
+  constructor(private readonly agentRunner: AgentRunner, private readonly skillSelector?: SkillSelector) {}
 
   async askDetailed(
     question: string,
@@ -16,9 +18,13 @@ export class ChatOrchestratorService {
     onContext?: (context: Record<string, unknown>) => void,
     _onStep?: (step: ToolStep) => void,
     _onCommentary?: (event: CommentaryEvent) => void,
+    requestedSkillId?: string,
   ): Promise<ChatRun> {
+    const selected = this.skillSelector
+      ? this.skillSelector.select(question, requestedSkillId)
+      : { skill: customerSupportSkill, selectedBy: 'default' as const };
     const result = await this.agentRunner.run(
-      { question, summary, recentHistory: history },
+      { question, summary, recentHistory: history, skill: selected.skill },
       { onContext },
     );
     return {

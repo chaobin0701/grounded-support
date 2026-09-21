@@ -33,8 +33,8 @@ export class ChatService {
     return (await this.askDetailed(question, history)).result;
   }
 
-  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<ChatRun> {
-    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary);
+  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string): Promise<ChatRun> {
+    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId);
   }
 
 }
