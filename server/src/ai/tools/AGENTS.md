@@ -19,4 +19,4 @@
 
 工具只执行能力并返回结构化结果，不生成最终客服答案，也不绕过回答引用校验。模型调用由 Provider 负责，调用循环由 `ChatOrchestratorService` 负责；工具执行的通用限制由 Tool Runtime 负责。
 
-当前暂不引入 MCP。未来接入 MCP 时，应增加实现 `AgentTool` 的适配器，不要把 MCP 协议细节泄漏到业务工具或 Orchestrator 中。
+MCP 适配器位于 `../mcp/`，只将静态、进程内插件转换为 `AgentTool`；业务工具和 Orchestrator 不应依赖 MCP 协议细节。

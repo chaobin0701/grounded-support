@@ -6,9 +6,10 @@ import { LlmService } from '../../chat/llm.service';
 import { AgentLoop } from './agent-loop';
 import { AgentRunner } from './agent-runner';
 import { SkillsModule } from '../skills/skills.module';
+import { McpModule } from '../mcp/mcp.module';
 
 @Module({
-  imports: [AiModule, ToolsModule, SkillsModule],
+  imports: [AiModule, ToolsModule, SkillsModule, McpModule],
   providers: [ContextBuilder, LlmService, AgentLoop, AgentRunner],
   exports: [ContextBuilder, LlmService, AgentLoop, AgentRunner],
 })
