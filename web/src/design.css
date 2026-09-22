@@ -1,0 +1,34 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #eef4ff;
+  --color-brand-100: #dbe8ff;
+  --color-brand-500: #3166f5;
+  --color-brand-600: #2457e6;
+  --color-brand-700: #1f46bd;
+  --font-sans: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+@layer base {
+  :root { color-scheme: light; --ink:#172033; --muted:#64748b; --line:#e2e8f0; --pine:#2457e6; --canvas:#f8fafc; }
+  body { @apply bg-slate-50 text-slate-900 antialiased; }
+  button, a, input, textarea, select { @apply outline-none; }
+  :focus-visible { @apply ring-2 ring-brand-500 ring-offset-2; }
+}
+
+.brand-mark, .new-conversation, .message-avatar, .welcome-symbol, .composer button { background:#2457e6 !important; }
+.conversation-list-item:hover, .conversation-list-item.active { background:#eef4ff !important; }
+.conversation-list-item.active .conversation-open, .citations summary, .admin-entry { color:#2457e6 !important; }
+.health-dot.online { background:#22a06b; box-shadow:0 0 0 3px #dcfce7; }
+.sidebar-product-links { display:flex; flex-wrap:wrap; gap:10px; width:100%; margin:10px 0 0 17px; }
+.sidebar-product-links a { color:#64748b; font-size:11px; text-decoration:none; }
+.sidebar-product-links a:hover { color:#2457e6; }
+
+@layer components {
+  .ui-button { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50; }
+  .ui-button-primary { @apply border-brand-600 bg-brand-600 text-white shadow-sm hover:border-brand-700 hover:bg-brand-700; }
+  .ui-input { @apply h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 transition focus:border-brand-500 focus:ring-3 focus:ring-brand-100; }
+  .ui-surface { @apply rounded-xl border border-slate-200 bg-white; }
+  .ui-label { @apply text-xs font-semibold text-slate-600; }
+  .ui-badge { @apply inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600; }
+}

@@ -9,9 +9,10 @@ import { ConversationService } from './conversation.service';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
 import { AgentModule } from '../ai/agent/agent.module';
 import { ChatApplicationService } from './chat-application.service';
+import { SkillsModule } from '../ai/skills/skills.module';
 
 @Module({
-  imports: [DocumentModule, AdminModule, AgentModule],
+  imports: [DocumentModule, AdminModule, AgentModule, SkillsModule],
   controllers: [ChatController, AdminChatTraceController],
   providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService],
 })

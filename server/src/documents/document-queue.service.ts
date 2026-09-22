@@ -4,6 +4,7 @@ import { PoolClient } from 'pg';
 import { AppConfigService } from '../config/config.service';
 
 export const DOCUMENT_INGEST_QUEUE = 'document-ingest';
+export const KNOWLEDGE_INDEX_QUEUE = 'knowledge-index';
 
 @Injectable()
 export class DocumentQueueService implements OnModuleInit, OnModuleDestroy {
@@ -17,6 +18,7 @@ export class DocumentQueueService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit(): Promise<void> {
     await this.boss.start();
     await this.boss.createQueue(DOCUMENT_INGEST_QUEUE);
+    await this.boss.createQueue(KNOWLEDGE_INDEX_QUEUE);
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -31,5 +33,13 @@ export class DocumentQueueService implements OnModuleInit, OnModuleDestroy {
       db: { executeSql: (sql, values) => client.query(sql, values) },
     });
     if (!jobId) throw new Error('Failed to enqueue document');
+  }
+
+  async enqueueIndex(client: PoolClient, versionId: number): Promise<void> {
+    const jobId = await this.boss.send(KNOWLEDGE_INDEX_QUEUE, { versionId }, {
+      retryLimit: 2, retryDelay: 10, retryBackoff: true, expireInSeconds: 1800,
+      db: { executeSql: (sql, values) => client.query(sql, values) },
+    });
+    if (!jobId) throw new Error('Failed to enqueue knowledge index');
   }
 }

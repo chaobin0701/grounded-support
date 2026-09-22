@@ -6,11 +6,17 @@ import { DocumentService } from './document.service';
 import { EmbeddingService } from './embedding.service';
 import { SearchController } from './search.controller';
 import { SearchService } from './search.service';
+import { KnowledgeBaseController } from './knowledge-base.controller';
+import { KnowledgeBaseService } from './knowledge-base.service';
+import { KnowledgeIndexService } from './knowledge-index.service';
+import { EmbeddingProfileService } from './embedding-profile.service';
+import { VersionSearchService } from './version-search.service';
+import { FaqService } from './faq.service';
 
 @Module({
   imports: [AdminModule],
-  controllers: [DocumentController, SearchController],
-  providers: [DocumentQueueService, DocumentService, EmbeddingService, SearchService],
+  controllers: [DocumentController, SearchController, KnowledgeBaseController],
+  providers: [DocumentQueueService, DocumentService, EmbeddingService, SearchService, KnowledgeBaseService, KnowledgeIndexService, EmbeddingProfileService, VersionSearchService, FaqService],
   exports: [SearchService],
 })
 export class DocumentModule {}

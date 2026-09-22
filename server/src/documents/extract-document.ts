@@ -2,6 +2,8 @@ import { extname } from 'node:path';
 import mammoth from 'mammoth';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { DocumentChunk, parseMarkdownDocument } from './extract-markdown';
+import { DocumentBlock } from './document-block';
+import { parseFragment, DefaultTreeAdapterTypes } from 'parse5';
 
 const MAX_EXTRACTED_CHARS = 100_000;
 const MAX_CHUNKS = 200;
@@ -13,7 +15,7 @@ export class ScannedPdfError extends Error {
   constructor() { super('PDF contains no selectable text; scanned PDFs are not supported'); }
 }
 
-type ParsedDocument = { extractedText: string; chunks: DocumentChunk[] };
+export type ParsedDocument = { extractedText: string; chunks: DocumentChunk[]; blocks: DocumentBlock[]; warnings?: string[] };
 type TextBlock = { headingPath: string; content: string; sourceStartLine: number; sourceEndLine: number };
 
 function chunkPlainText(blocks: TextBlock[]): DocumentChunk[] {
@@ -55,13 +57,38 @@ function ensureLimits(parsed: ParsedDocument): ParsedDocument {
 }
 
 async function parseDocx(bytes: Buffer): Promise<ParsedDocument> {
-  const result = await mammoth.extractRawText({ buffer: bytes });
-  const paragraphs = result.value.split(/\n\s*\n/u).map((part) => part.replace(/\s+/gu, ' ').trim()).filter(Boolean);
+  const result = await mammoth.convertToHtml({ buffer: bytes }, { convertImage: mammoth.images.imgElement(async () => ({ src: '' })) });
+  const headings: string[] = [];
+  const blocks: TextBlock[] = [];
+  let paragraph = 0;
+  function text(node: DefaultTreeAdapterTypes.Node): string {
+    if ('value' in node) return node.value;
+    if ('tagName' in node && node.tagName === 'br') return '\n';
+    return 'childNodes' in node ? node.childNodes.map(text).join('') : '';
+  }
+  function visit(node: DefaultTreeAdapterTypes.Node): void {
+    if ('tagName' in node && /^h[1-6]$/u.test(node.tagName)) {
+      paragraph++;
+      headings.length = Number(node.tagName[1]) - 1;
+      headings.push(text(node).trim());
+      return;
+    }
+    if ('tagName' in node && ['p', 'li', 'pre'].includes(node.tagName)) {
+      paragraph++;
+      const content = text(node).trim();
+      if (content) blocks.push({ content, headingPath: headings.filter(Boolean).join(' > ') || '正文', sourceStartLine: paragraph, sourceEndLine: paragraph });
+      return;
+    }
+    if ('childNodes' in node) node.childNodes.forEach(visit);
+  }
+  visit(parseFragment(result.value));
   return ensureLimits({
-    extractedText: paragraphs.join('\n\n'),
-    chunks: chunkPlainText(paragraphs.map((content, index) => ({
-      headingPath: '正文', content, sourceStartLine: index + 1, sourceEndLine: index + 1,
-    }))),
+    extractedText: blocks.map((block) => block.content).join('\n\n'),
+    blocks: blocks.map((block, index) => ({ ordinal: index + 1, blockType: 'paragraph',
+      headingPath: block.headingPath, content: block.content,
+      sourceLocator: { type: 'docx_paragraph', start: block.sourceStartLine, end: block.sourceEndLine } })),
+    chunks: chunkPlainText(blocks),
+    warnings: result.messages.length ? ['Word parser reported unsupported formatting; check the extracted blocks.'] : [],
   });
 }
 
@@ -82,7 +109,11 @@ async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
     if (!blocks.length) throw new ScannedPdfError();
     return ensureLimits({
       extractedText: blocks.map((block) => `${block.headingPath}\n${block.content}`).join('\n\n'),
+      blocks: blocks.map((block, index) => ({ ordinal: index + 1, blockType: 'page',
+        headingPath: block.headingPath, content: block.content,
+        sourceLocator: { type: 'pdf_page', start: block.sourceStartLine, end: block.sourceEndLine } })),
       chunks: chunkPlainText(blocks),
+      warnings: blocks.length < document.numPages ? ['Some PDF pages contain no selectable text and were skipped. OCR is not supported.'] : [],
     });
   } finally {
     await task.destroy();

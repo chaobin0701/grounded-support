@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { AppConfigService } from './config/config.service';
 import { HttpExceptionFilter } from './security/http-exception.filter';
@@ -8,7 +9,9 @@ import { RequestContextMiddleware } from './security/request-context.middleware'
 import { RequestLoggerMiddleware } from './security/request-logger.middleware';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // CSV imports are capped at 256 KB after decoding; allow JSON escaping overhead.
+  app.useBodyParser('json', { limit: '512kb' });
   const config = app.get(AppConfigService);
   app.getHttpAdapter().getInstance().set('trust proxy', config.security.trustProxy);
   app.enableCors({ origin: config.security.allowedOrigins.length ? config.security.allowedOrigins : false, credentials: true });

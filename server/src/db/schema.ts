@@ -14,6 +14,7 @@ import {
   uuid,
   varchar,
   vector,
+  customType,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 
@@ -68,8 +69,22 @@ export const auditLogs = pgTable('audit_logs', {
   index('audit_logs_actor_created_at_idx').on(table.actorAdminId, table.createdAt),
 ]);
 
+export const knowledgeBases = pgTable('knowledge_bases', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  name: varchar('name', { length: 120 }).notNull(),
+  description: text('description').notNull().default(''),
+  isDefault: boolean('is_default').notNull().default(false),
+  enabledForChat: boolean('enabled_for_chat').notNull().default(false),
+  draftConfig: jsonb('draft_config').notNull().default({}),
+  activeIndexVersionId: bigint('active_index_version_id', { mode: 'number' }),
+  archivedAt: timestamp('archived_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [uniqueIndex('knowledge_bases_one_default').on(table.isDefault).where(sql`${table.isDefault}`)]);
+
 export const documents = pgTable('documents', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
+  knowledgeBaseId: bigint('knowledge_base_id', { mode: 'number' }).notNull().references(() => knowledgeBases.id, { onDelete: 'restrict' }),
   title: varchar('title', { length: 200 }).notNull(),
   originalFilename: varchar('original_filename', { length: 255 }).notNull(),
   storageKey: varchar('storage_key', { length: 100 }).notNull().unique(),
@@ -78,14 +93,28 @@ export const documents = pgTable('documents', {
   uploadedBy: bigint('uploaded_by', { mode: 'number' }).notNull().references(() => admins.id, { onDelete: 'restrict' }),
   status: varchar('status', { length: 20 }).notNull().default('queued'),
   extractedText: text('extracted_text'),
+  parserVersion: text('parser_version'),
+  parserWarnings: jsonb('parser_warnings').notNull().default([]),
+  sourceType: text('source_type').notNull().default('file'),
   errorMessage: varchar('error_message', { length: 300 }),
   archivedAt: timestamp('archived_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   index('documents_created_at_idx').on(table.createdAt),
+  index('documents_knowledge_base_id_idx').on(table.knowledgeBaseId, table.id),
   index('documents_active_status_idx').on(table.status).where(sql`${table.archivedAt} IS NULL`),
 ]);
+
+export const documentBlocks = pgTable('document_blocks', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  documentId: bigint('document_id', { mode: 'number' }).notNull().references(() => documents.id, { onDelete: 'cascade' }),
+  ordinal: integer('ordinal').notNull(),
+  blockType: text('block_type').notNull(),
+  headingPath: text('heading_path').notNull(),
+  content: text('content').notNull(),
+  sourceLocator: jsonb('source_locator').notNull(),
+}, (table) => [uniqueIndex('document_blocks_document_id_ordinal_key').on(table.documentId, table.ordinal)]);
 
 export const documentChunks = pgTable('document_chunks', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
@@ -107,6 +136,51 @@ export const visitorSessions = pgTable('visitor_sessions', {
   tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const embeddingProfiles = pgTable('embedding_profiles', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  name: text('name').notNull(), config: jsonb('config').notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const knowledgeIndexVersions = pgTable('knowledge_index_versions', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  knowledgeBaseId: bigint('knowledge_base_id', { mode: 'number' }).notNull().references(() => knowledgeBases.id),
+  status: text('status').notNull(), config: jsonb('config').notNull(), embeddingSnapshot: jsonb('embedding_snapshot'),
+  inputSnapshot: jsonb('input_snapshot').notNull(), chunkCount: integer('chunk_count').notNull().default(0),
+  errorMessage: text('error_message'), createdBy: bigint('created_by', { mode: 'number' }).notNull().references(() => admins.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+}, (table) => [uniqueIndex('knowledge_one_build').on(table.knowledgeBaseId).where(sql`${table.status} = 'building'`)]);
+
+const tsvectorType = customType<{ data: string }>({ dataType: () => 'tsvector' });
+const unconstrainedVector = customType<{ data: string }>({ dataType: () => 'vector' });
+// IDs share the legacy document_chunks sequence; citation IDs cannot collide.
+// Composite active-version and parent FKs are enforced by the SQL migrations.
+export const indexChunks = pgTable('index_chunks', {
+  id: bigint('id', { mode: 'number' }).primaryKey().default(sql`nextval(pg_get_serial_sequence('document_chunks', 'id'))`),
+  versionId: bigint('version_id', { mode: 'number' }).notNull().references(() => knowledgeIndexVersions.id),
+  documentId: bigint('document_id', { mode: 'number' }).notNull().references(() => documents.id),
+  documentTitle: text('document_title').notNull(), originalFilename: text('original_filename').notNull(),
+  ordinal: integer('ordinal').notNull(), kind: text('kind').notNull(),
+  parentChunkId: bigint('parent_chunk_id', { mode: 'number' }),
+  headingPath: text('heading_path').notNull(), content: text('content').notNull(), searchContent: text('search_content').notNull(),
+  searchVector: tsvectorType('search_vector').notNull(), sourceLocator: jsonb('source_locator').notNull(),
+}, (table) => [uniqueIndex('index_chunks_version_id_document_id_ordinal_key').on(table.versionId,table.documentId,table.ordinal)]);
+
+export const chunkEmbeddings = pgTable('chunk_embeddings', {
+  chunkId: bigint('chunk_id', { mode: 'number' }).primaryKey().references(() => indexChunks.id, { onDelete: 'cascade' }),
+  embedding: unconstrainedVector('embedding').notNull(), dimensions: integer('dimensions').notNull(),
+});
+
+export const faqEntries = pgTable('faq_entries', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  documentId: bigint('document_id', { mode: 'number' }).notNull().unique().references(() => documents.id),
+  question: text('question').notNull(), answer: text('answer').notNull(),
+  category: text('category').notNull().default(''), source: text('source').notNull().default(''),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const chatDisplaySettings = pgTable('chat_display_settings', {

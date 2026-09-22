@@ -1,15 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceDetail, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
+import { computed, onMounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
+import { Boxes, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import type { Component } from 'vue';
+import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
+import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
 import './admin.css';
+import KnowledgeBaseAdmin from './KnowledgeBaseAdmin.vue';
+import AdminDashboard from './AdminDashboard.vue';
+import ProductCatalogAdmin from './ProductCatalogAdmin.vue';
+import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
 
-type View = 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
-onMounted(() => { document.title = '暖巢电器 · 管理中心'; });
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
+const route = useRoute();
+const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
 const email = ref('');
 const password = ref('');
 const loginBusy = ref(false);
 const loginError = ref('');
+const adminQuickSearch = ref('');
 const view = ref<View>('documents');
 const busy = ref(false);
 const error = ref('');
@@ -28,20 +38,25 @@ const roles = ref<RoleItem[]>([]);
 const permissions = ref<PermissionItem[]>([]);
 const audits = ref<AuditItem[]>([]);
 const chatTraces = ref<ChatTraceItem[]>([]);
-const selectedTrace = ref<ChatTraceDetail | null>(null);
 const newAdmin = ref({ email: '', displayName: '', password: '', roleIds: [] as number[] });
 const editingAdminId = ref<number | null>(null);
 const editingRoleIds = ref<number[]>([]);
 const roleForm = ref({ id: null as number | null, code: '', name: '', permissionCodes: [] as string[] });
 
-const views: { id: View; label: string; permissions: string[] }[] = [
-  { id: 'documents', label: '资料库', permissions: ['documents.read', 'documents.upload'] },
-  { id: 'conversations', label: '对话轨迹', permissions: ['conversations.read'] },
-  { id: 'admins', label: '管理员', permissions: ['admins.manage'] },
-  { id: 'roles', label: '角色权限', permissions: ['roles.manage'] },
-  { id: 'audit', label: '操作记录', permissions: ['audit.read'] },
+const views: { id: View; label: string; permissions: string[]; icon: Component }[] = [
+  { id: 'dashboard', label: '概览', icon: LayoutDashboard, permissions: ['documents.read', 'knowledge_bases.manage', 'conversations.read'] },
+  { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
+  { id: 'products', label: '产品目录', icon: Boxes, permissions: ['knowledge_bases.manage'] },
+  { id: 'conversations', label: '对话轨迹', icon: MessageSquareText, permissions: ['conversations.read'] },
+  { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
+  { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
+  { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
 ];
 const availableViews = computed(() => views.filter((item) => item.permissions.some(can)));
+const quickSearchMatches = computed(() => {
+  const keyword = adminQuickSearch.value.trim().toLowerCase();
+  return keyword ? availableViews.value.filter((item) => item.label.toLowerCase().includes(keyword)) : availableViews.value;
+});
 const isSuperAdmin = computed(() => session.value?.me.roles.some((role) => role.code === 'super_admin') ?? false);
 const assignableRoles = computed(() => roles.value.filter((role) =>
   (!role.isSystem || isSuperAdmin.value) && role.permissionCodes.every(can),
@@ -55,6 +70,7 @@ function describeError(cause: unknown): string {
   if (cause instanceof AdminApiError) {
     if (cause.status === 401) {
       session.value = null;
+      clearAdminSession();
       return '登录已失效，请重新登录。';
     }
     if (cause.status === 403) return '当前账号没有执行此操作的权限。';
@@ -71,9 +87,13 @@ async function signIn() {
     const login = await adminApi.login(email.value.trim(), password.value);
     const me = await adminApi.me(login.accessToken);
     session.value = { token: login.accessToken, me };
+    saveAdminSession(login.accessToken, me);
     password.value = '';
-    const first = availableViews.value[0];
-    if (first) await openView(first.id);
+    const requested = typeof route.params.section === 'string' ? route.params.section as View : null;
+    const target = requested && availableViews.value.some((item) => item.id === requested)
+      ? requested
+      : availableViews.value[0]?.id;
+    if (target) await openView(target);
   } catch (cause) {
     loginError.value = cause instanceof AdminApiError && cause.status === 401 ? '邮箱或密码不正确。' : describeError(cause);
   } finally {
@@ -83,20 +103,29 @@ async function signIn() {
 
 function signOut() {
   session.value = null;
+  clearAdminSession();
   documents.value = [];
   selectedDocument.value = null;
   admins.value = [];
   roles.value = [];
   audits.value = [];
   chatTraces.value = [];
-  selectedTrace.value = null;
   error.value = '';
   notice.value = '';
+  void router.replace('/admin');
+}
+
+async function openQuickSearchResult() {
+  const target = quickSearchMatches.value[0];
+  if (!target) return;
+  adminQuickSearch.value = '';
+  await openView(target.id);
 }
 
 async function refreshIdentity() {
   if (!session.value) return;
   session.value.me = await adminApi.me(session.value.token);
+  saveAdminSession(session.value.token, session.value.me);
   if (!availableViews.value.some((item) => item.id === view.value)) {
     const first = availableViews.value[0];
     if (first) await openView(first.id);
@@ -106,9 +135,9 @@ async function refreshIdentity() {
 async function openView(next: View) {
   if (!session.value || !availableViews.value.some((item) => item.id === next)) return;
   view.value = next;
-  error.value = '';
-  notice.value = '';
-  await refresh();
+  saveAdminView(next);
+  if (route.params.section === next) await refresh();
+  else await router.push(`/admin/${next}`);
 }
 
 async function refresh() {
@@ -118,12 +147,19 @@ async function refresh() {
   try {
     const token = session.value.token;
     session.value.me = await adminApi.me(token);
+    saveAdminSession(token, session.value.me);
     if (!availableViews.value.some((item) => item.id === view.value)) {
       const first = availableViews.value[0];
       if (!first) return;
       view.value = first.id;
     }
     if (view.value === 'documents' && can('documents.read')) documents.value = await adminApi.documents(token, documentOffset.value);
+    if (view.value === 'dashboard') {
+      const jobs: Promise<unknown>[] = [];
+      if (can('documents.read')) jobs.push(adminApi.documents(token, 0).then((items) => { documents.value = items; }));
+      if (can('conversations.read')) jobs.push(adminApi.chatTraces(token).then((items) => { chatTraces.value = items; }));
+      await Promise.all(jobs);
+    }
     if (view.value === 'admins') [admins.value, roles.value] = await Promise.all([adminApi.admins(token), adminApi.roles(token)]);
     if (view.value === 'roles') [roles.value, permissions.value] = await Promise.all([adminApi.roles(token), adminApi.permissions(token)]);
     if (view.value === 'audit') audits.value = await adminApi.audit(token);
@@ -134,6 +170,29 @@ async function refresh() {
     busy.value = false;
   }
 }
+
+watch(() => route.params.section, async (section) => {
+  if (typeof section !== 'string' || !views.some((item) => item.id === section)) return;
+  view.value = section as View;
+  saveAdminView(view.value);
+  error.value = '';
+  notice.value = '';
+  if (session.value) await refresh();
+});
+onMounted(async () => {
+  document.title = '暖巢智能客服 · 管理中心';
+  const restored = loadAdminSession();
+  const savedView = loadAdminView();
+  if (!restored) return;
+  session.value = { token: restored.token, me: restored.me };
+  const section = typeof route.params.section === 'string' ? route.params.section : null;
+  const requested = section && views.some((item) => item.id === section) ? section as View : null;
+  const fallback = savedView && views.some((item) => item.id === savedView) ? savedView as View : availableViews.value[0]?.id;
+  if (requested && availableViews.value.some((item) => item.id === requested)) {
+    view.value = requested;
+    await refresh();
+  } else if (fallback) await router.replace(`/admin/${fallback}`);
+});
 
 async function action(work: (token: string) => Promise<unknown>, success: string, after?: () => Promise<void>) {
   if (!session.value || busy.value) return;
@@ -177,13 +236,6 @@ async function selectDocument(id: number) {
     [selectedDocument.value, chunks.value] = await Promise.all([
       adminApi.document(session.value.token, id), adminApi.chunks(session.value.token, id),
     ]);
-  } catch (cause) { error.value = describeError(cause); }
-}
-
-async function selectTrace(id: string) {
-  if (!session.value || !can('conversations.read')) return;
-  try {
-    selectedTrace.value = await adminApi.chatTrace(session.value.token, id);
   } catch (cause) { error.value = describeError(cause); }
 }
 
@@ -270,11 +322,11 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
 <template>
   <div v-if="!session" class="admin-login">
-    <div class="admin-login-brand"><span class="brand-mark">暖</span><span>暖巢电器 <small>管理中心</small></span></div>
+    <div class="admin-login-brand"><span class="brand-mark">暖</span><span>暖巢智能客服 <small>管理中心</small></span></div>
     <main class="admin-login-main">
       <p class="section-label">暖巢 · 管理中心</p>
       <h1>欢迎回来</h1>
-      <p>使用管理员账号登录。会话只保留在当前页面，关闭或刷新后需要重新登录。</p>
+      <p>登录状态保存在当前浏览器，直至服务端会话到期、主动退出或账号被停用。</p>
       <form @submit.prevent="signIn">
         <label>邮箱<input v-model.trim="email" type="email" autocomplete="username" required placeholder="admin@example.com" /></label>
         <label>密码<input v-model="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码" /></label>
@@ -287,23 +339,29 @@ function sourceLocation(filename: string, start: number, end: number): string {
   </div>
 
   <div v-else class="admin-shell">
+    <header class="admin-global-header">
+      <div class="admin-brand"><span class="brand-mark">暖</span><span>暖巢智能客服</span></div>
+      <form class="admin-global-search" @submit.prevent="openQuickSearchResult"><Search :size="16" /><input v-model="adminQuickSearch" list="admin-sections" placeholder="搜索后台页面…" aria-label="搜索后台页面" /><datalist id="admin-sections"><option v-for="item in availableViews" :key="item.id" :value="item.label" /></datalist></form>
+      <div class="admin-global-user"><span>{{ session.me.displayName.slice(0, 1) }}</span><div><strong>{{ session.me.displayName }}</strong><small>{{ session.me.roles.map((role) => role.name).join(' · ') || '无角色' }}</small></div></div>
+    </header>
     <aside class="admin-sidebar">
-      <div class="admin-brand"><span class="brand-mark">暖</span><span>暖巢电器<small>管理中心</small></span></div>
       <nav aria-label="管理导航">
         <p class="admin-nav-label">工作区</p>
-        <button v-for="item in availableViews" :key="item.id" type="button" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined" @click="openView(item.id)">{{ item.label }}</button>
+        <RouterLink v-for="item in availableViews" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" />{{ item.label }}</RouterLink>
       </nav>
-      <div class="admin-sidebar-bottom"><span>{{ session.me.displayName }}</span><small>{{ session.me.email }}</small><a href="/">访客页面 ↗</a><button type="button" @click="signOut">退出登录</button></div>
+      <div class="admin-sidebar-bottom"><a href="/">访客页面 ↗</a><button type="button" @click="signOut">退出登录</button></div>
     </aside>
 
     <main class="admin-main">
-      <header class="admin-top"><span>管理中心 <span class="admin-top-separator">/</span> {{ views.find((item) => item.id === view)?.label }}</span><span class="admin-top-identity"><i aria-hidden="true"></i>{{ session.me.roles.map((role) => role.name).join(' · ') || '无角色' }}</span></header>
       <div class="admin-content">
         <p v-if="error" class="admin-error" role="alert">{{ error }}</p>
         <p v-if="notice" class="admin-notice" role="status">{{ notice }}</p>
 
         <section v-if="!availableViews.length" class="admin-empty"><h1>暂无可用权限</h1><p>请联系超级管理员分配角色。</p></section>
 
+        <AdminDashboard v-else-if="view === 'dashboard'" :display-name="session.me.displayName" :document-count="documents.length" :conversation-count="chatTraces.length" />
+        <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
+        <ProductCatalogAdmin v-else-if="view === 'products'" />
         <section v-else-if="view === 'documents'">
           <div class="admin-heading"><div><p class="section-label">知识管理</p><h1>资料库</h1><p>维护客服可引用的资料。仅已就绪且未下架的内容参与回答。</p></div><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></div>
           <form v-if="can('documents.upload')" class="admin-upload" @submit.prevent="upload">
@@ -337,32 +395,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
           <p v-else class="admin-muted">当前账号没有查看资料列表的权限。</p>
         </section>
 
-        <section v-else-if="view === 'conversations'">
-          <div class="admin-heading"><div><p class="section-label">服务观察</p><h1>对话轨迹</h1><p>查看访客提问、检索上下文、模型输出与最终回答。仅展示最近 50 次。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></div>
-          <div class="admin-list">
-            <button v-for="item in chatTraces" :key="item.id" type="button" class="trace-row" :class="{ selected: selectedTrace?.id === item.id }" @click="selectTrace(item.id)">
-              <span class="trace-row-main"><strong>{{ item.question }}</strong><small>{{ formatDate(item.createdAt) }} · {{ item.model || '未调用模型' }}</small></span>
-              <span class="admin-status" :class="item.status === 'failed' ? 'failed' : item.refused ? 'archived' : 'ready'">{{ item.status === 'failed' ? '失败' : item.kind === 'summary' ? '摘要' : item.refused ? '拒答' : '已回答' }}</span>
-              <small class="trace-metrics">{{ item.totalTokens ?? '—' }} tokens · {{ item.durationMs }} ms</small>
-            </button>
-            <p v-if="!chatTraces.length && !busy" class="admin-muted">暂无对话轨迹。</p>
-          </div>
-          <section v-if="selectedTrace" class="admin-inspector trace-inspector">
-            <div class="admin-section-head"><div><p class="section-label">轨迹 · {{ selectedTrace.id.slice(0, 8) }}</p><h2>回答详情</h2></div><button type="button" class="admin-text-button" @click="selectedTrace = null">关闭详情 ×</button></div>
-            <p class="admin-muted">{{ formatDate(selectedTrace.createdAt) }} · {{ selectedTrace.model || '未调用模型' }} · {{ selectedTrace.durationMs }} ms</p>
-            <p class="admin-muted">输入 {{ selectedTrace.inputTokens ?? '未提供' }} / 输出 {{ selectedTrace.outputTokens ?? '未提供' }} / 总计 {{ selectedTrace.totalTokens ?? '未提供' }} tokens</p>
-            <div class="trace-field"><h3>访客提问</h3><p>{{ selectedTrace.question }}</p></div>
-            <div class="trace-field"><h3>最终回答</h3><p>{{ selectedTrace.finalAnswer || (selectedTrace.status === 'failed' ? '调用失败，未产生回答。' : '—') }}</p></div>
-            <details v-if="selectedTrace.contextSnapshot.systemPrompt" class="admin-details"><summary>查看系统提示词 · {{ selectedTrace.contextSnapshot.promptVersion }}</summary><pre>{{ selectedTrace.contextSnapshot.systemPrompt }}</pre></details>
-            <div v-if="selectedTrace.contextSnapshot.summary || selectedTrace.contextSnapshot.previousSummary" class="trace-field"><h3>本会话摘要</h3><p>{{ selectedTrace.contextSnapshot.summary || selectedTrace.contextSnapshot.previousSummary }}</p></div>
-            <details v-if="selectedTrace.contextSnapshot.history?.length || selectedTrace.contextSnapshot.recentMessages?.length || selectedTrace.contextSnapshot.messages?.length" class="admin-details"><summary>查看传入的会话上下文</summary><pre>{{ JSON.stringify(selectedTrace.contextSnapshot.history || selectedTrace.contextSnapshot.recentMessages || selectedTrace.contextSnapshot.messages, null, 2) }}</pre></details>
-            <details v-if="selectedTrace.contextSnapshot.sources?.length" class="admin-details"><summary>查看当轮检索片段（{{ selectedTrace.contextSnapshot.sources.length }}）</summary><div v-for="source in selectedTrace.contextSnapshot.sources" :key="source.chunkId" class="admin-chunk"><strong>#{{ source.chunkId }} · {{ source.title }}</strong><small>{{ source.heading }}</small><p>{{ source.content }}</p></div></details>
-            <details v-if="selectedTrace.contextSnapshot.toolCalls?.length" class="admin-details"><summary>查看工具调用（{{ selectedTrace.contextSnapshot.toolCalls.length }}）</summary><div v-for="(call, index) in selectedTrace.contextSnapshot.toolCalls" :key="`${call.name}-${index}`" class="admin-chunk"><strong>{{ call.name }}</strong><small>{{ call.ok ? '已完成' : '失败' }} · {{ call.durationMs }} ms</small><pre>{{ JSON.stringify(call.arguments, null, 2) }}</pre></div></details>
-            <details v-if="selectedTrace.contextSnapshot.productDetails?.length" class="admin-details"><summary>查看本轮产品数据（mock）</summary><pre>{{ JSON.stringify(selectedTrace.contextSnapshot.productDetails, null, 2) }}</pre></details>
-            <details v-if="selectedTrace.rawModelOutput" class="admin-details"><summary>查看模型原始输出</summary><pre>{{ selectedTrace.rawModelOutput }}</pre></details>
-            <p v-if="selectedTrace.errorCode" class="admin-error">失败代码：{{ selectedTrace.errorCode }}</p>
-          </section>
-        </section>
+        <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
 
         <section v-else-if="view === 'admins'">
           <div class="admin-heading"><div><p class="section-label">账号管理</p><h1>管理员</h1><p>创建账号、分配角色和停用账号；实际授权始终由后端校验。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></div>

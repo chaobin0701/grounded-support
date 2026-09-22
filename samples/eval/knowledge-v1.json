@@ -1,0 +1,17 @@
+{
+  "documents": [
+    { "title": "退货政策", "markdown": "# 售后\n\n## 申请退货\n\n收到商品七天内可以申请退货。请联系人工客服，并提供订单号。" },
+    { "title": "保修政策", "markdown": "# 保修\n\n## 保修期限\n\n产品保修期限为十二个月，请保留购买凭证。" },
+    { "title": "物流说明", "markdown": "# 物流\n\n## 发货时间\n\n付款后两个工作日内安排发货。" }
+  ],
+  "faqs": [
+    { "question": "如何清洁进风口", "answer": "先断开电源，然后使用柔软干布擦拭进风口。", "category": "产品维护", "source": "虚构产品手册" }
+  ],
+  "cases": [
+    { "id": "returns", "query": "申请退货", "expectedTitles": ["退货政策"] },
+    { "id": "warranty", "query": "保修期限", "expectedTitles": ["保修政策"] },
+    { "id": "delivery", "query": "发货时间", "expectedTitles": ["物流说明"] },
+    { "id": "faq", "query": "如何清洁进风口", "expectedTitles": ["如何清洁进风口"] },
+    { "id": "no-evidence", "query": "火星航天器燃料补给", "expectedTitles": [] }
+  ]
+}

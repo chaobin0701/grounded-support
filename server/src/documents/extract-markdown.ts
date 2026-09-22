@@ -1,4 +1,5 @@
 import MarkdownIt from 'markdown-it';
+import { DocumentBlock } from './document-block';
 
 const parser = new MarkdownIt({ html: false });
 type MarkdownToken = ReturnType<typeof parser.parse>[number];
@@ -54,6 +55,7 @@ function splitLongBlock(block: TextBlock, maxChars: number): TextBlock[] {
 export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHARS): {
   extractedText: string;
   chunks: DocumentChunk[];
+  blocks: DocumentBlock[];
 } {
   if (!Number.isSafeInteger(maxChars) || maxChars < 200 || maxChars > 4000) {
     throw new Error('Chunk size must be between 200 and 4000 characters');
@@ -62,6 +64,7 @@ export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHA
   const headings: string[] = [];
   const extractedParts: string[] = [];
   const chunks: DocumentChunk[] = [];
+  const structuredBlocks: DocumentBlock[] = [];
   let blocks: TextBlock[] = [];
   let sectionHeading = '';
 
@@ -113,6 +116,12 @@ export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHA
     const content = token.type === 'inline' ? inlineText(token) : token.content.trim();
     if (!content) continue;
     extractedParts.push(content);
+    structuredBlocks.push({
+      ordinal: structuredBlocks.length + 1,
+      blockType: token.type === 'inline' ? 'paragraph' : 'code',
+      headingPath: sectionHeading, content,
+      sourceLocator: { type: 'markdown_lines', start: (token.map?.[0] ?? 0) + 1, end: token.map?.[1] ?? 1 },
+    });
     blocks.push({
       content,
       startLine: (token.map?.[0] ?? 0) + 1,
@@ -120,7 +129,7 @@ export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHA
     });
   }
   flushSection();
-  return { extractedText: extractedParts.join('\n\n').trim(), chunks };
+  return { extractedText: extractedParts.join('\n\n').trim(), chunks, blocks: structuredBlocks };
 }
 
 export function extractMarkdownText(source: string): string {

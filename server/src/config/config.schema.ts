@@ -53,7 +53,10 @@ export const configSchema = z.object({
     apiKey: z.string().default(''),
     baseUrl: z.string().url().default(DEFAULT_EMBEDDING_BASE_URL),
     model: z.string().trim().min(1).default(DEFAULT_EMBEDDING_MODEL),
-  }).default({ apiKey: '', baseUrl: DEFAULT_EMBEDDING_BASE_URL, model: DEFAULT_EMBEDDING_MODEL }),
+    connections: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/u), z.object({
+      baseUrl: z.string().url(), apiKey: z.string().min(1),
+    }).strict()).default({}),
+  }).default({ apiKey: '', baseUrl: DEFAULT_EMBEDDING_BASE_URL, model: DEFAULT_EMBEDDING_MODEL, connections: {} }),
   llm: z.object({
     provider: z.enum(['openai-compatible']).default('openai-compatible'),
     apiKey: z.string().default(''),
@@ -76,6 +79,11 @@ export type SecurityConfig = AppConfig['security'];
 export type EmbeddingConfig = AppConfig['embedding'];
 
 export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): AppConfig {
+  let embeddingConnections: unknown = {};
+  if (env.EMBEDDING_CONNECTIONS_JSON?.trim()) {
+    try { embeddingConnections = JSON.parse(env.EMBEDDING_CONNECTIONS_JSON); }
+    catch { throw new Error('Invalid EMBEDDING_CONNECTIONS_JSON'); }
+  }
   const parsed = configSchema.safeParse({
     port: env.PORT,
     databaseUrl: env.DATABASE_URL?.trim(),
@@ -102,6 +110,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       apiKey: env.EMBEDDING_API_KEY?.trim(),
       baseUrl: env.EMBEDDING_BASE_URL?.trim(),
       model: env.EMBEDDING_MODEL?.trim(),
+      connections: embeddingConnections,
     },
     llm: {
       provider: env.LLM_PROVIDER,

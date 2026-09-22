@@ -1,9 +1,20 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage } from './chat-api';
 import AdminApp from './AdminApp.vue';
+import HelpCenter from './HelpCenter.vue';
+import ProductSite from './ProductSite.vue';
 
-const isAdminRoute = window.location.pathname === '/admin' || window.location.pathname.startsWith('/admin/');
+const route = useRoute();
+const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
+const isProductRoute = computed(() => route.path === '/product');
+const isHelpRoute = computed(() => route.path === '/help');
+watch(() => route.path, (path) => {
+  document.title = path === '/product' ? '暖巢智能客服 · 产品介绍'
+    : path === '/help' ? '暖巢智能客服 · 帮助中心'
+      : path.startsWith('/admin') ? '暖巢智能客服 · 管理中心' : '暖巢智能客服';
+}, { immediate: true });
 const ACTIVE_CONVERSATION_KEY = 'grounded.activeConversationId';
 const PENDING_REQUEST_KEY = 'grounded.pendingChatRequest';
 
@@ -45,7 +56,7 @@ function newRequestId(): string {
 }
 
 onMounted(async () => {
-  if (isAdminRoute) return;
+  if (isAdminRoute.value || isProductRoute.value || isHelpRoute.value) return;
   isLoadingConversations.value = true;
   try {
     const response = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
@@ -234,10 +245,12 @@ function chooseSuggestion(value: string) {
 </script>
 
 <template>
-  <AdminApp v-if="isAdminRoute" />
+  <ProductSite v-if="isProductRoute" />
+  <HelpCenter v-else-if="isHelpRoute" />
+  <AdminApp v-else-if="isAdminRoute" />
   <div v-else class="app-shell">
     <aside class="sidebar" aria-label="对话导航">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢电器<span class="brand-sub">智能客服</span></span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服<span class="brand-sub">知识型客服</span></span></div>
       <div class="sidebar-body sidebar-conversations">
         <button class="new-conversation" type="button" :disabled="isSending || isLoadingConversations" @click="newConversation"><span aria-hidden="true">＋</span> 新建对话</button>
         <div class="conversation-list-head"><p class="section-label">最近对话</p><span>{{ conversations.length }}</span></div>
@@ -255,7 +268,7 @@ function chooseSuggestion(value: string) {
         <span class="health-dot" :class="health" aria-hidden="true"></span>
         <span>{{ health === 'online' ? '服务运行中' : health === 'checking' ? '正在连接服务' : '服务暂时不可用' }}</span>
         <small>示例资料 · 不提供订单办理服务</small>
-        <a class="admin-entry" href="/admin">管理资料 <span aria-hidden="true">↗</span></a>
+        <div class="sidebar-product-links"><RouterLink to="/product">产品官网</RouterLink><RouterLink to="/help">帮助中心</RouterLink><RouterLink to="/admin">管理后台</RouterLink></div>
       </div>
     </aside>
 
