@@ -13,6 +13,7 @@
     "samples:reprocess": "node scripts/reprocess-sample-knowledge.mjs",
     "documents:reindex": "node scripts/reindex-all-documents.mjs",
     "eval:retrieval": "node scripts/evaluate-retrieval.mjs",
+    "eval:agent": "node scripts/evaluate-agent.mjs",
     "smoke:formats": "node scripts/smoke-document-formats.mjs"
   },
   "dependencies": {

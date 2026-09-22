@@ -46,3 +46,26 @@
 |---|---|---|---|
 | Q019 | 扫描版 PDF 里的规则可以查询吗？ | 当前系统能力说明 | 后续系统应提示扫描版 PDF 暂不支持 |
 | Q020 | 下架后的退货政策还会被新问题引用吗？ | 资料管理规则 | 后续系统应说明下架资料不参与新检索，旧回答保留引用快照 |
+
+## 第九阶段：离线 Agent 评测问题
+
+这些问题由 `server/scripts/evaluate-agent.mjs` 使用固定 Mock LLM 和工具结果执行，不调用远程模型。
+
+| ID | 场景 | 问题 |
+| --- | --- | --- |
+| `returns-basic` | 精确资料命中和引用 | 退货期限是多少？ |
+| `returns-citation` | 引用必须来自证据 | 退货政策是什么？ |
+| `unsupported-refusal` | 无资料时拒答 | 你们支持海外配送吗？ |
+| `product-list` | 产品工具和产品引用 | 你们有哪些产品？ |
+| `product-detail` | 产品详情 | H2 的规格是什么？ |
+| `duplicate-call` | 重复调用拦截 | 退货政策是什么？ |
+| `tool-limit` | 工具调用上限 | 请反复查询退货政策。 |
+| `session-isolation` | 两个会话互不串线 | 会话 A 查询 H2，会话 B 查询退货政策。 |
+
+运行：
+
+```bash
+cd server
+npm run eval:agent
+npm run eval:agent -- --case returns-basic
+```
