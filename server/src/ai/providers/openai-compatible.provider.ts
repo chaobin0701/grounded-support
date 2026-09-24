@@ -9,7 +9,7 @@ import {
   ProviderUnavailableError,
 } from './provider-errors';
 import { LlmProvider } from './llm-provider';
-import { LlmRequest, LlmResponse } from './provider.types';
+import { LlmRequest, LlmResponse, LlmStreamEvent } from './provider.types';
 
 export const SUPPORTED_LLM_MODELS = ['deepseek-v4-1-flash-260910', 'glm-5-3-flash-260828'] as const;
 
@@ -65,7 +65,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
           temperature: request.temperature ?? 0.1,
           max_tokens: request.maxTokens ?? 1200,
         }),
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'TimeoutError') throw new ProviderTimeoutError();
@@ -100,6 +100,69 @@ export class OpenAICompatibleProvider implements LlmProvider {
       model: request.model,
       durationMs: Date.now() - started,
     };
+  }
+
+  async *stream(request: LlmRequest): AsyncIterable<LlmStreamEvent> {
+    if (!this.apiKey) throw new ProviderAuthenticationError();
+    if (!this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages.map((message) => ({ role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}), ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) })),
+          temperature: request.temperature ?? 0.1,
+          max_tokens: request.maxTokens ?? 1200,
+          stream: true,
+        }),
+        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
+      this.logger.warn('Model provider stream failed before receiving a response');
+      throw new ProviderUnavailableError();
+    }
+    if (!response.ok || !response.body) {
+      let payload: RawResponse = {};
+      try { payload = await response.json() as RawResponse; } catch { /* Map the status when the provider has no JSON body. */ }
+      throw this.mapHttpError(response.status, payload);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let usage: { inputTokens: number | null; outputTokens: number | null; totalTokens: number | null } = { inputTokens: null, outputTokens: null, totalTokens: null };
+    let finishReason: string | null = null;
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+        const frames = buffer.split('\n\n');
+        buffer = frames.pop() ?? '';
+        for (const frame of frames) {
+          const data = frame.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
+          if (!data || data === '[DONE]') continue;
+          let payload: {
+            choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
+          };
+          try { payload = JSON.parse(data) as typeof payload; } catch { continue; }
+          const choice = payload.choices?.[0];
+          if (typeof choice?.delta?.content === 'string' && choice.delta.content) yield { type: 'text_delta', delta: choice.delta.content };
+          if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
+          usage = {
+            inputTokens: numberOrNull(payload.usage?.prompt_tokens),
+            outputTokens: numberOrNull(payload.usage?.completion_tokens),
+            totalTokens: numberOrNull(payload.usage?.total_tokens),
+          };
+        }
+        if (done) break;
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    yield { type: 'completed', usage, finishReason };
   }
 
   private mapHttpError(status: number, payload: RawResponse): Error {

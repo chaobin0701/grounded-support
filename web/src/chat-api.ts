@@ -111,7 +111,7 @@ export async function askInConversationStream(conversationId: string, question: 
         buffer = buffer.slice(boundary + 2);
         const event = frame.match(/^event: (.+)$/m)?.[1];
         const data = frame.match(/^data: (.+)$/m)?.[1];
-        if (data && event === 'delta') {
+        if (data && (event === 'delta' || event === 'answer_delta')) {
           const payload = JSON.parse(data) as { text?: unknown };
           if (typeof payload.text !== 'string') throw new Error('Invalid stream delta');
           onDelta(payload.text);

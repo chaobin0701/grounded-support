@@ -31,7 +31,12 @@ export interface LlmRequest {
   tools?: LlmToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 }
+
+export type LlmStreamEvent =
+  | { type: 'text_delta'; delta: string }
+  | { type: 'completed'; usage: LlmUsage; finishReason: string | null };
 
 export interface LlmResponse {
   content: string;

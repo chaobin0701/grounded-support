@@ -1,7 +1,8 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { AgentRunner } from '../ai/agent/agent-runner';
 import type { PreviousTurnDto } from './chat.dto';
-import type { ChatRun, CommentaryEvent, ToolStep } from './chat.service';
+import type { ChatRun, ChatStreamCallbacks, CommentaryEvent, ToolStep } from './chat.service';
+import { LlmService } from './llm.service';
 import { SkillSelector } from '../ai/skills/skill-selector';
 import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
 import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
@@ -12,6 +13,7 @@ export { validateAgentAnswer } from '../ai/agent/agent-answer';
 export class ChatOrchestratorService {
   constructor(
     private readonly agentRunner: AgentRunner,
+    private readonly llm: LlmService,
     private readonly skillSelector?: SkillSelector,
     @Optional() private readonly skillPreflight?: SkillPreflightService,
   ) {}
@@ -24,6 +26,7 @@ export class ChatOrchestratorService {
     _onStep?: (step: ToolStep) => void,
     _onCommentary?: (event: CommentaryEvent) => void,
     requestedSkillId?: string,
+    callbacks?: ChatStreamCallbacks,
   ): Promise<ChatRun> {
     const selected = this.skillSelector
       ? this.skillSelector.select(question, requestedSkillId)
@@ -49,6 +52,18 @@ export class ChatOrchestratorService {
       },
       { onContext },
     );
+    if (!result.result.refused && callbacks?.onAnswerDelta) {
+      callbacks.onAnswerStarted?.({ citations: result.result.citations });
+      const streamed = await this.llm.streamText(
+        '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。',
+        JSON.stringify({ question, draftAnswer: result.result.answer, citations: result.result.citations, context: { sources: result.contextSnapshot.sources ?? [], products: result.contextSnapshot.products ?? [] } }),
+        callbacks.onAnswerDelta,
+      );
+      if (streamed.content.trim()) result.result = { ...result.result, answer: streamed.content.trim() };
+      result.inputTokens = (result.inputTokens ?? 0) + (streamed.inputTokens ?? 0);
+      result.outputTokens = (result.outputTokens ?? 0) + (streamed.outputTokens ?? 0);
+      result.totalTokens = (result.totalTokens ?? 0) + (streamed.totalTokens ?? 0);
+    }
     return {
       result: result.result,
       contextSnapshot: result.contextSnapshot,

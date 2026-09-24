@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, Logger, NotFoundExc
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { DatabaseService } from '../database.service';
-import { ChatService, ChatAnswer, ChatRun, CommentaryEvent, ProcessEvent, ToolStep } from './chat.service';
+import { ChatService, ChatAnswer, ChatRun, ChatStreamCallbacks, CommentaryEvent, ProcessEvent, ToolStep } from './chat.service';
 import { LlmService, ModelFailure } from './llm.service';
 import { ConversationSnapshot } from './conversation-snapshot';
 
@@ -134,7 +134,7 @@ export class ConversationService {
     if (!result.rowCount) throw new NotFoundException('Conversation not found');
   }
 
-  async ask(ownerId: string, id: string, question: string, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, idempotencyKey?: string, requestedSkillId?: string): Promise<ChatAnswer> {
+  async ask(ownerId: string, id: string, question: string, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, idempotencyKey?: string, requestedSkillId?: string, callbacks?: ChatStreamCallbacks): Promise<ChatAnswer> {
     const clientRequestId = this.normalizeIdempotencyKey(idempotencyKey);
     await this.expireRuns(ownerId, id);
     let previousRun: RunRow | null = null;
@@ -214,7 +214,7 @@ export class ConversationService {
     let contextSnapshot: Record<string, unknown> | null = null;
     try {
       snapshot = await this.snapshot(ownerId, id);
-      const run = await this.chat.askDetailed(question, snapshot.history, snapshot.summary, (context) => { contextSnapshot = context; }, onStep, onCommentary, requestedSkillId);
+      const run = await this.chat.askDetailed(question, snapshot.history, snapshot.summary, (context) => { contextSnapshot = context; }, onStep, onCommentary, requestedSkillId, callbacks);
       await this.saveResult(id, question, run, Date.now() - started, runId);
       void this.updateSummary(id, snapshot.summary).catch(() => this.logger.warn('Conversation summary update failed'));
       return run.result;

@@ -9,6 +9,10 @@ export type ToolStep = { id: string; label: string; status: 'running' | 'complet
 export type CommentaryEvent = { id: string; type: 'commentary'; text: string };
 export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent;
 export type ChatAnswer = { answer: string; refused: boolean; citations: Citation[]; toolSteps?: ToolStep[]; progressEvents?: ProcessEvent[] };
+export type ChatStreamCallbacks = {
+  onAnswerStarted?: (metadata: { citations: Citation[] }) => void;
+  onAnswerDelta?: (text: string) => void;
+};
 export type ChatRun = {
   result: ChatAnswer;
   contextSnapshot: Record<string, unknown>;
@@ -33,8 +37,8 @@ export class ChatService {
     return (await this.askDetailed(question, history)).result;
   }
 
-  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string): Promise<ChatRun> {
-    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId);
+  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string, callbacks?: ChatStreamCallbacks): Promise<ChatRun> {
+    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId, callbacks);
   }
 
 }

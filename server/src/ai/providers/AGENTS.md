@@ -35,6 +35,7 @@ Provider 不负责：
 - `LlmMessage`：模型消息；
 - `LlmRequest`：模型请求；
 - `LlmResponse`：模型响应；
+- `LlmStreamEvent`：原生 SSE 流中的文本增量和完成事件；
 - `LlmToolDefinition`：工具定义；
 - `LlmToolCall`：模型返回的工具调用；
 - `LlmUsage`：输入、输出和总 Token。
@@ -51,6 +52,7 @@ Provider 不负责：
 - 转换消息和工具定义；
 - 解析文本与标准 Tool Call；
 - 解析 Token 用量和完成原因；
+- 将模型原生 SSE 转换为统一的文本增量事件；
 - 计算请求耗时；
 - 处理超时、限流、认证失败和无效响应。
 

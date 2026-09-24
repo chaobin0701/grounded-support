@@ -81,4 +81,26 @@ export class LlmService {
       totalTokens: usage.seen ? usage.totalTokens : null,
     });
   }
+
+  async streamText(system: string, user: string, onDelta: (text: string) => void, model = this.model): Promise<ModelResult> {
+    const started = Date.now();
+    let content = '';
+    let usage = { inputTokens: null as number | null, outputTokens: null as number | null, totalTokens: null as number | null };
+    let finishReason: string | null = null;
+    for await (const event of this.provider.stream({
+      model,
+      messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
+      temperature: 0.1,
+      maxTokens: 1200,
+    })) {
+      if (event.type === 'text_delta') {
+        content += event.delta;
+        onDelta(event.delta);
+      } else {
+        usage = event.usage;
+        finishReason = event.finishReason;
+      }
+    }
+    return { content, model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: 1 };
+  }
 }

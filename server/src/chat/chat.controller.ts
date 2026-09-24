@@ -55,8 +55,18 @@ export class ChatController {
     return this.rateLimit.run(request.ip || request.socket.remoteAddress || 'unknown', async () => {
       this.beginStream(response);
       try {
-        const answer = await this.application.ask({ channel: 'browser', conversationId: id, ownerId: owner, question: body.question, clientRequestId: this.idempotencyKey(request), requestId: this.requestId(request) });
-        await this.writeAnswerStream(response, answer);
+        let streamed = false;
+        const answer = await this.application.ask(
+          { channel: 'browser', conversationId: id, ownerId: owner, question: body.question, clientRequestId: this.idempotencyKey(request), requestId: this.requestId(request) },
+          {
+            onAnswerStarted: (metadata) => this.writeEvent(response, 'answer_started', metadata),
+            onAnswerDelta: (text) => {
+              streamed = true;
+              this.writeEvent(response, 'answer_delta', { text });
+            },
+          },
+        );
+        await this.writeAnswerStream(response, answer, streamed);
       } catch (error) {
         this.writeStreamError(response, error);
       }
@@ -110,18 +120,20 @@ export class ChatController {
     return (Array.isArray(value) ? value[0] : value) ?? `${request.method}:${request.originalUrl}`;
   }
 
-  private async writeAnswerStream(response: Response, answer: Awaited<ReturnType<ChatService['ask']>>) {
-    if (!answer.refused) {
-      for (const text of answer.answer.match(/[\s\S]{1,8}/gu) || []) {
-        if (response.destroyed) return;
-        response.write(`event: delta\ndata: ${JSON.stringify({ text })}\n\n`);
-        await new Promise((resolve) => setTimeout(resolve, 35));
-      }
+  private async writeAnswerStream(response: Response, answer: Awaited<ReturnType<ChatService['ask']>>, streamed = false) {
+    if (!streamed && !answer.refused) {
+      this.writeEvent(response, 'answer_delta', { text: answer.answer });
     }
+    if (streamed) this.writeEvent(response, 'answer_completed', { citations: answer.citations });
     if (!response.destroyed) {
-      response.write(`event: done\ndata: ${JSON.stringify(answer)}\n\n`);
+      this.writeEvent(response, 'done', answer);
       response.end();
     }
+  }
+
+  private writeEvent(response: Response, event: string, data: unknown) {
+    if (response.destroyed || response.writableEnded) return;
+    response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
 }

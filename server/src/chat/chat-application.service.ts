@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { ChatAnswer } from './chat.service';
+import type { ChatAnswer, ChatStreamCallbacks } from './chat.service';
 import { ConversationService } from './conversation.service';
 import type { InboundMessage } from '../channels/channel.types';
 import type { AgentEvent, AgentEventBase } from '../channels/agent-event';
@@ -13,7 +13,7 @@ export class ChatApplicationService {
     private readonly messageBus: InMemoryMessageBus,
   ) {}
 
-  async ask(message: InboundMessage): Promise<ChatAnswer> {
+  async ask(message: InboundMessage, callbacks?: ChatStreamCallbacks): Promise<ChatAnswer> {
     const runId = message.clientRequestId ?? randomUUID();
     const messageId = randomUUID();
     const base: AgentEventBase = {
@@ -23,7 +23,7 @@ export class ChatApplicationService {
     await this.messageBus.publish({ ...base, type: 'message.received', question: message.question });
     await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'run.started' });
     try {
-      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId, message.skillId);
+      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId, message.skillId, callbacks);
       await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'message.completed', answer: answer.answer, refused: answer.refused, citations: answer.citations });
       return answer;
     } catch (error) {
