@@ -10,6 +10,9 @@ import KnowledgeBaseAdmin from './KnowledgeBaseAdmin.vue';
 import AdminDashboard from './AdminDashboard.vue';
 import ProductCatalogAdmin from './ProductCatalogAdmin.vue';
 import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
+import AdminPageHeader from './ui/AdminPageHeader.vue';
+import UiDialog from './ui/UiDialog.vue';
+import ToastNotice from './ui/ToastNotice.vue';
 
 type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
@@ -24,6 +27,8 @@ const view = ref<View>('documents');
 const busy = ref(false);
 const error = ref('');
 const notice = ref('');
+const adminDialog = ref<'createAdmin' | 'assignRoles' | 'role' | null>(null);
+const confirmDialog = ref<{ title: string; description: string; confirmLabel: string; run: () => Promise<void> } | null>(null);
 
 const documents = ref<DocumentItem[]>([]);
 const documentOffset = ref(0);
@@ -35,13 +40,25 @@ const fileInputKey = ref(0);
 
 const admins = ref<AdminItem[]>([]);
 const roles = ref<RoleItem[]>([]);
+const selectedAdminId = ref<number | null>(null);
+const selectedRoleId = ref<number | null>(null);
 const permissions = ref<PermissionItem[]>([]);
 const audits = ref<AuditItem[]>([]);
 const chatTraces = ref<ChatTraceItem[]>([]);
 const newAdmin = ref({ email: '', displayName: '', password: '', roleIds: [] as number[] });
-const editingAdminId = ref<number | null>(null);
 const editingRoleIds = ref<number[]>([]);
 const roleForm = ref({ id: null as number | null, code: '', name: '', permissionCodes: [] as string[] });
+const selectedAdmin = computed(() => admins.value.find((item) => item.id === selectedAdminId.value) ?? null);
+const selectedRole = computed(() => roles.value.find((item) => item.id === selectedRoleId.value) ?? null);
+const permissionGroups = computed(() => {
+  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', audit: '操作记录' };
+  const grouped = new Map<string, PermissionItem[]>();
+  for (const permission of permissions.value) {
+    const key = permission.code.split('.')[0] ?? 'other';
+    grouped.set(key, [...(grouped.get(key) ?? []), permission]);
+  }
+  return [...grouped.entries()].map(([key, items]) => ({ label: labels[key] ?? key, items }));
+});
 
 const views: { id: View; label: string; permissions: string[]; icon: Component }[] = [
   { id: 'dashboard', label: '概览', icon: LayoutDashboard, permissions: ['documents.read', 'knowledge_bases.manage', 'conversations.read'] },
@@ -52,6 +69,12 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
 ];
+function viewFromRoute(): View | null {
+  const section = route.params.section;
+  if (typeof section === 'string' && views.some((item) => item.id === section)) return section as View;
+  if (route.path.startsWith('/admin/knowledge/')) return 'knowledge';
+  return null;
+}
 const availableViews = computed(() => views.filter((item) => item.permissions.some(can)));
 const quickSearchMatches = computed(() => {
   const keyword = adminQuickSearch.value.trim().toLowerCase();
@@ -89,11 +112,16 @@ async function signIn() {
     session.value = { token: login.accessToken, me };
     saveAdminSession(login.accessToken, me);
     password.value = '';
-    const requested = typeof route.params.section === 'string' ? route.params.section as View : null;
+    const requested = viewFromRoute();
     const target = requested && availableViews.value.some((item) => item.id === requested)
       ? requested
       : availableViews.value[0]?.id;
-    if (target) await openView(target);
+    if (target) {
+      if (target === 'knowledge' && route.path.startsWith('/admin/knowledge/')) {
+        view.value = target;
+        await refresh();
+      } else await openView(target);
+    }
   } catch (cause) {
     loginError.value = cause instanceof AdminApiError && cause.status === 401 ? '邮箱或密码不正确。' : describeError(cause);
   } finally {
@@ -160,8 +188,14 @@ async function refresh() {
       if (can('conversations.read')) jobs.push(adminApi.chatTraces(token).then((items) => { chatTraces.value = items; }));
       await Promise.all(jobs);
     }
-    if (view.value === 'admins') [admins.value, roles.value] = await Promise.all([adminApi.admins(token), adminApi.roles(token)]);
-    if (view.value === 'roles') [roles.value, permissions.value] = await Promise.all([adminApi.roles(token), adminApi.permissions(token)]);
+    if (view.value === 'admins') {
+      [admins.value, roles.value] = await Promise.all([adminApi.admins(token), adminApi.roles(token)]);
+      if (selectedAdminId.value === null) selectedAdminId.value = admins.value[0]?.id ?? null;
+    }
+    if (view.value === 'roles') {
+      [roles.value, permissions.value] = await Promise.all([adminApi.roles(token), adminApi.permissions(token)]);
+      if (selectedRoleId.value === null) selectedRoleId.value = roles.value[0]?.id ?? null;
+    }
     if (view.value === 'audit') audits.value = await adminApi.audit(token);
     if (view.value === 'conversations' && can('conversations.read')) chatTraces.value = await adminApi.chatTraces(token);
   } catch (cause) {
@@ -171,9 +205,10 @@ async function refresh() {
   }
 }
 
-watch(() => route.params.section, async (section) => {
-  if (typeof section !== 'string' || !views.some((item) => item.id === section)) return;
-  view.value = section as View;
+watch(() => route.path, async () => {
+  const next = viewFromRoute();
+  if (!next) return;
+  view.value = next;
   saveAdminView(view.value);
   error.value = '';
   notice.value = '';
@@ -185,8 +220,7 @@ onMounted(async () => {
   const savedView = loadAdminView();
   if (!restored) return;
   session.value = { token: restored.token, me: restored.me };
-  const section = typeof route.params.section === 'string' ? route.params.section : null;
-  const requested = section && views.some((item) => item.id === section) ? section as View : null;
+  const requested = viewFromRoute();
   const fallback = savedView && views.some((item) => item.id === savedView) ? savedView as View : availableViews.value[0]?.id;
   if (requested && availableViews.value.some((item) => item.id === requested)) {
     view.value = requested;
@@ -245,11 +279,12 @@ async function changePage(direction: -1 | 1) {
 }
 
 async function archiveDocument(item: DocumentItem) {
-  if (!window.confirm(`下架「${item.title}」？下架后新问题将不再检索这份资料。`)) return;
-  await action((token) => adminApi.archive(token, item.id), '资料已下架。', async () => {
-    await refresh();
-    if (selectedDocument.value?.id === item.id) await selectDocument(item.id);
-  });
+  confirmDialog.value = { title: '下架资料', description: `确定下架「${item.title}」？下架后新问题将不再检索这份资料。`, confirmLabel: '确认下架', run: async () => {
+    await action((token) => adminApi.archive(token, item.id), '资料已下架。', async () => {
+      await refresh();
+      if (selectedDocument.value?.id === item.id) await selectDocument(item.id);
+    });
+  } };
 }
 
 async function processDocument(item: DocumentItem) {
@@ -266,13 +301,14 @@ async function createAdmin() {
   const input = { ...newAdmin.value };
   await action((token) => adminApi.createAdmin(token, input), '管理员已创建。', async () => {
     newAdmin.value = { email: '', displayName: '', password: '', roleIds: [] };
+    adminDialog.value = null;
     if (session.value) admins.value = await adminApi.admins(session.value.token);
   });
 }
 
 async function saveAdminRoles(id: number) {
   await action((token) => adminApi.assignRoles(token, id, editingRoleIds.value), '角色分配已更新。', async () => {
-    editingAdminId.value = null;
+    adminDialog.value = null;
     if (session.value) admins.value = await adminApi.admins(session.value.token);
     await refreshIdentity();
   });
@@ -280,16 +316,26 @@ async function saveAdminRoles(id: number) {
 
 async function toggleAdmin(item: AdminItem) {
   const disable = !item.disabledAt;
-  if (!window.confirm(`${disable ? '停用' : '启用'}管理员「${item.displayName}」？`)) return;
-  await action((token) => adminApi.setStatus(token, item.id, disable), disable ? '管理员已停用。' : '管理员已启用。', async () => {
-    if (session.value) admins.value = await adminApi.admins(session.value.token);
-  });
+  confirmDialog.value = { title: `${disable ? '停用' : '启用'}管理员`, description: `确定${disable ? '停用' : '启用'}「${item.displayName}」(${item.email})？`, confirmLabel: disable ? '确认停用' : '确认启用', run: async () => {
+    await action((token) => adminApi.setStatus(token, item.id, disable), disable ? '管理员已停用。' : '管理员已启用。', async () => {
+      if (session.value) admins.value = await adminApi.admins(session.value.token);
+    });
+  } };
 }
 
 function editRole(item?: RoleItem) {
   roleForm.value = item
     ? { id: item.id, code: item.code, name: item.name, permissionCodes: [...item.permissionCodes] }
     : { id: null, code: '', name: '', permissionCodes: [] };
+  adminDialog.value = 'role';
+}
+
+function selectAdmin(item: AdminItem) {
+  selectedAdminId.value = item.id;
+}
+
+function selectRole(item: RoleItem) {
+  selectedRoleId.value = item.id;
 }
 
 async function saveRole() {
@@ -300,6 +346,7 @@ async function saveRole() {
     ? adminApi.createRole(token, { code: form.code.trim(), ...input })
     : adminApi.updateRole(token, form.id, input), '角色权限已保存。', async () => {
     editRole();
+    adminDialog.value = null;
     if (session.value) roles.value = await adminApi.roles(session.value.token);
     await refreshIdentity();
   });
@@ -307,6 +354,29 @@ async function saveRole() {
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '—';
+}
+
+function auditActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    'admin.created': '创建管理员', 'admin.disabled': '停用管理员', 'admin.enabled': '启用管理员', 'admin.roles_updated': '调整管理员角色',
+    'role.created': '创建角色', 'role.updated': '更新角色权限', 'document.uploaded': '上传资料', 'document.archived': '下架资料',
+    'document.reprocessed': '重新处理资料', 'document.retried': '重试资料处理', 'document.reprocess_all': '批量重新处理资料',
+    'knowledge_base.created': '创建知识库', 'knowledge_base.updated': '更新知识库', 'knowledge_base.archived': '归档知识库',
+    'knowledge_base.configured': '更新索引配置', 'knowledge_index.build_requested': '请求构建索引', 'knowledge_index.activated': '启用索引版本',
+    'embedding_profile.created': '添加 Embedding 配置', 'embedding_profile.updated': '更新 Embedding 配置', 'faq.saved': '保存 FAQ',
+  };
+  return labels[action] ?? action;
+}
+
+function auditTargetLabel(targetType: string): string {
+  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置' } as Record<string, string>)[targetType] ?? targetType;
+}
+
+async function runConfirmation() {
+  const pending = confirmDialog.value;
+  if (!pending || busy.value) return;
+  await pending.run();
+  confirmDialog.value = null;
 }
 
 function statusLabel(item: DocumentItem): string {
@@ -347,15 +417,14 @@ function sourceLocation(filename: string, start: number, end: number): string {
     <aside class="admin-sidebar">
       <nav aria-label="管理导航">
         <p class="admin-nav-label">工作区</p>
-        <RouterLink v-for="item in availableViews" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" />{{ item.label }}</RouterLink>
+        <RouterLink v-for="item in availableViews" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></RouterLink>
       </nav>
       <div class="admin-sidebar-bottom"><a href="/">访客页面 ↗</a><button type="button" @click="signOut">退出登录</button></div>
     </aside>
 
     <main class="admin-main">
       <div class="admin-content">
-        <p v-if="error" class="admin-error" role="alert">{{ error }}</p>
-        <p v-if="notice" class="admin-notice" role="status">{{ notice }}</p>
+        <ToastNotice :message="error || notice" :type="error ? 'error' : 'success'" @dismiss="error ? (error = '') : (notice = '')" />
 
         <section v-if="!availableViews.length" class="admin-empty"><h1>暂无可用权限</h1><p>请联系超级管理员分配角色。</p></section>
 
@@ -363,7 +432,9 @@ function sourceLocation(filename: string, start: number, end: number): string {
         <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
         <ProductCatalogAdmin v-else-if="view === 'products'" />
         <section v-else-if="view === 'documents'">
-          <div class="admin-heading"><div><p class="section-label">知识管理</p><h1>资料库</h1><p>维护客服可引用的资料。仅已就绪且未下架的内容参与回答。</p></div><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></div>
+          <AdminPageHeader eyebrow="知识管理" title="资料库" description="维护客服可引用的资料。仅已就绪且未下架的内容参与回答。">
+            <template #actions><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></template>
+          </AdminPageHeader>
           <form v-if="can('documents.upload')" class="admin-upload" @submit.prevent="upload">
             <div><h2>上传资料</h2><p>支持 Markdown、Word（.docx）和可选中文字的 PDF；最多 2 MB，扫描版 PDF 暂不支持。</p></div>
             <label>资料标题（可选）<input v-model="uploadTitle" maxlength="200" placeholder="不填则使用文件名" /></label>
@@ -398,27 +469,48 @@ function sourceLocation(filename: string, start: number, end: number): string {
         <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
 
         <section v-else-if="view === 'admins'">
-          <div class="admin-heading"><div><p class="section-label">账号管理</p><h1>管理员</h1><p>创建账号、分配角色和停用账号；实际授权始终由后端校验。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></div>
-          <form class="admin-form" @submit.prevent="createAdmin">
-            <h2>创建管理员</h2>
-            <div class="admin-form-grid"><label>显示名称<input v-model.trim="newAdmin.displayName" required maxlength="120" /></label><label>邮箱<input v-model.trim="newAdmin.email" type="email" required /></label><label>初始密码<input v-model="newAdmin.password" type="password" minlength="12" maxlength="72" autocomplete="new-password" required /></label></div>
-            <fieldset><legend>分配角色</legend><label v-for="role in assignableRoles" :key="role.id" class="admin-check"><input v-model="newAdmin.roleIds" type="checkbox" :value="role.id" />{{ role.name }} <small>{{ role.code }}</small></label></fieldset>
-            <button class="admin-primary" type="submit" :disabled="busy || !assignableRoles.length">创建账号</button>
-          </form>
-          <div class="admin-section-head"><h2>账号列表</h2><span>{{ admins.length }} 位</span></div>
-          <div class="admin-list"><div v-for="item in admins" :key="item.id" class="admin-person-row"><div><strong>{{ item.displayName }}</strong><small>{{ item.email }} · {{ item.roles.map((role) => role.code).join('、') || '未分配角色' }}</small></div><span class="admin-status" :class="item.disabledAt ? 'archived' : 'ready'">{{ item.disabledAt ? '已停用' : '启用中' }}</span><div class="admin-actions"><button v-if="item.roles.every((role) => assignableRoles.some((candidate) => candidate.id === role.id))" type="button" @click="editingAdminId = item.id; editingRoleIds = item.roles.map((role) => role.id)">调整角色</button><button v-if="item.id !== session.me.id" type="button" :disabled="busy" @click="toggleAdmin(item)">{{ item.disabledAt ? '启用' : '停用' }}</button></div><div v-if="editingAdminId === item.id" class="admin-inline-editor"><label v-for="role in assignableRoles" :key="role.id" class="admin-check"><input v-model="editingRoleIds" type="checkbox" :value="role.id" />{{ role.name }}</label><button type="button" class="admin-primary" :disabled="busy" @click="saveAdminRoles(item.id)">保存角色</button><button type="button" @click="editingAdminId = null">取消</button></div></div></div>
+          <AdminPageHeader eyebrow="账号管理" title="管理员" description="创建账号、分配角色和停用账号；实际授权始终由后端校验。">
+            <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
+          </AdminPageHeader>
+          <div class="admin-section-head"><div><h2>账号列表</h2><span>{{ admins.length }} 位管理员 · 点击查看授权详情</span></div><button class="admin-primary" type="button" @click="adminDialog = 'createAdmin'">新建管理员</button></div>
+          <div class="admin-management-layout">
+            <div class="admin-list admin-management-list"><button v-for="item in admins" :key="item.id" type="button" class="admin-person-row" :class="{ selected: selectedAdminId === item.id }" @click="selectAdmin(item)"><div><strong>{{ item.displayName }}</strong><small>{{ item.email }}</small></div><span class="admin-status" :class="item.disabledAt ? 'archived' : 'ready'">{{ item.disabledAt ? '已停用' : '启用中' }}</span><small class="admin-row-meta">{{ item.roles.map((role) => role.code).join('、') || '未分配角色' }}</small></button></div>
+            <aside v-if="selectedAdmin" class="admin-detail-panel"><div class="admin-detail-title"><div><p class="section-label">管理员详情 · #{{ selectedAdmin.id }}</p><h2>{{ selectedAdmin.displayName }}</h2><p>{{ selectedAdmin.email }}</p></div><span class="admin-status" :class="selectedAdmin.disabledAt ? 'archived' : 'ready'">{{ selectedAdmin.disabledAt ? '已停用' : '启用中' }}</span></div><dl class="admin-detail-grid"><dt>账号状态</dt><dd>{{ selectedAdmin.disabledAt ? '已停用' : '可登录' }}</dd><dt>当前角色</dt><dd>{{ selectedAdmin.roles.map((role) => roles.find((item) => item.id === role.id)?.name ?? role.code).join('、') || '未分配角色' }}</dd><dt>可分配角色</dt><dd>{{ assignableRoles.length }} 个</dd></dl><div class="admin-actions"><button v-if="selectedAdmin.roles.every((role) => assignableRoles.some((candidate) => candidate.id === role.id))" type="button" @click="editingRoleIds = selectedAdmin.roles.map((role) => role.id); adminDialog = 'assignRoles'">调整角色</button><button v-if="selectedAdmin.id !== session.me.id" type="button" :disabled="busy" @click="toggleAdmin(selectedAdmin)">{{ selectedAdmin.disabledAt ? '启用账号' : '停用账号' }}</button></div></aside>
+          </div>
         </section>
 
         <section v-else-if="view === 'roles'">
-          <div class="admin-heading"><div><p class="section-label">访问控制</p><h1>角色权限</h1><p>权限代码由后端定义；这里只组合权限，不创建新的权限代码。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></div>
-          <form class="admin-form" @submit.prevent="saveRole"><h2>{{ roleForm.id === null ? '创建角色' : `编辑角色 #${roleForm.id}` }}</h2><div class="admin-form-grid"><label>角色代码<input v-model.trim="roleForm.code" :disabled="roleForm.id !== null" pattern="[a-z][a-z0-9_]{2,79}" required placeholder="knowledge_editor" /></label><label>角色名称<input v-model.trim="roleForm.name" required maxlength="120" /></label></div><fieldset><legend>权限</legend><label v-for="permission in permissions" :key="permission.code" class="admin-check"><input v-model="roleForm.permissionCodes" type="checkbox" :value="permission.code" :disabled="!can(permission.code)" />{{ permission.description }} <small>{{ permission.code }}</small></label></fieldset><div class="admin-actions"><button class="admin-primary" type="submit" :disabled="busy">保存角色</button><button v-if="roleForm.id !== null" type="button" @click="editRole()">取消编辑</button></div></form>
-          <div class="admin-section-head"><h2>现有角色</h2><span>{{ roles.length }} 个</span></div><div class="admin-list"><div v-for="item in roles" :key="item.id" class="admin-role-row"><div><strong>{{ item.name }} <small v-if="item.isSystem">系统角色</small></strong><small>{{ item.code }} · {{ item.permissionCodes.join('、') || '无权限' }}</small></div><button v-if="!item.isSystem && item.permissionCodes.every(can)" type="button" @click="editRole(item)">编辑</button></div></div>
+          <AdminPageHeader eyebrow="访问控制" title="角色权限" description="权限代码由后端定义；这里只组合权限，不创建新的权限代码。">
+            <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
+          </AdminPageHeader>
+          <div class="admin-section-head"><div><h2>现有角色</h2><span>{{ roles.length }} 个角色 · 点击查看权限范围</span></div><button class="admin-primary" type="button" @click="editRole()">新建角色</button></div>
+          <div class="admin-management-layout">
+            <div class="admin-list admin-management-list"><button v-for="item in roles" :key="item.id" type="button" class="admin-role-row" :class="{ selected: selectedRoleId === item.id }" @click="selectRole(item)"><div><strong>{{ item.name }} <small v-if="item.isSystem">系统角色</small></strong><small>{{ item.code }}</small></div><span class="admin-status ready">{{ item.permissionCodes.length }} 项权限</span></button></div>
+            <aside v-if="selectedRole" class="admin-detail-panel"><div class="admin-detail-title"><div><p class="section-label">角色详情 · #{{ selectedRole.id }}</p><h2>{{ selectedRole.name }}</h2><p>{{ selectedRole.code }}</p></div><span class="admin-status" :class="selectedRole.isSystem ? 'archived' : 'ready'">{{ selectedRole.isSystem ? '系统角色' : '自定义角色' }}</span></div><div class="permission-summary"><span v-for="code in selectedRole.permissionCodes" :key="code">{{ code }}</span><p v-if="!selectedRole.permissionCodes.length" class="admin-muted">这个角色暂未分配权限。</p></div><div class="admin-actions"><button v-if="!selectedRole.isSystem && selectedRole.permissionCodes.every(can)" type="button" @click="editRole(selectedRole)">编辑权限</button></div></aside>
+          </div>
         </section>
 
         <section v-else-if="view === 'audit'">
-          <div class="admin-heading"><div><p class="section-label">审计追踪</p><h1>操作记录</h1><p>最近 50 条管理员操作，用于追溯资料与权限变更。</p></div><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></div>
-          <div class="admin-list"><div v-for="item in audits" :key="item.id" class="admin-audit-row"><time>{{ formatDate(item.createdAt) }}</time><strong>{{ item.action }}</strong><span>{{ item.targetType }} #{{ item.targetId }}</span><small>操作者 #{{ item.actorAdminId }}</small></div><p v-if="!audits.length && !busy" class="admin-muted">暂无记录。</p></div>
+          <AdminPageHeader eyebrow="审计追踪" title="操作记录" description="最近 50 条管理员操作，用于追溯资料与权限变更。">
+            <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
+          </AdminPageHeader>
+          <div class="admin-audit-table"><table><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>操作者</th><th>变更详情</th></tr></thead><tbody><tr v-for="item in audits" :key="item.id"><td><time>{{ formatDate(item.createdAt) }}</time></td><td><strong :title="item.action">{{ auditActionLabel(item.action) }}</strong></td><td>{{ auditTargetLabel(item.targetType) }} <span class="admin-mono">#{{ item.targetId }}</span></td><td>管理员 #{{ item.actorAdminId }}</td><td><details v-if="Object.keys(item.details).length" class="admin-audit-details"><summary>查看</summary><pre>{{ JSON.stringify(item.details, null, 2) }}</pre></details><span v-else class="admin-muted">—</span></td></tr></tbody></table><p v-if="!audits.length && !busy" class="admin-muted">暂无操作记录。</p></div>
         </section>
+
+        <UiDialog :open="adminDialog === 'createAdmin'" title="新建管理员" description="创建后台账号并分配可由你管理的角色。" @update:open="adminDialog = $event ? adminDialog : null">
+          <form class="admin-dialog-form" @submit.prevent="createAdmin">
+            <div class="admin-form-grid"><label>显示名称<input v-model.trim="newAdmin.displayName" required maxlength="120" /></label><label>邮箱<input v-model.trim="newAdmin.email" type="email" required /></label><label>初始密码<input v-model="newAdmin.password" type="password" minlength="12" maxlength="72" autocomplete="new-password" required /><small>至少 12 个字符。</small></label></div>
+            <fieldset><legend>分配角色</legend><label v-for="role in assignableRoles" :key="role.id" class="admin-check"><input v-model="newAdmin.roleIds" type="checkbox" :value="role.id" />{{ role.name }} <small>{{ role.code }}</small></label><p v-if="!assignableRoles.length" class="admin-muted">当前账号没有可分配的角色。</p></fieldset>
+            <footer><button type="button" @click="adminDialog = null">取消</button><button class="admin-primary" type="submit" :disabled="busy || !assignableRoles.length">{{ busy ? '创建中…' : '创建账号' }}</button></footer>
+          </form>
+        </UiDialog>
+        <UiDialog :open="adminDialog === 'assignRoles'" :title="`调整 ${selectedAdmin?.displayName || '管理员'} 的角色`" description="变更保存后立即影响该管理员可访问的后台功能。" @update:open="adminDialog = $event ? adminDialog : null">
+          <form class="admin-dialog-form" @submit.prevent="selectedAdmin && saveAdminRoles(selectedAdmin.id)"><fieldset><legend>角色</legend><label v-for="role in assignableRoles" :key="role.id" class="admin-check"><input v-model="editingRoleIds" type="checkbox" :value="role.id" />{{ role.name }} <small>{{ role.code }}</small></label></fieldset><footer><button type="button" @click="adminDialog = null">取消</button><button class="admin-primary" type="submit" :disabled="busy">保存角色</button></footer></form>
+        </UiDialog>
+        <UiDialog :open="adminDialog === 'role'" :title="roleForm.id === null ? '新建角色' : '编辑角色权限'" description="权限代码由系统定义；这里只组合权限，不创建新的权限代码。" size="lg" @update:open="adminDialog = $event ? adminDialog : null">
+          <form class="admin-dialog-form" @submit.prevent="saveRole"><div class="admin-form-grid role-fields"><label>角色代码<input v-model.trim="roleForm.code" :disabled="roleForm.id !== null" pattern="[a-z][a-z0-9_]{2,79}" required placeholder="knowledge_editor" /></label><label>角色名称<input v-model.trim="roleForm.name" required maxlength="120" /></label></div><div class="permission-groups"><fieldset v-for="group in permissionGroups" :key="group.label"><legend>{{ group.label }}</legend><label v-for="permission in group.items" :key="permission.code" class="admin-check"><input v-model="roleForm.permissionCodes" type="checkbox" :value="permission.code" :disabled="!can(permission.code)" /><span>{{ permission.description }}<small>{{ permission.code }}</small></span></label></fieldset></div><footer><button type="button" @click="adminDialog = null">取消</button><button class="admin-primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : '保存角色' }}</button></footer></form>
+        </UiDialog>
+        <UiDialog :open="confirmDialog !== null" :title="confirmDialog?.title || '确认操作'" :description="confirmDialog?.description" size="sm" @update:open="confirmDialog = $event ? confirmDialog : null"><div class="admin-confirm-actions"><button type="button" @click="confirmDialog = null">取消</button><button class="danger" type="button" :disabled="busy" @click="runConfirmation">{{ busy ? '处理中…' : confirmDialog?.confirmLabel }}</button></div></UiDialog>
       </div>
     </main>
   </div>

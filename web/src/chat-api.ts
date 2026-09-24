@@ -43,8 +43,17 @@ export interface ConversationRun {
 }
 
 export class ChatApiError extends Error {
-  constructor(readonly status: number) {
-    super(`Chat API returned HTTP ${status}`);
+  constructor(readonly status: number, message?: string) {
+    super(message || `Chat API returned HTTP ${status}`);
+  }
+}
+
+async function responseError(response: Response): Promise<ChatApiError> {
+  try {
+    const payload = await response.json() as { message?: unknown };
+    return new ChatApiError(response.status, typeof payload.message === 'string' ? payload.message : undefined);
+  } catch {
+    return new ChatApiError(response.status);
   }
 }
 
@@ -64,7 +73,7 @@ export async function askQuestion(question: string, history: PreviousTurn[] = []
     body: JSON.stringify({ question, history }),
     signal: AbortSignal.timeout(65_000),
   });
-  if (!response.ok) throw new ChatApiError(response.status);
+  if (!response.ok) throw await responseError(response);
   return parseAnswer(await response.json());
 }
 
@@ -75,7 +84,7 @@ export async function askInConversation(conversationId: string, question: string
     body: JSON.stringify({ question }),
     signal: AbortSignal.timeout(65_000),
   });
-  if (!response.ok) throw new ChatApiError(response.status);
+  if (!response.ok) throw await responseError(response);
   return parseAnswer(await response.json());
 }
 
@@ -86,7 +95,7 @@ export async function askInConversationStream(conversationId: string, question: 
     body: JSON.stringify({ question }),
     signal: AbortSignal.timeout(65_000),
   });
-  if (!response.ok) throw new ChatApiError(response.status);
+  if (!response.ok) throw await responseError(response);
   if (!response.body) throw new Error('Streaming is unavailable');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -107,8 +116,11 @@ export async function askInConversationStream(conversationId: string, question: 
           if (typeof payload.text !== 'string') throw new Error('Invalid stream delta');
           onDelta(payload.text);
         } else if (data && event === 'error') {
-          const payload = JSON.parse(data) as { status?: unknown };
-          throw new ChatApiError(typeof payload.status === 'number' ? payload.status : response.status || 503);
+          const payload = JSON.parse(data) as { status?: unknown; message?: unknown };
+          throw new ChatApiError(
+            typeof payload.status === 'number' ? payload.status : response.status || 503,
+            typeof payload.message === 'string' ? payload.message : undefined,
+          );
         } else if (data && event === 'done') {
           finalAnswer = parseAnswer(JSON.parse(data));
         }
@@ -125,7 +137,7 @@ export async function askInConversationStream(conversationId: string, question: 
 
 async function conversationRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api/chat/conversations${path}`, { ...options, cache: 'no-store' });
-  if (!response.ok) throw new ChatApiError(response.status);
+  if (!response.ok) throw await responseError(response);
   return response.json() as Promise<T>;
 }
 
@@ -136,6 +148,6 @@ export const conversationApi = {
   runs: (id: string) => conversationRequest<ConversationRun[]>(`/${encodeURIComponent(id)}/runs`),
   remove: async (id: string) => {
     const response = await fetch(`/api/chat/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
-    if (!response.ok) throw new ChatApiError(response.status);
+    if (!response.ok) throw await responseError(response);
   },
 };

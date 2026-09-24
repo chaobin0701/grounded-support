@@ -8,8 +8,8 @@ import { parseFragment, DefaultTreeAdapterTypes } from 'parse5';
 const MAX_EXTRACTED_CHARS = 100_000;
 const MAX_CHUNKS = 200;
 const MAX_PDF_PAGES = 100;
-const CHUNK_CHARS = 800;
-const OVERLAP_CHARS = 60;
+const DEFAULT_CHUNK_CHARS = 800;
+const DEFAULT_OVERLAP_CHARS = 60;
 
 export class ScannedPdfError extends Error {
   constructor() { super('PDF contains no selectable text; scanned PDFs are not supported'); }
@@ -18,7 +18,7 @@ export class ScannedPdfError extends Error {
 export type ParsedDocument = { extractedText: string; chunks: DocumentChunk[]; blocks: DocumentBlock[]; warnings?: string[] };
 type TextBlock = { headingPath: string; content: string; sourceStartLine: number; sourceEndLine: number };
 
-function chunkPlainText(blocks: TextBlock[]): DocumentChunk[] {
+function chunkPlainText(blocks: TextBlock[], chunkChars: number, overlapChars: number): DocumentChunk[] {
   const chunks: DocumentChunk[] = [];
   let current: TextBlock | undefined;
   const flush = () => {
@@ -28,17 +28,17 @@ function chunkPlainText(blocks: TextBlock[]): DocumentChunk[] {
   for (const block of blocks) {
     const characters = Array.from(block.content);
     const pieces: string[] = [];
-    if (characters.length <= CHUNK_CHARS) pieces.push(block.content);
+    if (characters.length <= chunkChars) pieces.push(block.content);
     else {
       for (let start = 0; start < characters.length;) {
-        const end = Math.min(start + CHUNK_CHARS, characters.length);
+        const end = Math.min(start + chunkChars, characters.length);
         pieces.push(characters.slice(start, end).join('').trim());
         if (end === characters.length) break;
-        start = Math.max(start + 1, end - OVERLAP_CHARS);
+        start = Math.max(start + 1, end - overlapChars);
       }
     }
     for (const piece of pieces.filter(Boolean)) {
-      if (current && (current.headingPath !== block.headingPath || Array.from(current.content).length + piece.length + 2 > CHUNK_CHARS)) flush();
+      if (current && (current.headingPath !== block.headingPath || Array.from(current.content).length + piece.length + 2 > chunkChars)) flush();
       current = current
         ? { ...current, content: `${current.content}\n\n${piece}`, sourceEndLine: block.sourceEndLine }
         : { ...block, content: piece };
@@ -56,7 +56,7 @@ function ensureLimits(parsed: ParsedDocument): ParsedDocument {
   return parsed;
 }
 
-async function parseDocx(bytes: Buffer): Promise<ParsedDocument> {
+async function parseDocx(bytes: Buffer, chunkChars: number, overlapChars: number): Promise<ParsedDocument> {
   const result = await mammoth.convertToHtml({ buffer: bytes }, { convertImage: mammoth.images.imgElement(async () => ({ src: '' })) });
   const headings: string[] = [];
   const blocks: TextBlock[] = [];
@@ -87,12 +87,12 @@ async function parseDocx(bytes: Buffer): Promise<ParsedDocument> {
     blocks: blocks.map((block, index) => ({ ordinal: index + 1, blockType: 'paragraph',
       headingPath: block.headingPath, content: block.content,
       sourceLocator: { type: 'docx_paragraph', start: block.sourceStartLine, end: block.sourceEndLine } })),
-    chunks: chunkPlainText(blocks),
+    chunks: chunkPlainText(blocks, chunkChars, overlapChars),
     warnings: result.messages.length ? ['Word parser reported unsupported formatting; check the extracted blocks.'] : [],
   });
 }
 
-async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
+async function parsePdf(bytes: Buffer, chunkChars: number, overlapChars: number): Promise<ParsedDocument> {
   const task = getDocument({ data: new Uint8Array(bytes), useSystemFonts: true, disableFontFace: true });
   try {
     const document = await task.promise;
@@ -112,7 +112,7 @@ async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
       blocks: blocks.map((block, index) => ({ ordinal: index + 1, blockType: 'page',
         headingPath: block.headingPath, content: block.content,
         sourceLocator: { type: 'pdf_page', start: block.sourceStartLine, end: block.sourceEndLine } })),
-      chunks: chunkPlainText(blocks),
+      chunks: chunkPlainText(blocks, chunkChars, overlapChars),
       warnings: blocks.length < document.numPages ? ['Some PDF pages contain no selectable text and were skipped. OCR is not supported.'] : [],
     });
   } finally {
@@ -120,11 +120,25 @@ async function parsePdf(bytes: Buffer): Promise<ParsedDocument> {
   }
 }
 
-export async function parseDocument(bytes: Buffer, storageKey: string): Promise<ParsedDocument> {
+export async function parseDocument(bytes: Buffer, storageKey: string,
+  chunkChars = DEFAULT_CHUNK_CHARS, overlapChars = DEFAULT_OVERLAP_CHARS,
+  options?: { separatorMode?: 'auto' | 'heading_paragraph' | 'fixed'; preserveHeading?: boolean }): Promise<ParsedDocument> {
+  let parsed: ParsedDocument;
   switch (extname(storageKey)) {
-    case '.md': return ensureLimits(parseMarkdownDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes)));
-    case '.docx': return parseDocx(bytes);
-    case '.pdf': return parsePdf(bytes);
+    case '.md': parsed = ensureLimits(parseMarkdownDocument(new TextDecoder('utf-8', { fatal: true }).decode(bytes), chunkChars, overlapChars)); break;
+    case '.docx': parsed = await parseDocx(bytes, chunkChars, overlapChars); break;
+    case '.pdf': parsed = await parsePdf(bytes, chunkChars, overlapChars); break;
     default: throw new Error('Unsupported stored document format');
   }
+  if (options?.separatorMode === 'fixed') {
+    parsed.chunks = chunkPlainText([{ headingPath: '', content: parsed.blocks.map(block => block.content).join('\n\n'),
+      sourceStartLine: parsed.blocks[0].sourceLocator.start,
+      sourceEndLine: parsed.blocks.at(-1)!.sourceLocator.end }], chunkChars, overlapChars);
+  } else if (options?.separatorMode === 'heading_paragraph') {
+    parsed.chunks = parsed.blocks.flatMap(block => chunkPlainText([{ headingPath: block.headingPath, content: block.content,
+      sourceStartLine: block.sourceLocator.start, sourceEndLine: block.sourceLocator.end }], chunkChars, overlapChars))
+      .map((chunk, index) => ({ ...chunk, ordinal: index + 1 }));
+  }
+  if (options?.preserveHeading === false) parsed.chunks = parsed.chunks.map(chunk => ({ ...chunk, headingPath: '' }));
+  return ensureLimits(parsed);
 }

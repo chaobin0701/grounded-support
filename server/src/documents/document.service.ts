@@ -6,6 +6,15 @@ import { DatabaseService } from '../database.service';
 import { DocumentQueueService } from './document-queue.service';
 import { documentsDir, documentPath } from './document-storage';
 import { AppConfigService } from '../config/config.service';
+import { z } from 'zod';
+
+const chunkOverrideSchema = z.object({
+  chunkMode: z.enum(['general', 'parent_child']).default('general'),
+  separatorMode: z.enum(['auto', 'heading_paragraph', 'fixed']).default('auto'),
+  preserveHeading: z.boolean().default(true),
+  chunkChars: z.number().int().min(200).max(4000),
+  overlapChars: z.number().int().min(0).max(400),
+}).strict().refine(value => value.overlapChars < value.chunkChars, 'Overlap must be smaller than chunk size');
 
 const MAX_BYTES = 2 * 1024 * 1024;
 
@@ -13,7 +22,7 @@ const MAX_BYTES = 2 * 1024 * 1024;
 export class DocumentService {
   constructor(private readonly database: DatabaseService, private readonly queue: DocumentQueueService, private readonly config: AppConfigService) {}
 
-  async upload(actorId: number, file: Express.Multer.File | undefined, rawTitle: string | undefined, knowledgeBaseId?: number) {
+  async upload(actorId: number, file: Express.Multer.File | undefined, rawTitle: string | undefined, knowledgeBaseId?: number, rawProcessingConfig?: string, deferProcessing = false) {
     if (!file) throw new BadRequestException('A document file is required');
     const filename = basename(file.originalname).normalize('NFC');
     const extension = extname(filename).toLowerCase();
@@ -37,6 +46,14 @@ export class DocumentService {
       throw new BadRequestException('Invalid DOCX file');
     }
 
+    let processingConfig: z.infer<typeof chunkOverrideSchema> | null = null;
+    if (rawProcessingConfig) {
+      let parsedBody: unknown;
+      try { parsedBody = JSON.parse(rawProcessingConfig); } catch { throw new BadRequestException('Invalid processing configuration'); }
+      const parsedConfig = chunkOverrideSchema.safeParse(parsedBody);
+      if (!parsedConfig.success) throw new BadRequestException('Invalid processing configuration');
+      processingConfig = parsedConfig.data;
+    }
     const title = rawTitle?.trim() || filename.replace(/\.(md|markdown|docx|pdf)$/i, '');
     if (title.length > 200) throw new BadRequestException('Title is too long');
     const storageKey = `${randomUUID()}.${extension === '.markdown' ? 'md' : extension.slice(1)}`;
@@ -51,18 +68,18 @@ export class DocumentService {
           AND archived_at IS NULL FOR SHARE`, [knowledgeBaseId ?? null]);
         if (!base.rows[0]) throw new NotFoundException('Active knowledge base not found');
         const created = await client.query<{ id: string; created_at: Date }>(
-          `INSERT INTO documents (title, original_filename, storage_key, sha256, byte_size, uploaded_by, knowledge_base_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
-          [title, filename, storageKey, sha256, file.size, actorId, base.rows[0].id],
+          `INSERT INTO documents (title, original_filename, storage_key, sha256, byte_size, uploaded_by, knowledge_base_id, status, chunk_override)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
+          [title, filename, storageKey, sha256, file.size, actorId, base.rows[0].id, deferProcessing ? 'pending' : 'queued', processingConfig ? JSON.stringify(processingConfig) : null],
         );
         const id = Number(created.rows[0].id);
-        await this.queue.enqueue(client, id);
+        if (!deferProcessing) await this.queue.enqueue(client, id);
         await client.query(
           `INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id, details)
            VALUES ($1, 'document.uploaded', 'document', $2, $3)`,
           [actorId, String(id), JSON.stringify({ filename, byteSize: file.size })],
         );
-        return { id, title, originalFilename: filename, status: 'queued', createdAt: created.rows[0].created_at };
+        return { id, title, originalFilename: filename, status: deferProcessing ? 'pending' : 'queued', createdAt: created.rows[0].created_at };
       });
     } catch (error) {
       // A lost connection during COMMIT is ambiguous: the row may already exist.
@@ -81,7 +98,10 @@ export class DocumentService {
     const result = await this.database.query(
       `SELECT id::int, title, original_filename AS "originalFilename", byte_size AS "byteSize",
               uploaded_by::int AS "uploadedBy", status, error_message AS "errorMessage",
-              parser_version AS "parserVersion", source_type AS "sourceType",
+              parser_version AS "parserVersion", source_type AS "sourceType", enabled_for_retrieval AS "enabledForRetrieval",
+              char_length(extracted_text)::int AS "characterCount",
+              (SELECT count(*)::int FROM document_chunks chunk WHERE chunk.document_id=documents.id) AS "chunkCount",
+              chunk_override AS "chunkOverride",
               archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"
        FROM documents WHERE knowledge_base_id = COALESCE($3::bigint, (SELECT id FROM knowledge_bases WHERE is_default))
        ORDER BY id DESC LIMIT $1 OFFSET $2`, [limit, offset, knowledgeBaseId ?? null],
@@ -93,8 +113,9 @@ export class DocumentService {
     const result = await this.database.query(
       `SELECT id::int, title, original_filename AS "originalFilename", sha256,
               byte_size AS "byteSize", uploaded_by::int AS "uploadedBy", status,
-              extracted_text AS "extractedText", error_message AS "errorMessage",
+              extracted_text AS "extractedText", error_message AS "errorMessage", enabled_for_retrieval AS "enabledForRetrieval",
               (SELECT count(*)::int FROM document_chunks WHERE document_id = documents.id) AS "chunkCount",
+              chunk_override AS "chunkOverride",
               archived_at AS "archivedAt", created_at AS "createdAt", updated_at AS "updatedAt"
        FROM documents WHERE id = $1 AND knowledge_base_id = COALESCE($2::bigint, (SELECT id FROM knowledge_bases WHERE is_default))`, [id, knowledgeBaseId ?? null],
     );
@@ -129,12 +150,40 @@ export class DocumentService {
     });
   }
 
+  async unarchive(actorId: number, id: number, knowledgeBaseId?: number) {
+    return this.database.transaction(async (client) => {
+      const result = await client.query<{ id: string }>(
+        `UPDATE documents SET archived_at = NULL, updated_at = now() WHERE id = $1 AND archived_at IS NOT NULL
+         AND knowledge_base_id = COALESCE($2::bigint, (SELECT id FROM knowledge_bases WHERE is_default)) RETURNING id`, [id, knowledgeBaseId ?? null],
+      );
+      if (!result.rows[0]) throw new NotFoundException('Archived document not found');
+      await client.query(`INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id)
+        VALUES ($1, 'document.unarchived', 'document', $2)`, [actorId, String(id)]);
+      return { id, archived: false };
+    });
+  }
+
+  async setEnabled(actorId: number, id: number, enabled: boolean, knowledgeBaseId?: number) {
+    return this.database.transaction(async (client) => {
+      const result = await client.query<{ id: string }>(
+        `UPDATE documents SET enabled_for_retrieval = $3, updated_at = now() WHERE id = $1
+         AND archived_at IS NULL AND knowledge_base_id = COALESCE($2::bigint, (SELECT id FROM knowledge_bases WHERE is_default)) RETURNING id`, [id, knowledgeBaseId ?? null, enabled],
+      );
+      if (!result.rows[0]) throw new NotFoundException('Active document not found');
+      await client.query(`INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id, details)
+        VALUES ($1, 'document.retrieval_status_changed', 'document', $2, $3)`, [actorId, String(id), JSON.stringify({ enabled })]);
+      return { id, enabledForRetrieval: enabled };
+    });
+  }
+
   async retry(actorId: number, id: number, knowledgeBaseId?: number) {
     return this.scheduleReprocess(actorId, id, true, knowledgeBaseId);
   }
 
-  async reprocess(actorId: number, id: number, knowledgeBaseId?: number) {
-    return this.scheduleReprocess(actorId, id, false, knowledgeBaseId);
+  async reprocess(actorId: number, id: number, knowledgeBaseId?: number, chunkOverride?: unknown) {
+    const parsed = chunkOverride === undefined || chunkOverride === null ? null : chunkOverrideSchema.safeParse(chunkOverride);
+    if (parsed && !parsed.success) throw new BadRequestException('Invalid document chunk settings');
+    return this.scheduleReprocess(actorId, id, false, knowledgeBaseId, parsed?.success ? parsed.data : null);
   }
 
   async reprocessAll(actorId: number, knowledgeBaseId: number) {
@@ -166,7 +215,7 @@ export class DocumentService {
     return result.rows;
   }
 
-  private async scheduleReprocess(actorId: number, id: number, onlyFailed: boolean, knowledgeBaseId?: number) {
+  private async scheduleReprocess(actorId: number, id: number, onlyFailed: boolean, knowledgeBaseId?: number, chunkOverride?: { chunkChars: number; overlapChars: number } | null) {
     return this.database.transaction(async (client) => {
       const row = await client.query<{ status: string; archived_at: Date | null; source_type: string }>(
         `SELECT status, archived_at, source_type FROM documents WHERE id = $1
@@ -175,12 +224,13 @@ export class DocumentService {
       if (!row.rows[0]) throw new NotFoundException('Document not found');
       if (row.rows[0].source_type === 'faq' || row.rows[0].archived_at || (onlyFailed
         ? row.rows[0].status !== 'failed'
-        : !['failed', 'extracted', 'ready'].includes(row.rows[0].status))) {
+        : !['pending', 'failed', 'extracted', 'ready'].includes(row.rows[0].status))) {
         throw new ConflictException('Document cannot be reprocessed in its current state');
       }
       await client.query(
         "UPDATE documents SET status = 'queued', error_message = NULL, updated_at = now() WHERE id = $1", [id],
       );
+      if (chunkOverride !== undefined) await client.query('UPDATE documents SET chunk_override=$2::jsonb WHERE id=$1', [id, chunkOverride === null ? null : JSON.stringify(chunkOverride)]);
       await this.queue.enqueue(client, id);
       await client.query(
         `INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id)

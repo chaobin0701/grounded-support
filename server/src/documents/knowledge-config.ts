@@ -10,8 +10,9 @@ export const knowledgeConfigSchema = z.object({
   childChars: z.number().int().min(100).max(2000).default(500),
   childOverlapChars: z.number().int().min(0).max(200).default(50),
   embeddingProfileId: z.number().int().positive().nullable().default(null),
+  topK: z.number().int().min(1).max(8).default(5),
   lexicalThreshold: z.number().min(0).max(1).default(0.15),
-  vectorThreshold: z.number().min(-1).max(1).default(0.3),
+  vectorThreshold: z.number().min(-1).max(1).default(0.65),
 }).strict().superRefine((value, ctx) => {
   const invalid = (message: string) => ctx.addIssue({ code: 'custom', message });
   if (value.overlapChars >= value.chunkChars) invalid('Overlap must be smaller than chunk size');

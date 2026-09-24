@@ -37,7 +37,7 @@ export class VersionSearchService {
         (COALESCE(p.source_locator,c.source_locator)->>'end')::int AS "sourceEndLine"`;
       const joins = `FROM index_chunks c JOIN documents d ON d.id=c.document_id
         JOIN knowledge_bases kb ON kb.id=d.knowledge_base_id LEFT JOIN index_chunks p ON p.id=c.parent_chunk_id`;
-      const where = `c.version_id=$1 AND c.kind <> 'parent' AND d.archived_at IS NULL
+      const where = `c.version_id=$1 AND c.kind <> 'parent' AND d.archived_at IS NULL AND d.enabled_for_retrieval
         AND kb.archived_at IS NULL AND ($5::boolean OR kb.enabled_for_chat)`;
       if (config.retrievalMode !== 'vector') {
         lexical.push(...(await this.database.query<SearchHit>(`WITH scored AS (${base},

@@ -10,6 +10,8 @@ import { EmbeddingService } from './documents/embedding.service';
 import { parseDocument, ScannedPdfError } from './documents/extract-document';
 import { AppConfigService } from './config/config.service';
 import { DOCUMENT_PARSER_VERSION } from './documents/document-block';
+import { knowledgeConfigSchema } from './documents/knowledge-config';
+import { embedWithProfile, embeddingProfileSchema } from './documents/profile-embedding';
 
 type DocumentJob = { documentId: number };
 const runtimeConfig = new AppConfigService();
@@ -17,10 +19,12 @@ const embeddings = new EmbeddingService(runtimeConfig);
 
 async function processDocument(pool: Pool, documentId: number): Promise<void> {
   if (!Number.isSafeInteger(documentId) || documentId <= 0) throw new Error('Invalid document ID');
-  const claimed = await pool.query<{ storage_key: string; sha256: string; byte_size: number; legacy: boolean }>(
+  const claimed = await pool.query<{ storage_key: string; sha256: string; byte_size: number; legacy: boolean; draftConfig: unknown; processingConfig: { chunkChars?: number; overlapChars?: number; separatorMode?: 'auto' | 'heading_paragraph' | 'fixed'; preserveHeading?: boolean } | null }>(
     `UPDATE documents SET status = 'processing', error_message = NULL, updated_at = now()
-     WHERE id = $1 AND archived_at IS NULL AND source_type='file' AND status IN ('queued', 'failed', 'extracted', 'processing')
+     WHERE id = $1 AND archived_at IS NULL AND source_type='file' AND status IN ('pending', 'queued', 'failed', 'extracted', 'processing')
      RETURNING storage_key, sha256, byte_size,
+       (SELECT kb.draft_config FROM knowledge_bases kb WHERE kb.id=documents.knowledge_base_id) AS "draftConfig",
+       chunk_override AS "processingConfig",
        (SELECT kb.is_default AND kb.active_index_version_id IS NULL AND kb.draft_config = '{}'::jsonb
         FROM knowledge_bases kb WHERE kb.id=documents.knowledge_base_id) AS legacy`, [documentId],
   );
@@ -28,14 +32,29 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
   if (!document) return;
 
   try {
+    const indexConfig = knowledgeConfigSchema.parse(document.draftConfig);
     const bytes = await readFile(documentPath(document.storage_key, runtimeConfig));
     if (bytes.length !== document.byte_size || createHash('sha256').update(bytes).digest('hex') !== document.sha256) {
       throw new Error('Stored file failed integrity check');
     }
-    const parsed = await parseDocument(bytes, document.storage_key);
-    const vectors = document.legacy && embeddings.enabled
-      ? await embeddings.embed(parsed.chunks.map((chunk) => `${chunk.headingPath}\n${chunk.content}`))
-      : [];
+    const processing = document.processingConfig;
+    const parsed = await parseDocument(bytes, document.storage_key, processing?.chunkChars ?? indexConfig.chunkChars, processing?.overlapChars ?? indexConfig.overlapChars, processing ?? undefined);
+    const texts = parsed.chunks.map((chunk) => `${chunk.headingPath}\n${chunk.content}`);
+    let vectors: number[][] = [];
+    let embeddingModel: string | null = null;
+    if (indexConfig.indexMode === 'high_quality') {
+      const profileRow = (await pool.query<{ config: unknown }>(
+        'SELECT config FROM embedding_profiles WHERE id=$1 AND enabled', [indexConfig.embeddingProfileId],
+      )).rows[0];
+      if (!profileRow) throw new Error('Selected embedding profile is unavailable');
+      const profile = embeddingProfileSchema.parse(profileRow.config);
+      if (profile.dimensions !== 2048) throw new Error('The live document index currently requires 2048-dimensional embeddings');
+      vectors = await embedWithProfile(profile, texts, runtimeConfig);
+      embeddingModel = profile.model;
+    } else if (document.legacy && embeddings.enabled) {
+      vectors = await embeddings.embed(texts);
+      embeddingModel = embeddings.model;
+    }
 
     const client = await pool.connect();
     try {
@@ -66,7 +85,7 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
         [documentId, JSON.stringify(parsed.chunks.map((chunk, index) => ({
           ...chunk,
           embedding: vectors[index] ? `[${vectors[index].join(',')}]` : null,
-          embeddingModel: vectors[index] ? embeddings.model : null,
+          embeddingModel: vectors[index] ? embeddingModel : null,
         })))],
       );
       await client.query(
@@ -82,10 +101,15 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
       client.release();
     }
   } catch (error) {
+    const safeMessage = error instanceof ScannedPdfError
+      ? error.message
+      : error instanceof Error && /^(Document|Stored file|Embedding|Invalid|Unsupported|PDF|DOCX)/u.test(error.message)
+        ? error.message.slice(0, 300)
+        : 'Unable to process document';
     await pool.query(
       `UPDATE documents SET status = 'failed', error_message = $2, updated_at = now()
        WHERE id = $1 AND archived_at IS NULL AND status = 'processing'`,
-      [documentId, error instanceof ScannedPdfError ? error.message : 'Unable to process document'],
+      [documentId, safeMessage],
     );
     throw error;
   }

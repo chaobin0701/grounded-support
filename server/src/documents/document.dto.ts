@@ -6,4 +6,13 @@ export class UploadDocumentDto {
   @MinLength(1)
   @MaxLength(200)
   title?: string;
+
+  @IsOptional()
+  @IsString()
+  processingConfig?: string;
+
+  /** Store the file first; the caller will submit parsing settings separately. */
+  @IsOptional()
+  @IsString()
+  deferProcessing?: string;
 }

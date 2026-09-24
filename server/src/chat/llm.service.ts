@@ -9,6 +9,9 @@ export type ModelResult = {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  finishReason: string | null;
+  durationMs: number;
+  attempts: number;
 };
 
 export class ModelFailure extends ServiceUnavailableException {
@@ -33,6 +36,7 @@ export class LlmService {
 
   async completeDetailed(system: string, user: string, model = this.model, purpose: 'answer' | 'summary' | 'planner' = 'answer'): Promise<ModelResult> {
     const provider = this.provider;
+    const started = Date.now();
     const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, seen: false };
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       let reason = 'network_error';
@@ -55,6 +59,9 @@ export class LlmService {
             inputTokens: usage.seen ? usage.inputTokens : null,
             outputTokens: usage.seen ? usage.outputTokens : null,
             totalTokens: usage.seen ? usage.totalTokens : null,
+            finishReason: response.finishReason,
+            durationMs: Date.now() - started,
+            attempts: attempt,
           };
         }
         reason = `empty_response:${response.finishReason || 'unknown'}`;

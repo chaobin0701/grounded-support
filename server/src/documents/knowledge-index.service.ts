@@ -94,7 +94,7 @@ export class KnowledgeIndexService {
 
   async activate(actorId: number, id: number, versionId: number) {
     return this.database.transaction(async (client) => {
-      const result = await client.query(`UPDATE knowledge_bases kb SET active_index_version_id=v.id, updated_at=now()
+      const result = await client.query(`UPDATE knowledge_bases kb SET active_index_version_id=v.id, enabled_for_chat=true, updated_at=now()
         FROM knowledge_index_versions v WHERE kb.id=$1 AND kb.archived_at IS NULL
         AND v.id=$2 AND v.knowledge_base_id=kb.id AND v.status='ready' RETURNING kb.id::int`, [id, versionId]);
       if (!result.rowCount) throw new ConflictException('Only a ready version belonging to an active knowledge base can be activated');

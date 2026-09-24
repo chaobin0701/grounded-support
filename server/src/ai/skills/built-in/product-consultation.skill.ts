@@ -15,4 +15,6 @@ export const productConsultationSkill: SkillDefinition = {
   maxToolCalls: 5,
   maxRuntimeMs: 30_000,
   responseMode: 'product',
+  shouldPreRetrieve: false,
+  summary: '查询真实产品目录、分类和规格信息。',
 };

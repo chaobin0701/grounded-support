@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminAuthGuard } from '../admin/admin-auth.guard';
 import { AdminRequest } from '../admin/admin.types';
@@ -12,6 +12,7 @@ import { KnowledgeIndexService } from './knowledge-index.service';
 import { EmbeddingProfileService } from './embedding-profile.service';
 import { VersionSearchService } from './version-search.service';
 import { FaqService } from './faq.service';
+import { SearchService } from './search.service';
 
 @Controller('admin/knowledge-bases')
 @UseGuards(AdminAuthGuard, PermissionGuard)
@@ -19,7 +20,14 @@ export class KnowledgeBaseController {
   constructor(private readonly bases: KnowledgeBaseService, private readonly documents: DocumentService,
     private readonly rateLimit: SecurityRateLimitService, private readonly indexes: KnowledgeIndexService,
     private readonly profiles: EmbeddingProfileService, private readonly search: VersionSearchService,
-    private readonly faqs: FaqService) {}
+    private readonly faqs: FaqService, private readonly liveSearch: SearchService) {}
+
+  @Post(':id/recall-test')
+  @RequirePermission('documents.read')
+  recallTest(@Param('id', ParseIntPipe) id: number, @Body() body: { query?: unknown; topK?: unknown; retrievalMode?: unknown }) {
+    const topK = body.topK === undefined ? 5 : Number(body.topK);
+    return this.liveSearch.recallTest(id, body.query, topK, body.retrievalMode);
+  }
 
   @Get(':id/faqs')
   @RequirePermission('documents.read')
@@ -142,7 +150,7 @@ export class KnowledgeBaseController {
     @UploadedFile() file: Express.Multer.File, @Body() body: UploadDocumentDto) {
     const source = request as AdminRequest & { ip?: string; socket?: { remoteAddress?: string } };
     return this.rateLimit.run('document-upload', source.ip || source.socket?.remoteAddress || `admin:${request.admin!.id}`,
-      () => this.documents.upload(request.admin!.id, file, body.title, id));
+      () => this.documents.upload(request.admin!.id, file, body.title, id, body.processingConfig, body.deferProcessing === 'true'));
   }
 
   @Post(':id/documents/reprocess')
@@ -170,6 +178,19 @@ export class KnowledgeBaseController {
     return this.documents.archive(request.admin!.id, documentId, id);
   }
 
+  @Patch(':id/documents/:documentId/unarchive')
+  @RequirePermission('documents.archive')
+  unarchiveDocument(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Param('documentId', ParseIntPipe) documentId: number) {
+    return this.documents.unarchive(request.admin!.id, documentId, id);
+  }
+
+  @Patch(':id/documents/:documentId/retrieval-status')
+  @RequirePermission('documents.archive')
+  setDocumentEnabled(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Param('documentId', ParseIntPipe) documentId: number, @Body() body: { enabled?: unknown }) {
+    if (typeof body.enabled !== 'boolean') throw new BadRequestException('enabled must be boolean');
+    return this.documents.setEnabled(request.admin!.id, documentId, body.enabled, id);
+  }
+
   @Post(':id/documents/:documentId/retry')
   @RequirePermission('documents.reprocess')
   retry(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Param('documentId', ParseIntPipe) documentId: number) {
@@ -178,7 +199,7 @@ export class KnowledgeBaseController {
 
   @Post(':id/documents/:documentId/reprocess')
   @RequirePermission('documents.reprocess')
-  reprocess(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Param('documentId', ParseIntPipe) documentId: number) {
-    return this.documents.reprocess(request.admin!.id, documentId, id);
+  reprocess(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Param('documentId', ParseIntPipe) documentId: number, @Body() body: { chunkOverride?: unknown }) {
+    return this.documents.reprocess(request.admin!.id, documentId, id, body?.chunkOverride);
   }
 }

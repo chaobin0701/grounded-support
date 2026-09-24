@@ -13,9 +13,19 @@ export interface DocumentItem {
   byteSize: number;
   uploadedBy: number;
   status: string;
+  characterCount?: number;
+  chunkCount?: number;
   errorMessage: string | null;
   parserVersion?: string | null;
   sourceType?: 'file' | 'faq';
+  enabledForRetrieval?: boolean;
+  chunkOverride?: {
+    chunkMode?: 'general' | 'parent_child';
+    separatorMode?: 'auto' | 'heading_paragraph' | 'fixed';
+    preserveHeading?: boolean;
+    chunkChars?: number;
+    overlapChars?: number;
+  } | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -92,6 +102,28 @@ export interface ChatTraceDetail extends ChatTraceItem {
     sources?: { chunkId: number; title: string; heading: string; content: string }[];
     dataSource?: string;
     toolCalls?: { name: string; arguments: Record<string, unknown>; ok: boolean; durationMs: number }[];
+    executionSteps?: {
+      type: 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
+      stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
+      skillId?: string;
+      selectedBy?: string;
+      query?: string | null;
+      hitCount?: number;
+      retrievalMode?: string;
+      name?: string;
+      model?: string;
+      ok: boolean;
+      durationMs: number;
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      finishReason?: string | null;
+      attempts?: number;
+      arguments?: Record<string, unknown>;
+      result?: unknown;
+      errorCode?: string;
+      detail?: string;
+    }[];
     categories?: { id: string; name: string }[];
     products?: { id: string; name: string }[];
     productDetails?: { id: string; name: string; specifications: Record<string, string> }[];

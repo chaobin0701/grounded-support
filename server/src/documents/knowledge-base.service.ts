@@ -1,11 +1,13 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { DatabaseService } from '../database.service';
+import { knowledgeConfigSchema } from './knowledge-config';
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2000).default(''),
-  enabledForChat: z.boolean().default(false),
+  enabledForChat: z.boolean().default(true),
+  draftConfig: knowledgeConfigSchema.optional(),
 }).strict();
 const updateSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
@@ -23,7 +25,10 @@ export class KnowledgeBaseService {
   async list() {
     return (await this.database.query(`SELECT ${columns},
       (SELECT count(*)::int FROM documents document
-        WHERE document.knowledge_base_id = knowledge_bases.id AND document.archived_at IS NULL) AS "documentCount"
+        WHERE document.knowledge_base_id = knowledge_bases.id AND document.archived_at IS NULL AND document.source_type='file') AS "documentCount",
+      (SELECT count(*)::int FROM documents document
+        WHERE document.knowledge_base_id = knowledge_bases.id AND document.archived_at IS NULL
+          AND document.source_type='file' AND document.status='ready' AND document.enabled_for_retrieval) AS "readyDocumentCount"
       FROM knowledge_bases ORDER BY updated_at DESC, id DESC`)).rows;
   }
 
@@ -38,8 +43,8 @@ export class KnowledgeBaseService {
     if (!parsed.success) throw new BadRequestException('Invalid knowledge base configuration');
     const value = parsed.data;
     return this.database.transaction(async (client) => {
-      const row = (await client.query(`INSERT INTO knowledge_bases (name, description, enabled_for_chat)
-        VALUES ($1, $2, $3) RETURNING ${columns}`, [value.name, value.description, value.enabledForChat])).rows[0];
+      const row = (await client.query(`INSERT INTO knowledge_bases (name, description, enabled_for_chat, draft_config)
+        VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb)) RETURNING ${columns}`, [value.name, value.description, value.enabledForChat, value.draftConfig ? JSON.stringify(value.draftConfig) : null])).rows[0];
       await client.query(`INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id)
         VALUES ($1, 'knowledge_base.created', 'knowledge_base', $2)`, [actorId, String(row.id)]);
       return row;

@@ -18,11 +18,55 @@
 
 .brand-mark, .new-conversation, .message-avatar, .welcome-symbol, .composer button { background:#2457e6 !important; }
 .conversation-list-item:hover, .conversation-list-item.active { background:#eef4ff !important; }
-.conversation-list-item.active .conversation-open, .citations summary, .admin-entry { color:#2457e6 !important; }
+.conversation-list-item.active .conversation-open, .citations summary { color:#2457e6 !important; }
 .health-dot.online { background:#22a06b; box-shadow:0 0 0 3px #dcfce7; }
 .sidebar-product-links { display:flex; flex-wrap:wrap; gap:10px; width:100%; margin:10px 0 0 17px; }
 .sidebar-product-links a { color:#64748b; font-size:11px; text-decoration:none; }
 .sidebar-product-links a:hover { color:#2457e6; }
+
+/* Conversation surface: align messages like a real support chat rather than a document. */
+.message { display:flex; align-items:flex-start; gap:12px; width:min(100%, 900px); max-width:900px; margin:0 auto 28px; }
+.message.visitor { justify-content:flex-end; }
+.message-column { min-width:0; max-width:min(78%, 760px); }
+.message.visitor .message-column { display:flex; flex-direction:column; align-items:flex-end; }
+.message-avatar { display:grid; place-items:center; flex:none; width:38px; height:38px; margin-top:22px; border-radius:50%; }
+.assistant-avatar { background:#2457e6 !important; color:#fff; }
+.visitor-avatar { background:#eaf2ff !important; color:#5d91e8; }
+.message-meta { display:flex; align-items:center; gap:10px; margin:0 0 8px; color:#5d6d7d; font-size:12px; font-weight:600; }
+.message-meta time { color:#98a2af; font-weight:400; }
+.message-bubble { padding:17px 20px; border-radius:18px; }
+.assistant-bubble { background:#f2f4f7; border-top-left-radius:6px; color:#27323f; }
+.visitor-bubble { background:#e8f1ff; border-top-right-radius:6px; color:#1f334b; }
+.message-body { padding:0; }
+.message-bubble .answer-text { margin:0; color:inherit; font-size:15px; line-height:1.85; white-space:pre-wrap; overflow-wrap:anywhere; }
+.message.visitor .message-bubble .answer-text { font-weight:500; }
+.message-time { margin-top:8px; color:#9ba6b2; font-size:11px; line-height:1; }
+.answer-note { margin:10px 0 0; color:#84909c; font-size:12px; line-height:1.5; }
+.message-reference { display:flex; align-items:center; gap:10px; margin-top:17px; padding:11px 13px; border:1px solid #e8edf2; border-radius:12px; background:#fff; color:#647386; font-size:12px; }
+.message-reference svg { flex:none; color:#718096; }
+.message-actions { display:flex; justify-content:flex-end; gap:4px; margin:7px 4px 0; }
+.message-actions button { display:grid; place-items:center; width:28px; height:28px; padding:0; border:0; border-radius:7px; background:transparent; color:#8a97a5; transition:background .16s, color .16s; }
+.message-actions button:hover, .message-actions button.selected { background:#edf3ff; color:#3166f5; }
+.message.pending .message-column { max-width:min(78%, 760px); }
+.message.pending .message-bubble { min-width:190px; }
+.message.pending .typing { padding:0; }
+
+/* Input stays compact and touch-friendly; users do not need to manage its dimensions. */
+.composer-area { padding:18px clamp(24px, 4vw, 62px) 22px; }
+.composer { min-height:76px; padding:14px 14px 14px 20px; border-radius:18px; }
+.composer textarea { min-height:44px; resize:none; }
+.composer-caption { display:none; }
+
+@media (max-width: 680px) {
+  .message { gap:8px; margin-bottom:22px; }
+  .message-column, .message.pending .message-column { max-width:calc(100% - 46px); }
+  .message-avatar { width:32px; height:32px; margin-top:20px; }
+  .message-bubble { padding:14px 15px; border-radius:15px; }
+  .message-bubble .answer-text { font-size:14px; line-height:1.75; }
+  .message-meta { margin-bottom:6px; font-size:11px; }
+  .composer-area { padding:12px 14px 16px; }
+  .composer { min-height:68px; padding:12px 12px 12px 16px; border-radius:16px; }
+}
 
 @layer components {
   .ui-button { @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:pointer-events-none disabled:opacity-50; }

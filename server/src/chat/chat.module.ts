@@ -10,10 +10,11 @@ import { ChatOrchestratorService } from './chat-orchestrator.service';
 import { AgentModule } from '../ai/agent/agent.module';
 import { ChatApplicationService } from './chat-application.service';
 import { SkillsModule } from '../ai/skills/skills.module';
+import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
 
 @Module({
   imports: [DocumentModule, AdminModule, AgentModule, SkillsModule],
   controllers: [ChatController, AdminChatTraceController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, SkillPreflightService],
 })
 export class ChatModule {}

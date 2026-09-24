@@ -48,7 +48,7 @@ export class SecurityRateLimitService {
     };
     if (scope === 'document-upload') return {
       windowMs: this.config?.security.documentUploadWindowMs ?? 60_000,
-      limit: this.config?.security.documentUploadLimit ?? 10,
+      limit: this.config?.security.documentUploadLimit ?? 50,
       concurrency: this.config?.security.documentUploadConcurrency ?? 2,
     };
     return {

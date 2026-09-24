@@ -4,7 +4,7 @@ import { DocumentBlock } from './document-block';
 const parser = new MarkdownIt({ html: false });
 type MarkdownToken = ReturnType<typeof parser.parse>[number];
 const DEFAULT_MAX_CHARS = 800;
-const OVERLAP_CHARS = 60;
+const DEFAULT_OVERLAP_CHARS = 60;
 
 export interface DocumentChunk {
   ordinal: number;
@@ -28,7 +28,7 @@ function inlineText(token: MarkdownToken): string {
   }).join('').trim();
 }
 
-function splitLongBlock(block: TextBlock, maxChars: number): TextBlock[] {
+function splitLongBlock(block: TextBlock, maxChars: number, overlapChars: number): TextBlock[] {
   const chars = Array.from(block.content);
   if (chars.length <= maxChars) return [block];
   const pieces: TextBlock[] = [];
@@ -47,18 +47,19 @@ function splitLongBlock(block: TextBlock, maxChars: number): TextBlock[] {
     const content = chars.slice(start, end).join('').trim();
     if (content) pieces.push({ ...block, content });
     if (end === chars.length) break;
-    start = Math.max(start + 1, end - OVERLAP_CHARS);
+    start = Math.max(start + 1, end - overlapChars);
   }
   return pieces;
 }
 
-export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHARS): {
+export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHARS, overlapChars = DEFAULT_OVERLAP_CHARS): {
   extractedText: string;
   chunks: DocumentChunk[];
   blocks: DocumentBlock[];
 } {
-  if (!Number.isSafeInteger(maxChars) || maxChars < 200 || maxChars > 4000) {
-    throw new Error('Chunk size must be between 200 and 4000 characters');
+  if (!Number.isSafeInteger(maxChars) || maxChars < 200 || maxChars > 4000 ||
+      !Number.isSafeInteger(overlapChars) || overlapChars < 0 || overlapChars >= maxChars) {
+    throw new Error('Invalid chunk size or overlap');
   }
   const tokens = parser.parse(source, {});
   const headings: string[] = [];
@@ -70,7 +71,7 @@ export function parseMarkdownDocument(source: string, maxChars = DEFAULT_MAX_CHA
 
   function flushSection(): void {
     let current: TextBlock | null = null;
-    for (const block of blocks.flatMap((item) => splitLongBlock(item, maxChars))) {
+    for (const block of blocks.flatMap((item) => splitLongBlock(item, maxChars, overlapChars))) {
       if (current && Array.from(current.content).length + 2 + Array.from(block.content).length > maxChars) {
         chunks.push({
           ordinal: chunks.length + 1,

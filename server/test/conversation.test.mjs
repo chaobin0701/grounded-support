@@ -78,3 +78,47 @@ test('an expired run cannot persist a late answer', async () => {
   );
   assert.equal(statements.length, 1);
 });
+
+test('conversation releases the exact database busy lock after a completed answer', async () => {
+  const exactBusyUntil = '2026-09-24 07:47:49.414861+00';
+  let releasedBusyUntil = null;
+  const database = {
+    query: async (sql, values = []) => {
+      if (sql.includes('UPDATE conversation_runs r SET status')) return { rows: [], rowCount: 0 };
+      if (sql.includes('UPDATE conversations SET busy_until = now()')) {
+        assert.match(sql, /busy_until::text AS "busyUntil"/);
+        return { rows: [{ id: 'conversation-a', busyUntil: exactBusyUntil }], rowCount: 1 };
+      }
+      if (sql.startsWith('SELECT id, title, summary')) {
+        return { rows: [{ id: 'conversation-a', title: '新对话', summary: '', summaryThroughMessageId: null, createdAt: 'now', updatedAt: 'now' }] };
+      }
+      if (sql.startsWith('SELECT id::int, role, content')) return { rows: [] };
+      if (sql.startsWith('UPDATE conversations SET busy_until = NULL')) {
+        releasedBusyUntil = values[2];
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql.startsWith('SELECT summary_through_message_id')) return { rows: [] };
+      throw new Error(`Unexpected query: ${sql}`);
+    },
+    transaction: async (work) => work({
+      query: async (sql) => {
+        if (sql.startsWith('INSERT INTO conversation_messages') && sql.includes("'user'")) return { rows: [{ id: 1 }] };
+        if (sql.startsWith('INSERT INTO conversation_messages') && sql.includes("'assistant'")) return { rows: [{ id: 2 }] };
+        return { rows: [], rowCount: 1 };
+      },
+    }),
+  };
+  const chat = {
+    askDetailed: async () => ({
+      result: { answer: '你好，有什么可以帮你？', refused: false, citations: [] },
+      contextSnapshot: {}, rawModelOutput: null,
+      inputTokens: null, outputTokens: null, totalTokens: null,
+    }),
+  };
+  const service = new ConversationService(database, chat, { model: 'test-model' });
+
+  const answer = await service.ask('browser-a', 'conversation-a', '你好啊');
+
+  assert.equal(answer.refused, false);
+  assert.equal(releasedBusyUntil, exactBusyUntil);
+});

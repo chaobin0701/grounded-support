@@ -3,11 +3,14 @@ import { DatabaseService } from '../database.service';
 import { EmbeddingService } from './embedding.service';
 import { fuseSearchResults, SearchHit } from './fuse-search-results';
 import { VersionSearchService } from './version-search.service';
+import { knowledgeConfigSchema } from './knowledge-config';
+import { AppConfigService } from '../config/config.service';
+import { embedWithProfile, embeddingProfileSchema } from './profile-embedding';
 
 @Injectable()
 export class SearchService {
   constructor(private readonly database: DatabaseService, private readonly embeddings: EmbeddingService,
-    private readonly versionSearch?: VersionSearchService) {}
+    private readonly versionSearch?: VersionSearchService, private readonly runtime?: AppConfigService) {}
 
   /**
    * Agent-facing search boundary. The diagnostic endpoint keeps detailed
@@ -22,13 +25,114 @@ export class SearchService {
     if (!Number.isInteger(limit) || limit < 1 || limit > 8) {
       throw new BadRequestException('topK must be an integer between 1 and 8');
     }
-    const result = await this.diagnose(query, limit, undefined, true);
+    const bases = (await this.database.query<{ id: number; draft_config: unknown }>(
+      `SELECT id::int,draft_config FROM knowledge_bases WHERE archived_at IS NULL AND enabled_for_chat
+        AND active_index_version_id IS NULL ORDER BY id`,
+    )).rows;
+    const lexical: SearchHit[] = [];
+    const vector: SearchHit[] = [];
+    let vectorIndexedChunks = 0;
+    for (const base of bases) {
+      const configuredLimit = Math.min(limit, knowledgeConfigSchema.parse(base.draft_config).topK);
+      const result = await this.recallTest(base.id, query, configuredLimit);
+      lexical.push(...(result.lexicalResults ?? []));
+      vector.push(...(result.vectorResults ?? []));
+      vectorIndexedChunks += result.vectorIndexedChunks;
+    }
+    const liveHits = fuseSearchResults(lexical, vector, limit);
     const versioned = this.versionSearch ? await this.versionSearch.search(query, limit) : null;
     return {
-      hits: versioned ? fuseSearchResults(result.fusionResults, versioned.hits, limit) : result.fusionResults,
-      retrievalMode: result.vectorIndexedChunks || versioned?.vectorIndexedChunks ? 'hybrid' : 'lexical-only',
-      vectorIndexedChunks: result.vectorIndexedChunks + (versioned?.vectorIndexedChunks ?? 0),
+      hits: versioned ? fuseSearchResults(liveHits, versioned.hits, limit) : liveHits,
+      retrievalMode: vectorIndexedChunks || versioned?.vectorIndexedChunks ? 'hybrid' : 'lexical-only',
+      vectorIndexedChunks: vectorIndexedChunks + (versioned?.vectorIndexedChunks ?? 0),
     };
+  }
+
+  async recallTest(knowledgeBaseId: number, rawQuery: unknown, limit: number, rawMode?: unknown) {
+    if (typeof rawQuery !== 'string') throw new BadRequestException('query must be a search query');
+    const query = rawQuery.trim();
+    if (Array.from(query).length < 2 || Array.from(query).length > 200 || !Number.isInteger(limit) || limit < 1 || limit > 20) {
+      throw new BadRequestException('query must contain 2 to 200 characters and topK must be between 1 and 20');
+    }
+    if (rawMode !== undefined && !['fulltext', 'vector', 'hybrid'].includes(String(rawMode))) {
+      throw new BadRequestException('retrievalMode must be fulltext, vector, or hybrid');
+    }
+    const base = (await this.database.query<{ draft_config: unknown }>(
+      'SELECT draft_config FROM knowledge_bases WHERE id=$1 AND archived_at IS NULL', [knowledgeBaseId],
+    )).rows[0];
+    if (!base) throw new BadRequestException('Knowledge base not found');
+    const config = knowledgeConfigSchema.parse(base.draft_config);
+    const mode = rawMode === undefined ? config.retrievalMode : String(rawMode) as 'fulltext' | 'vector' | 'hybrid';
+    let profile: ReturnType<typeof embeddingProfileSchema.parse> | undefined;
+    if (config.indexMode === 'high_quality') {
+      const row = (await this.database.query<{ config: unknown }>(
+        'SELECT config FROM embedding_profiles WHERE id=$1 AND enabled', [config.embeddingProfileId],
+      )).rows[0];
+      if (!row) throw new BadRequestException('The selected embedding profile is unavailable');
+      profile = embeddingProfileSchema.parse(row.config);
+      if (profile.dimensions !== 2048) throw new BadRequestException('Live recall requires 2048-dimensional embeddings');
+    }
+    const embeddingModel = profile?.model ?? this.embeddings.model;
+    const embeddingEnabled = profile !== undefined || this.embeddings.enabled;
+    const started = performance.now();
+    const candidateLimit = Math.max(limit * 4, 20);
+    const lexicalResults = mode === 'vector' ? [] : (await this.database.query<SearchHit>(
+      `WITH ranked AS (
+         SELECT c.id::int AS "chunkId",d.id::int AS "documentId",d.title AS "documentTitle",
+           d.original_filename AS "originalFilename",c.ordinal,c.heading_path AS "headingPath",c.content,
+           c.source_start_line AS "sourceStartLine",c.source_end_line AS "sourceEndLine",
+           GREATEST(word_similarity($1::text,c.content),word_similarity($1::text,c.heading_path),
+             word_similarity($1::text,d.title),CASE WHEN position(lower($1::text) in lower(c.content))>0 THEN 1.0 ELSE 0.0 END) AS raw_score
+         FROM document_chunks c JOIN documents d ON d.id=c.document_id
+         WHERE d.knowledge_base_id=$2 AND d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status='ready' AND d.source_type='file'
+       ) SELECT "chunkId","documentId","documentTitle","originalFilename",ordinal,"headingPath",content,
+           "sourceStartLine","sourceEndLine",round(raw_score::numeric,3)::float AS score
+         FROM ranked WHERE raw_score >= $3 ORDER BY raw_score DESC,"documentId",ordinal LIMIT $4`,
+      [query, knowledgeBaseId, config.lexicalThreshold, candidateLimit],
+    )).rows;
+    let vectorResults: SearchHit[] = [];
+    let vectorIndexedChunks = 0;
+    let embeddingCalls = 0;
+    if (mode !== 'fulltext' && embeddingEnabled) {
+      const coverage = await this.database.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM document_chunks c JOIN documents d ON d.id=c.document_id
+         WHERE d.knowledge_base_id=$1 AND d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status='ready' AND d.source_type='file'
+           AND c.embedding IS NOT NULL AND c.embedding_model=$2`, [knowledgeBaseId, embeddingModel],
+      );
+      vectorIndexedChunks = coverage.rows[0]?.count ?? 0;
+      if (vectorIndexedChunks) {
+        let queryVector: number[];
+        if (profile) {
+          const runtime = this.runtime;
+          if (!runtime) throw new BadRequestException('Embedding runtime configuration is unavailable');
+          [queryVector] = await embedWithProfile(profile, [query], runtime);
+        } else {
+          [queryVector] = await this.embeddings.embed([query]);
+        }
+        embeddingCalls = 1;
+        vectorResults = (await this.database.query<SearchHit>(
+          `SELECT c.id::int AS "chunkId",d.id::int AS "documentId",d.title AS "documentTitle",
+             d.original_filename AS "originalFilename",c.ordinal,c.heading_path AS "headingPath",c.content,
+             c.source_start_line AS "sourceStartLine",c.source_end_line AS "sourceEndLine",
+             round((1-(c.embedding <=> $1::vector))::numeric,3)::float AS score
+           FROM document_chunks c JOIN documents d ON d.id=c.document_id
+           WHERE d.knowledge_base_id=$2 AND d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status='ready' AND d.source_type='file'
+             AND c.embedding IS NOT NULL AND c.embedding_model=$3
+           ORDER BY c.embedding <=> $1::vector,d.id,c.ordinal LIMIT $4`,
+          [`[${queryVector.join(',')}]`, knowledgeBaseId, embeddingModel, candidateLimit],
+        )).rows.filter((hit) => hit.score >= config.vectorThreshold);
+      }
+    }
+    const hits = mode === 'fulltext' ? lexicalResults.slice(0, limit)
+      : mode === 'vector' ? vectorResults.slice(0, limit)
+        : fuseSearchResults(lexicalResults, vectorResults, limit);
+    const lexicalIds = new Set(lexicalResults.map((hit) => hit.chunkId));
+    const vectorIds = new Set(vectorResults.map((hit) => hit.chunkId));
+    return { query, retrievalMode: mode, hits: hits.map((hit) => ({ ...hit,
+      matchType: lexicalIds.has(hit.chunkId) && vectorIds.has(hit.chunkId) ? '全文 + 向量'
+        : vectorIds.has(hit.chunkId) ? '向量' : '全文',
+    })), lexicalResults: lexicalResults.slice(0, limit), vectorResults: vectorResults.slice(0, limit),
+      vectorIndexedChunks, embeddingCalls, durationMs: Math.round(performance.now() - started) };
   }
 
   async diagnose(rawQuery: unknown, limit: number, rawMinScore: unknown, forChat = false) {
@@ -64,8 +168,8 @@ export class SearchService {
         `SELECT count(*)::int AS count FROM document_chunks c
          JOIN documents d ON d.id = c.document_id
          JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
-         WHERE d.archived_at IS NULL AND d.status = 'ready'
-           AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL AND kb.is_default
+         WHERE d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status = 'ready'
+           AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL
            AND (CASE WHEN $2::boolean THEN kb.enabled_for_chat ELSE kb.is_default END)
            AND c.embedding IS NOT NULL AND c.embedding_model = $1`,
         [this.embeddings.model, forChat],
@@ -105,8 +209,8 @@ export class SearchService {
                 ) AS raw_score
          FROM document_chunks c JOIN documents d ON d.id = c.document_id
          JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
-         WHERE d.archived_at IS NULL AND d.status = 'ready'
-           AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL AND kb.is_default
+         WHERE d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status = 'ready'
+           AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL
            AND (CASE WHEN $4::boolean THEN kb.enabled_for_chat ELSE kb.is_default END)
        )
        SELECT "chunkId", "documentId", "documentTitle", "originalFilename", ordinal,
@@ -128,8 +232,8 @@ export class SearchService {
               round((1 - (c.embedding <=> $1::vector))::numeric, 3)::float AS score
        FROM document_chunks c JOIN documents d ON d.id = c.document_id
        JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
-       WHERE d.archived_at IS NULL AND d.status = 'ready'
-         AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL AND kb.is_default
+       WHERE d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status = 'ready'
+         AND kb.archived_at IS NULL AND kb.active_index_version_id IS NULL
          AND (CASE WHEN $4::boolean THEN kb.enabled_for_chat ELSE kb.is_default END)
          AND c.embedding IS NOT NULL AND c.embedding_model = $2
        ORDER BY c.embedding <=> $1::vector, d.id, c.ordinal LIMIT $3`,

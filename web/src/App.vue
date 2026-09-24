@@ -5,6 +5,7 @@ import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer
 import AdminApp from './AdminApp.vue';
 import HelpCenter from './HelpCenter.vue';
 import ProductSite from './ProductSite.vue';
+import { Bot, Check, Copy, FileText, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
 
 const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
@@ -18,7 +19,9 @@ watch(() => route.path, (path) => {
 const ACTIVE_CONVERSATION_KEY = 'grounded.activeConversationId';
 const PENDING_REQUEST_KEY = 'grounded.pendingChatRequest';
 
-type Message = { id: number; role: 'visitor'; text: string } | { id: number; role: 'assistant'; text: string; refused: boolean };
+type Message =
+  | { id: number; role: 'visitor'; text: string; createdAt: string }
+  | { id: number; role: 'assistant'; text: string; refused: boolean; citations: ConversationMessage['citations']; createdAt: string };
 
 const suggestions = ['暖风机保修多久？', '满多少钱免基础配送费？', '退款一般多久能到账？'];
 const messages = ref<Message[]>([]);
@@ -29,6 +32,8 @@ const question = ref('');
 const isSending = ref(false);
 const draftAnswer = ref('');
 const errorMessage = ref('');
+const copiedMessageId = ref<number | null>(null);
+const feedback = ref<Record<number, 'up' | 'down'>>({});
 const health = ref<'checking' | 'online' | 'offline'>('checking');
 const conversation = ref<HTMLElement | null>(null);
 let nextId = -1;
@@ -79,8 +84,29 @@ onMounted(async () => {
 
 function displayMessages(items: ConversationMessage[]): Message[] {
   return items.map((item) => item.role === 'user'
-    ? { id: item.id, role: 'visitor', text: item.content }
-    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused) });
+    ? { id: item.id, role: 'visitor', text: item.content, createdAt: item.createdAt }
+    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused), citations: item.citations || [], createdAt: item.createdAt });
+}
+
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+}
+
+async function copyAnswer(message: Message) {
+  if (message.role !== 'assistant') return;
+  try {
+    await navigator.clipboard.writeText(message.text);
+    copiedMessageId.value = message.id;
+    window.setTimeout(() => { if (copiedMessageId.value === message.id) copiedMessageId.value = null; }, 1600);
+  } catch {
+    errorMessage.value = '复制失败，请手动选择回答内容。';
+  }
+}
+
+function setFeedback(message: Message, value: 'up' | 'down') {
+  if (message.role === 'assistant') feedback.value = { ...feedback.value, [message.id]: value };
 }
 
 async function openConversation(id: string) {
@@ -165,8 +191,8 @@ async function scrollToLatest() {
 async function send(value = question.value) {
   const trimmed = value.trim();
   if (isSending.value || isLoadingConversations.value || !trimmed) return;
-  if (Array.from(trimmed).length < 2 || Array.from(trimmed).length > 200) {
-    errorMessage.value = '请输入 2–200 个字的问题。';
+  if (Array.from(trimmed).length < 2 || Array.from(trimmed).length > 2000) {
+    errorMessage.value = '请输入 2–2000 个字的问题。';
     return;
   }
 
@@ -188,14 +214,14 @@ async function send(value = question.value) {
     const pending = readPendingRequest();
     requestId = pending?.conversationId === id && pending.question === trimmed ? pending.requestId : newRequestId();
     savePendingRequest({ conversationId: id, requestId, question: trimmed });
-    messages.value.push({ id: nextId--, role: 'visitor', text: trimmed });
+    messages.value.push({ id: nextId--, role: 'visitor', text: trimmed, createdAt: new Date().toISOString() });
     pushed = true;
     await scrollToLatest();
     const result: ChatAnswer = await askInConversationStream(id, trimmed, (text) => {
       draftAnswer.value += text;
       void scrollToLatest();
     }, requestId);
-    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused });
+    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused, citations: result.citations, createdAt: new Date().toISOString() });
     clearPendingRequest();
     try { conversations.value = await conversationApi.list(); } catch { /* Answer was saved; list can refresh later. */ }
   } catch (error) {
@@ -215,6 +241,8 @@ async function send(value = question.value) {
     if (!recovered) {
       if (error instanceof ChatApiError && error.status === 429) {
         errorMessage.value = '提问有些频繁，请稍后再试。';
+      } else if (error instanceof ChatApiError && error.status === 409) {
+        errorMessage.value = error.message || '上一轮请求仍在处理中，请稍后再试。';
       } else if (error instanceof ChatApiError && error.status === 503) {
         errorMessage.value = '回答服务暂时不可用，请稍后再试。';
         clearPendingRequest();
@@ -250,7 +278,7 @@ function chooseSuggestion(value: string) {
   <AdminApp v-else-if="isAdminRoute" />
   <div v-else class="app-shell">
     <aside class="sidebar" aria-label="对话导航">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服<span class="brand-sub">知识型客服</span></span></div>
+      <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服</span></div>
       <div class="sidebar-body sidebar-conversations">
         <button class="new-conversation" type="button" :disabled="isSending || isLoadingConversations" @click="newConversation"><span aria-hidden="true">＋</span> 新建对话</button>
         <div class="conversation-list-head"><p class="section-label">最近对话</p><span>{{ conversations.length }}</span></div>
@@ -262,26 +290,23 @@ function chooseSuggestion(value: string) {
             <button type="button" class="conversation-remove" :disabled="isSending" :aria-label="`删除对话：${item.title}`" @click="removeConversation(item)">×</button>
           </div>
         </div>
-        <p class="sidebar-copy sidebar-context-note">每段对话独立保存。回答以当轮资料检索或产品目录查询为依据。</p>
       </div>
       <div class="sidebar-footer">
         <span class="health-dot" :class="health" aria-hidden="true"></span>
         <span>{{ health === 'online' ? '服务运行中' : health === 'checking' ? '正在连接服务' : '服务暂时不可用' }}</span>
-        <small>示例资料 · 不提供订单办理服务</small>
-        <div class="sidebar-product-links"><RouterLink to="/product">产品官网</RouterLink><RouterLink to="/help">帮助中心</RouterLink><RouterLink to="/admin">管理后台</RouterLink></div>
+        <div class="sidebar-product-links"><RouterLink to="/product">产品官网</RouterLink><RouterLink to="/help">帮助中心</RouterLink></div>
       </div>
     </aside>
 
     <main class="workspace">
       <header class="workspace-header">
         <div><p class="section-label">客户咨询 <span aria-hidden="true">/</span> {{ conversations.find((item) => item.id === activeConversationId)?.title || '新对话' }}</p><h2>{{ activeConversationId ? '对话' : '新对话' }}</h2></div>
-        <span class="header-note"><span class="header-note-icon" aria-hidden="true">▤</span><span>依据已提供数据回答<small>可查看实际查询步骤</small></span></span>
       </header>
 
       <section ref="conversation" class="conversation" aria-label="问答记录" aria-live="polite">
         <div v-if="messages.length === 0" class="welcome">
           <div class="welcome-symbol" aria-hidden="true"><span>暖</span></div>
-          <p class="section-label">暖巢 · 智能客服</p>
+          <p class="section-label">暖巢 · AI 助手</p>
           <h3>你好，有什么可以帮你？</h3>
           <p>我会查询已收录的资料和演示产品目录，再根据结果回答。</p>
           <div class="suggestions" aria-label="示例问题">
@@ -290,17 +315,41 @@ function chooseSuggestion(value: string) {
         </div>
 
         <div v-for="message in messages" :key="message.id" class="message" :class="message.role">
-          <div class="message-meta"><span class="message-avatar" aria-hidden="true">{{ message.role === 'assistant' ? '暖' : '我' }}</span><span>{{ message.role === 'assistant' ? '资料助手' : '你' }}</span></div>
-          <div class="message-body">
-            <p class="answer-text">{{ message.text }}</p>
-            <p v-if="message.role === 'assistant' && message.refused" class="answer-note">可用数据不足，未生成推测性回答。</p>
-          </div>
+          <template v-if="message.role === 'visitor'">
+            <div class="message-column">
+              <div class="message-bubble visitor-bubble"><p class="answer-text">{{ message.text }}</p></div>
+              <time class="message-time" :datetime="message.createdAt">{{ formatMessageTime(message.createdAt) }}</time>
+            </div>
+            <span class="message-avatar visitor-avatar" aria-hidden="true"><UserRound :size="18" :stroke-width="2.2" /></span>
+          </template>
+          <template v-else>
+            <span class="message-avatar assistant-avatar" aria-hidden="true"><Bot :size="18" :stroke-width="2.1" /></span>
+            <div class="message-column">
+              <div class="message-meta"><span>暖巢 · AI 助手</span><time :datetime="message.createdAt">{{ formatMessageTime(message.createdAt) }}</time></div>
+              <div class="message-bubble assistant-bubble">
+                <p class="answer-text">{{ message.text }}</p>
+                <p v-if="message.refused" class="answer-note">可用数据不足，未生成推测性回答。</p>
+                <div v-if="message.citations.length" class="message-reference">
+                  <FileText :size="18" :stroke-width="1.8" aria-hidden="true" />
+                  <span>{{ message.citations.length === 1 ? `参考资料 · ${message.citations[0].documentTitle || message.citations[0].originalFilename}` : `参考资料 · ${message.citations.length} 条` }}</span>
+                </div>
+              </div>
+              <div class="message-actions" aria-label="回答操作">
+                <button type="button" :aria-label="copiedMessageId === message.id ? '已复制' : '复制回答'" @click="copyAnswer(message)"><Check v-if="copiedMessageId === message.id" :size="16" /><Copy v-else :size="16" /></button>
+                <button type="button" :class="{ selected: feedback[message.id] === 'up' }" aria-label="回答有帮助" @click="setFeedback(message, 'up')"><ThumbsUp :size="16" /></button>
+                <button type="button" :class="{ selected: feedback[message.id] === 'down' }" aria-label="回答需要改进" @click="setFeedback(message, 'down')"><ThumbsDown :size="16" /></button>
+              </div>
+            </div>
+          </template>
         </div>
 
         <div v-if="isSending" class="message assistant pending" role="status">
-          <div class="message-meta"><span class="message-avatar" aria-hidden="true">暖</span><span>资料助手</span></div>
-          <div v-if="!draftAnswer" class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>正在查询资料并整理回答…</span></div>
-          <div v-else class="message-body"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在发送已校验的回答…</p></div>
+          <span class="message-avatar assistant-avatar" aria-hidden="true"><Bot :size="18" :stroke-width="2.1" /></span>
+          <div class="message-column">
+            <div class="message-meta"><span>暖巢 · AI 助手</span></div>
+            <div v-if="!draftAnswer" class="message-bubble assistant-bubble"><div class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>正在查询资料并整理回答…</span></div></div>
+            <div v-else class="message-bubble assistant-bubble"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在发送已校验的回答…</p></div>
+          </div>
         </div>
       </section>
 
@@ -308,11 +357,9 @@ function chooseSuggestion(value: string) {
         <p v-if="errorMessage" class="form-error" role="alert">{{ errorMessage }}</p>
         <form class="composer" @submit.prevent="send()">
           <label for="question-input" class="sr-only">输入问题</label>
-          <textarea id="question-input" v-model="question" rows="2" maxlength="200" :disabled="isSending || isLoadingConversations" placeholder="继续提问，或描述你想了解的产品…" @keydown="handleKeydown"></textarea>
+          <textarea id="question-input" v-model="question" rows="2" maxlength="2000" :disabled="isSending || isLoadingConversations" placeholder="继续提问，或描述你想了解的产品…" @keydown="handleKeydown"></textarea>
           <button type="submit" :disabled="isSending || isLoadingConversations || !question.trim()" aria-label="发送问题"><span aria-hidden="true">➜</span></button>
         </form>
-        <div class="composer-caption"><span>Enter 发送 · Shift + Enter 换行</span><span>{{ Array.from(question).length }}/200</span></div>
-        <p class="privacy-note">请勿填写订单号、银行卡号等敏感信息。此演示不能查询订单或办理退款。</p>
       </div>
     </main>
   </div>

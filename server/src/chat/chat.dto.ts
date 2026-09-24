@@ -3,7 +3,7 @@ import { ArrayMaxSize, IsArray, IsOptional, IsString, Length, ValidateNested } f
 
 export class PreviousTurnDto {
   @IsString()
-  @Length(2, 200)
+  @Length(2, 2000)
   question!: string;
 
   @IsString()
@@ -13,7 +13,7 @@ export class PreviousTurnDto {
 
 export class AskQuestionDto {
   @IsString()
-  @Length(2, 200)
+  @Length(2, 2000)
   question!: string;
 
   @IsOptional()

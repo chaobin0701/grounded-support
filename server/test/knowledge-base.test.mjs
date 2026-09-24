@@ -31,6 +31,36 @@ test('knowledge base publishing controls require management permission', () => {
   assert.deepEqual(Reflect.getMetadata(PERMISSION_KEY, KnowledgeBaseController.prototype.upload), ['documents.upload']);
 });
 
+test('knowledge base recall test searches only ready, active documents in the selected base', async () => {
+  const statements = [];
+  const database = { query: async (sql, values) => {
+    statements.push({ sql, values });
+    if (sql.includes('SELECT draft_config FROM knowledge_bases')) return { rows: [{ draft_config: {} }] };
+    return { rows: [{ chunkId: 41, documentId: 8, documentTitle: '售后政策', originalFilename: 'returns.md',
+      ordinal: 1, headingPath: '退货', content: '商品签收后七天内可申请退货。', sourceStartLine: 1, sourceEndLine: 1, score: 0.9 }] };
+  } };
+  const result = await new SearchService(database, { enabled: false }).recallTest(6, '退货期限', 5, 'fulltext');
+  assert.equal(result.hits[0].documentId, 8);
+  assert.equal(result.hits[0].matchType, '全文');
+  assert.match(statements[1].sql, /d\.knowledge_base_id=\$2/);
+  assert.deepEqual(statements[1].values.slice(0, 3), ['退货期限', 6, 0.15]);
+  await assert.rejects(new SearchService(database, { enabled: false }).recallTest(6, 'x', 5), (error) => error.getStatus() === 400);
+});
+
+test('publishing a ready version switches the index and enables visitor QA in one update', async () => {
+  const statements = [];
+  const database = {
+    transaction: (work) => work({ query: async (sql, values) => {
+      statements.push({ sql, values });
+      return sql.includes('UPDATE knowledge_bases') ? { rowCount: 1 } : { rows: [], rowCount: 1 };
+    } }),
+  };
+  const indexes = new KnowledgeIndexService(database, {});
+  assert.deepEqual(await indexes.activate(7, 3, 12), { id: 3, activeIndexVersionId: 12 });
+  assert.match(statements[0].sql, /active_index_version_id=v\.id, enabled_for_chat=true/);
+  assert.deepEqual(statements[0].values, [3, 12]);
+});
+
 // Opt-in integration test: runs migrations in a random schema inside a rolled-back
 // transaction. Existing application tables and files are never modified.
 test('PostgreSQL migration, document scope and chat visibility remain isolated', { skip: process.env.KB_INTEGRATION !== '1' }, async (t) => {
@@ -72,7 +102,7 @@ test('PostgreSQL migration, document scope and chat visibility remain isolated',
     const search = new SearchService(database, { enabled: false });
     const defaultBase = (await bases.list())[0];
     const second = await bases.create(actor, { name: '内部草稿' });
-    assert.equal(second.enabledForChat, false);
+    assert.equal(second.enabledForChat, true, 'a new knowledge base is active without a publish step');
     assert.equal((await documents.list(50, 0)).length, 1);
     const file = { originalname: 'fixture.md', buffer: Buffer.from('隔离资料'), size: Buffer.byteLength('隔离资料') };
     const uploaded = await documents.upload(actor, file, '新资料', second.id);
@@ -86,13 +116,12 @@ test('PostgreSQL migration, document scope and chat visibility remain isolated',
     await client.query(`INSERT INTO document_chunks (document_id, ordinal, content, source_start_line, source_end_line)
       VALUES ($1, 1, '隔离资料', 1, 1)`, [uploaded.id]);
     assert.equal((await search.searchForAgent('隔离资料')).hits.length, 0);
-    await bases.update(actor, second.id, { enabledForChat: true });
     await bases.update(actor, second.id, { name: '已更名' });
     assert.equal((await bases.get(second.id)).enabledForChat, true);
-    assert.equal((await search.searchForAgent('隔离资料')).hits.length, 0); // New bases require publication.
+    assert.equal((await search.searchForAgent('隔离资料')).hits.length, 1, 'ready documents enter chat retrieval automatically');
     assert.equal((await search.diagnose('隔离资料', 5, undefined)).results.length, 0);
     const faqs = new FaqService(database);
-    const faqBase = await bases.create(actor, { name: 'FAQ 专用', enabledForChat: true });
+    const faqBase = await bases.create(actor, { name: 'FAQ 专用' });
     const faq = await faqs.save(actor,faqBase.id,{ question:'如何申请退货',answer:'七天内联系客服申请退货。' });
     const indexes = new KnowledgeIndexService(database, { enqueueIndex: async () => {} });
     await indexes.configure(actor,faqBase.id,{});
@@ -108,6 +137,7 @@ test('PostgreSQL migration, document scope and chat visibility remain isolated',
     const versionSearch = new VersionSearchService(database,runtime);
     assert.equal((await versionSearch.search('申请退货',5,faqBase.id)).hits.length,0);
     await indexes.activate(actor,faqBase.id,first.id);
+    assert.equal((await bases.get(faqBase.id)).enabledForChat, true, 'publishing the first ready index also enables visitor QA');
     const found = await versionSearch.search('申请退货',5,faqBase.id);
     assert.equal(found.hits.length,1);
     assert.equal(found.hits[0].documentId,faq.documentId);

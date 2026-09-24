@@ -5,13 +5,13 @@ import { ContextBuilder } from '../../chat/context-builder';
 import type { ChatAnswer } from '../../chat/chat.service';
 import { LlmService } from '../../chat/llm.service';
 import type { AgentInput } from './agent-input';
-import type { AgentState } from './agent-state';
+import type { AgentState, AgentExecutionStep } from './agent-state';
 import { REFUSAL, validateAgentAnswer } from './agent-answer';
 import type { ProductDetail, ProductSummary } from '../tools/product-catalog/product-catalog.service';
 import { ToolExecutionService } from '../tools/tool-execution';
 
-export const PLANNER_PROMPT = `你是暖巢电器客服的工具规划器。你只能根据工具返回的事实回答，不能使用常识补足。
-你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。每次只能输出一个 JSON 对象，不要输出 Markdown、解释或思考过程。
+export const PLANNER_PROMPT = `你是暖巢电器的统一问答 Agent。先理解用户当前问题，再决定直接回复、调用工具或拒答。闲聊、问候和感谢可以自然回复；业务事实必须来自预检索资料或工具结果，不能使用常识补足。
+你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。每次只能输出一个 JSON 对象，不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以直接回答，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
 需要工具时输出：{"type":"tool","name":"工具名","arguments":{}}。
 不需要更多工具时输出：{"type":"final","status":"answered","answer":"简短中文回答","citationIds":[资料片段数字ID],"productIds":[产品ID]}。
 如果资料或产品结果不能支持回答，输出：{"type":"final","status":"refused","answer":"无法确定，建议联系人工。","citationIds":[],"productIds":[]}。
@@ -61,12 +61,36 @@ export class AgentLoop {
       summary: input.summary,
       recentHistory: input.recentHistory,
       toolResults: state.toolResults,
+      initialEvidence: input.initialEvidence,
+      skill: input.skill,
     });
     state.contextSnapshot.contextMetadata = builtContext.metadata;
 
     const skillPrompt = input.skill ? `\n当前 Skill：${input.skill.name}\nSkill 规则：${input.skill.systemInstructions}` : '';
-    const model = await this.llm.completeDetailed(`${PLANNER_PROMPT}${skillPrompt}`, builtContext.userPrompt, this.llm.model, 'planner');
+    const modelStarted = Date.now();
+    let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
+    try {
+      model = await this.llm.completeDetailed(`${PLANNER_PROMPT}${skillPrompt}`, builtContext.userPrompt, this.llm.model, 'planner');
+    } catch (error) {
+      state.executionSteps.push({ type: 'llm_call', stage: 'planning', model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
+      state.contextSnapshot.executionSteps = state.executionSteps;
+      throw error;
+    }
     state.finalRaw = model.content;
+    const modelStep: AgentExecutionStep = {
+      type: 'llm_call',
+      stage: 'planning',
+      model: model.model,
+      ok: true,
+      durationMs: model.durationMs ?? 0,
+      inputTokens: model.inputTokens,
+      outputTokens: model.outputTokens,
+      totalTokens: model.totalTokens,
+      finishReason: model.finishReason,
+      attempts: model.attempts ?? 1,
+    };
+    state.executionSteps.push(modelStep);
+    state.contextSnapshot.executionSteps = state.executionSteps;
     if (model.inputTokens !== null || model.outputTokens !== null || model.totalTokens !== null) state.usageSeen = true;
     state.inputTokens += model.inputTokens ?? 0;
     state.outputTokens += model.outputTokens ?? 0;
@@ -75,10 +99,16 @@ export class AgentLoop {
     const parsed = parsePlannerOutput(model.content);
     const final = parseFinalOutput(parsed);
     if (final) {
-      if (final.status === 'answered' && Array.isArray(final.citationIds) && Array.isArray(final.productIds)
+      modelStep.stage = 'final_answer';
+      modelStep.detail = '模型返回最终回答';
+      const evidenceRequired = ((state.skill.responseMode !== 'auto' && state.skill.responseMode !== 'conversational')
+        || state.toolCalls.length > 0 || state.hits.size > 0 || state.products.size > 0);
+      if (final.status === 'answered' && evidenceRequired && Array.isArray(final.citationIds) && Array.isArray(final.productIds)
         && final.citationIds.length === 0 && final.productIds.length === 0) {
         state.toolResults.push({ validation: 'final_answer_requires_a_retrieved_citation_or_product_id' });
+        state.executionSteps.push({ type: 'validation', stage: 'answer_guard', ok: false, durationMs: 0, detail: '最终回答缺少有效资料或产品引用' });
         state.contextSnapshot.toolResults = state.toolResults;
+        state.contextSnapshot.executionSteps = state.executionSteps;
         return { type: 'continue' };
       }
       state.contextSnapshot.sources = [...state.hits.values()].map((hit) => ({
@@ -89,9 +119,20 @@ export class AgentLoop {
       state.contextSnapshot.products = [...state.products.values()];
       state.contextSnapshot.toolCalls = state.toolCalls;
       state.contextSnapshot.toolResults = state.toolResults;
+      const validated = validateAgentAnswer(JSON.stringify(final), [...state.hits.values()], [...state.products.values()], state.skill.responseMode, evidenceRequired);
+      state.executionSteps.push({
+        type: 'validation',
+        stage: 'answer_guard',
+        ok: !validated.refused || final.status === 'refused',
+        durationMs: 0,
+        detail: final.status === 'refused'
+          ? '资料不足，已安全拒答'
+          : validated.refused ? '回答未通过引用或事实校验' : '回答与引用校验通过',
+      });
+      state.contextSnapshot.executionSteps = state.executionSteps;
       return {
         type: 'complete',
-        result: validateAgentAnswer(JSON.stringify(final), [...state.hits.values()], [...state.products.values()]),
+        result: validated,
       };
     }
 
@@ -111,8 +152,19 @@ export class AgentLoop {
       tool: call.name,
       result: execution.result.success ? execution.result.content : { error: execution.result.errorCode ?? 'tool_failed' },
     });
+    state.executionSteps.push({
+      type: 'tool_call',
+      stage: 'tool',
+      name: call.name,
+      ok: execution.trace.ok,
+      durationMs: execution.trace.durationMs,
+      arguments: call.arguments,
+      result: execution.result.success ? execution.result.content : { error: execution.result.errorCode ?? 'tool_failed' },
+      ...(execution.trace.errorCode ? { errorCode: execution.trace.errorCode } : {}),
+    });
     state.contextSnapshot.toolCalls = state.toolCalls;
     state.contextSnapshot.toolResults = state.toolResults;
+    state.contextSnapshot.executionSteps = state.executionSteps;
     if (!execution.result.success) return { type: 'complete', result: refusedAnswer() };
     return { type: 'continue' };
   }

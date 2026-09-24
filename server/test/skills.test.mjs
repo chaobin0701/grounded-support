@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SkillRegistry, DuplicateSkillError, UnknownSkillError } from '../dist/ai/skills/skill-registry.js';
 import { SkillSelector } from '../dist/ai/skills/skill-selector.js';
+import { questionAnsweringSkill } from '../dist/ai/skills/built-in/question-answering.skill.js';
 
 const customer = {
   id: 'customer_support', version: '1.0.0', name: 'Customer support', description: '',
@@ -19,6 +20,13 @@ function registry() {
   return value;
 }
 
+function unifiedRegistry() {
+  const value = registry();
+  value.register(questionAnsweringSkill);
+  return value;
+}
+
+
 test('skill registry registers, lists and rejects duplicate or unknown skills', () => {
   const value = registry();
   assert.deepEqual(value.list().map((skill) => skill.id), ['customer_support', 'product_consultation']);
@@ -32,4 +40,12 @@ test('skill selector uses deterministic product intent and customer default', ()
   assert.equal(selector.select('如何申请退货？').skill.id, 'customer_support');
   assert.equal(selector.select('anything', 'product_consultation').selectedBy, 'explicit');
   assert.throws(() => selector.select('anything', 'not_registered'), /Unknown skill/);
+});
+
+test('unified question answering skill is the default and leaves tool choice to the agent', () => {
+  const selector = new SkillSelector(unifiedRegistry());
+  assert.equal(selector.select('你好啊').skill.id, 'question_answering');
+  assert.equal(selector.select('退货需要什么条件？').skill.id, 'question_answering');
+  assert.equal(selector.select('产品有哪些？').skill.id, 'question_answering');
+  assert.equal(selector.select('你好啊', 'product_consultation').selectedBy, 'explicit');
 });

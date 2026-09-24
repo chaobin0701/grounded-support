@@ -1,362 +1,543 @@
 <script setup lang="ts">
-import { ArrowLeft, FileText, MessageSquareText, Plus, Search, Settings2, Upload } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
+import { Database, FileText, Plus, Search, Settings2, Upload } from '@lucide/vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { request, type DocumentItem } from './admin-api';
+import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
-
+import ToastNotice from './ui/ToastNotice.vue';
+type View = 'documents' | 'settings' | 'recall-test';
 type Config = { indexMode: 'economy' | 'high_quality'; retrievalMode: 'fulltext' | 'vector' | 'hybrid';
   chunkMode: 'general' | 'parent_child'; chunkChars: number; overlapChars: number; parentChars: number;
-  childChars: number; childOverlapChars: number; embeddingProfileId: number | null; lexicalThreshold: number; vectorThreshold: number };
+  childChars: number; childOverlapChars: number; embeddingProfileId: number | null; topK: number; lexicalThreshold: number; vectorThreshold: number };
+type ProcessingConfig = { chunkMode: 'general' | 'parent_child'; separatorMode: 'auto' | 'heading_paragraph' | 'fixed'; preserveHeading: boolean; chunkChars: number; overlapChars: number };
 type Base = { id: number; name: string; description: string; isDefault: boolean; enabledForChat: boolean;
-  archivedAt: string | null; createdAt: string; updatedAt: string; documentCount: number;
+  archivedAt: string | null; createdAt: string; updatedAt: string; documentCount: number; readyDocumentCount?: number;
   draftConfig: Partial<Config>; activeIndexVersionId: number | null };
-type Version = { id: number; status: string; chunkCount: number; errorMessage: string | null; createdAt: string };
-type Faq = { id: number; documentId: number; question: string; answer: string; category: string; source: string };
-type Preview = { ordinal: number; kind: string; parentOrdinal: number | null; headingPath: string; content: string; sourceLocator: { type: string; start: number; end: number } };
-type SearchResult = { hits: { chunkId: number; documentTitle: string; headingPath: string; content: string; score: number }[];
-  versionIds: number[]; embeddingCalls: number; durationMs: number };
 type Profile = { id: number; name: string; enabled: boolean; config: { model: string; dimensions: number; provider: string } };
+type Chunk = { id: number; ordinal: number; headingPath: string; content: string; sourceStartLine: number; sourceEndLine: number };
+type Hit = { chunkId: number; documentId: number; documentTitle: string; originalFilename: string; headingPath: string; content: string; score: number; matchType?: string };
+type RecallResult = { hits: Hit[]; lexicalResults?: Hit[]; vectorResults?: Hit[]; retrievalMode?: string; vectorIndexedChunks?: number; durationMs?: number; embeddingCalls?: number; versionIds?: number[] };
+
 const props = defineProps<{ token: string; permissions: string[] }>();
+const route = useRoute();
+const router = useRouter();
 const can = (permission: string) => props.permissions.includes(permission);
 const canManage = computed(() => can('knowledge_bases.manage'));
 const defaults: Config = { indexMode: 'economy', retrievalMode: 'fulltext', chunkMode: 'general', chunkChars: 800,
-  overlapChars: 60, parentChars: 2400, childChars: 500, childOverlapChars: 50, embeddingProfileId: null, lexicalThreshold: 0.15, vectorThreshold: 0.3 };
-const bases = ref<Base[]>([]); const selected = ref<number | null>(null);
-const current = computed(() => bases.value.find((b) => b.id === selected.value));
-const config = ref<Config>({ ...defaults }); const name = ref('');
-const documents = ref<DocumentItem[]>([]); const versions = ref<Version[]>([]); const faqs = ref<Faq[]>([]); const profiles = ref<Profile[]>([]);
-const busy = ref(false); const error = ref(''); const notice = ref('');
-const dialog = ref<'create' | 'upload' | null>(null);
-const viewMode = ref<'directory' | 'workspace'>('directory');
-const inspectorTab = ref<'overview' | 'documents' | 'settings'>('overview');
+  overlapChars: 60, parentChars: 2400, childChars: 500, childOverlapChars: 50, embeddingProfileId: null, topK: 5, lexicalThreshold: 0.15, vectorThreshold: 0.65 };
+const bases = ref<Base[]>([]);
+const documents = ref<DocumentItem[]>([]);
+const profiles = ref<Profile[]>([]);
+const selectedId = ref<number | null>(null);
+const current = computed(() => bases.value.find((base) => base.id === selectedId.value));
+const config = ref<Config>({ ...defaults });
+const view = ref<View>('documents');
+const loading = ref(false);
+const busy = ref(false);
+const error = ref('');
+const notice = ref('');
+const dialog = ref<'create' | 'edit' | 'upload' | null>(null);
+const uploadStep = ref<'select' | 'processing'>('select');
+const uploadedIds = ref<number[]>([]);
+const uploadProgress = ref({ done: 0, total: 0 });
+const createStep = ref<1 | 2>(1);
+const createConfig = ref<Config>({ ...defaults });
+const processingConfig = ref<ProcessingConfig>({ chunkMode: 'general', separatorMode: 'auto', preserveHeading: true, chunkChars: 800, overlapChars: 60 });
+const profileDialog = ref(false);
+const previewDialog = ref(false);
+const previewTitle = ref('');
+const previewChunks = ref<Chunk[]>([]);
+const documentDetail = ref<DocumentItem | null>(null);
+const documentDetailChunks = ref<Chunk[]>([]);
+const reprocessIds = ref<number[]>([]);
+const customChunks = ref(false);
+const reprocessConfig = ref<ProcessingConfig>({ chunkMode: 'general', separatorMode: 'auto', preserveHeading: true, chunkChars: 800, overlapChars: 60 });
+const openActionId = ref<number | null>(null);
+const pendingAction = ref<{ title: string; description: string; run: () => Promise<void> } | null>(null);
+const name = ref('');
+const description = ref('');
+const files = ref<File[]>([]);
+const query = ref('');
+const topK = ref(5);
+const recallMode = ref<'fulltext' | 'vector' | 'hybrid'>('hybrid');
+const recallResult = ref<RecallResult | null>(null);
 const listQuery = ref('');
-const listStatus = ref<'all' | 'enabled' | 'disabled'>('all');
-const listSort = ref<'updated' | 'name'>('updated');
-const showArchived = ref(false);
-const tab = ref<'documents' | 'config' | 'versions' | 'search' | 'faq'>('documents');
-const preview = ref<Preview[]>([]); const files = ref<File[]>([]);
-const query = ref(''); const searchResult = ref<SearchResult | null>(null);
-const diagnosticVersion = ref<number | null>(null);
-const faqForm = ref({ question: '', answer: '', category: '', source: '' }); const editingFaq = ref<number | null>(null);
-const csv = ref('');
+const listStatus = ref<'all' | 'enabled' | 'disabled' | 'archived'>('all');
+const documentQuery = ref('');
+const documentStatusFilter = ref<'all' | 'processing' | 'ready' | 'failed' | 'archived'>('all');
+const selectedDocuments = ref<number[]>([]);
 const profileForm = ref({ name: '', config: { provider: 'volcengine-multimodal', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
   model: 'doubao-embedding-vision-251215', dimensions: 2048, maxInputChars: 8000, batchSize: 16, secretRef: 'default' } });
-const activeDocuments = computed(() => documents.value.filter((document) => !document.archivedAt));
-const visibleDocuments = computed(() => showArchived.value ? documents.value : activeDocuments.value);
-const legacyDocuments = computed(() => activeDocuments.value.filter((document) =>
-  document.sourceType !== 'faq' && document.status === 'ready' && !document.parserVersion,
-));
-const waitingDocuments = computed(() => activeDocuments.value.filter((document) => ['queued', 'processing', 'failed', 'extracted'].includes(document.status)));
-const buildReady = computed(() => activeDocuments.value.length > 0 && legacyDocuments.value.length === 0 && waitingDocuments.value.length === 0);
-const activeVersion = computed(() => versions.value.find((version) => version.id === current.value?.activeIndexVersionId));
-const filteredBases = computed(() => {
-  const keyword = listQuery.value.trim().toLowerCase();
-  return bases.value.filter((base) => {
-    const matchesQuery = !keyword || `${base.name}${base.description}`.toLowerCase().includes(keyword);
-    const matchesStatus = listStatus.value === 'all'
-      || (listStatus.value === 'enabled' && base.enabledForChat && !base.archivedAt)
-      || (listStatus.value === 'disabled' && (!base.enabledForChat || !!base.archivedAt));
-    return matchesQuery && matchesStatus;
-  }).sort((left, right) => listSort.value === 'name'
-    ? left.name.localeCompare(right.name, 'zh-CN')
-    : new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime());
-});
-const activeProfile = computed(() => profiles.value.find((profile) => profile.id === config.value.embeddingProfileId));
-const retrievalLabel = computed(() => ({ fulltext: '全文检索', vector: '向量检索', hybrid: '混合检索' }[config.value.retrievalMode]));
-function formatDate(value: string | null | undefined) {
-  if (!value) return '—';
-  return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
-}
-async function selectBase(id: number) {
-  selected.value = id;
-  inspectorTab.value = 'overview';
-  await run(loadDetails);
-}
-function openWorkspace(nextTab: typeof tab.value = 'documents') {
-  tab.value = nextTab;
-  viewMode.value = 'workspace';
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-function documentStatus(document: DocumentItem): string {
-  if (document.archivedAt) return '已下架';
-  if (document.parserVersion || document.sourceType === 'faq') return '可构建';
-  return ({ ready: '需重新解析', queued: '等待处理', processing: '处理中', extracted: '等待分段', failed: '处理失败' } as Record<string, string>)[document.status] || document.status;
-}
-function documentError(message: string | null): string {
-  if (!message) return '';
-  if (message.includes('no selectable text')) return 'PDF 没有可选择的文字；扫描版 PDF 暂不支持。';
-  return message;
-}
+
 const api = <T,>(path = '', method = 'GET', body?: unknown) => request<T>(`/knowledge-bases${path}`,
   { method, ...(body === undefined ? {} : { body: body instanceof FormData ? body : JSON.stringify(body) }) }, props.token);
+const activeDocuments = computed(() => documents.value.filter((doc) => !doc.archivedAt && doc.sourceType !== 'faq'));
+const readyCount = computed(() => activeDocuments.value.filter((doc) => doc.status === 'ready' && doc.enabledForRetrieval !== false).length);
+const processingCount = computed(() => activeDocuments.value.filter((doc) => ['pending', 'queued', 'processing'].includes(doc.status)).length);
+const failedCount = computed(() => activeDocuments.value.filter((doc) => doc.status === 'failed').length);
+const visibleDocuments = computed(() => {
+  const keyword = documentQuery.value.trim().toLocaleLowerCase();
+  return documents.value.filter((doc) => {
+    if (doc.sourceType === 'faq') return false;
+    const statusMatch = documentStatusFilter.value === 'all'
+      || (documentStatusFilter.value === 'archived' && !!doc.archivedAt)
+      || (documentStatusFilter.value === 'ready' && !doc.archivedAt && doc.status === 'ready')
+      || (documentStatusFilter.value === 'failed' && !doc.archivedAt && doc.status === 'failed')
+      || (documentStatusFilter.value === 'processing' && !doc.archivedAt && ['pending', 'queued', 'processing'].includes(doc.status));
+    const queryMatch = !keyword || `${doc.title} ${doc.originalFilename}`.toLocaleLowerCase().includes(keyword);
+    return statusMatch && queryMatch;
+  }).sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt)
+    || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+});
+const allVisibleSelected = computed(() => visibleDocuments.value.filter((doc) => !doc.archivedAt).length > 0
+  && visibleDocuments.value.filter((doc) => !doc.archivedAt).every((doc) => selectedDocuments.value.includes(doc.id)));
+const filteredBases = computed(() => {
+  const keyword = listQuery.value.trim().toLocaleLowerCase();
+  return bases.value.filter((base) => {
+    const textMatch = !keyword || `${base.name} ${base.description}`.toLocaleLowerCase().includes(keyword);
+    const statusMatch = listStatus.value === 'all'
+      || (listStatus.value === 'archived' && !!base.archivedAt)
+      || (listStatus.value === 'enabled' && !base.archivedAt && base.enabledForChat)
+      || (listStatus.value === 'disabled' && !base.archivedAt && !base.enabledForChat);
+    return textMatch && statusMatch;
+  }).sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt)
+    || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+});
+const currentProfile = computed(() => profiles.value.find((profile) => profile.id === config.value.embeddingProfileId));
+const currentRouteTab = (raw: unknown): View => raw === 'settings' || raw === 'index' || raw === 'config'
+  ? 'settings' : raw === 'recall-test' || raw === 'publish' || raw === 'versions' || raw === 'search'
+    ? 'recall-test' : 'documents';
+const statusLabel = (doc: DocumentItem) => doc.archivedAt ? '已归档'
+  : ({ pending: '待解析', queued: '排队中', processing: '处理中', ready: '可检索', failed: '处理失败', extracted: '待处理' }[doc.status] ?? doc.status);
+const statusClass = (doc: DocumentItem) => doc.archivedAt ? 'archived'
+  : ['queued', 'processing'].includes(doc.status) ? 'processing' : doc.status === 'ready' ? 'ready' : doc.status === 'failed' ? 'failed' : 'pending';
+const fileType = (doc: DocumentItem) => doc.originalFilename.split('.').pop()?.toUpperCase() || 'FILE';
+const fileTypeClass = (doc: DocumentItem) => {
+  const type = fileType(doc).toLowerCase();
+  if (type === 'pdf') return 'pdf';
+  if (type === 'md' || type === 'markdown') return 'markdown';
+  if (type === 'doc' || type === 'docx') return 'word';
+  return 'generic';
+};
+const fmtDate = (value: string | null | undefined) => value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
+const charCount = (doc: DocumentItem) => doc.characterCount?.toLocaleString('zh-CN') ?? '—';
+const chunkCount = (doc: DocumentItem) => doc.chunkCount?.toLocaleString('zh-CN') ?? '—';
+const retrievalName = (mode: string) => ({ fulltext: '全文检索', vector: '向量检索', hybrid: '混合检索' }[mode] ?? mode);
+
 async function run(work: () => Promise<void>, success = '') {
   if (busy.value) return;
   busy.value = true; error.value = ''; notice.value = '';
-  try { await work(); notice.value = success; } catch (cause) { error.value = cause instanceof Error ? cause.message : '操作失败'; }
+  try { await work(); if (success) notice.value = success; }
+  catch (cause) { error.value = cause instanceof Error ? cause.message : '操作失败，请稍后重试。'; }
   finally { busy.value = false; }
 }
-async function reload() {
-  bases.value = await api<Base[]>();
-  if (selected.value === null) selected.value = bases.value.find((b) => !b.archivedAt)?.id ?? null;
-  if (canManage.value) profiles.value = await api<Profile[]>('/embedding-profiles');
-  await loadDetails();
-}
 async function loadDetails() {
-  preview.value = []; searchResult.value = null; diagnosticVersion.value=null;
-  config.value = { ...defaults, ...current.value?.draftConfig };
-  if (!selected.value || !can('documents.read')) return;
-  [documents.value, versions.value, faqs.value] = await Promise.all([
-    api<DocumentItem[]>(`/${selected.value}/documents`), api<Version[]>(`/${selected.value}/versions`), api<Faq[]>(`/${selected.value}/faqs`),
-  ]);
+  if (!selectedId.value) return;
+  const base = await api<Base>(`/${selectedId.value}`);
+  bases.value = bases.value.map((item) => item.id === base.id ? { ...item, ...base } : item);
+  documents.value = await api<DocumentItem[]>(`/${selectedId.value}/documents?limit=100`);
+  config.value = { ...defaults, ...base.draftConfig };
+  topK.value = config.value.topK;
+  recallMode.value = config.value.retrievalMode;
+  if (canManage.value) profiles.value = await api<Profile[]>('/embedding-profiles');
+  selectedDocuments.value = [];
+  const documentId = typeof route.params.documentId === 'string' ? Number(route.params.documentId) : null;
+  if (documentId) {
+    documentDetail.value = documents.value.find((doc) => doc.id === documentId) ?? await api<DocumentItem>(`/${selectedId.value}/documents/${documentId}`);
+    documentDetailChunks.value = await api<Chunk[]>(`/${selectedId.value}/documents/${documentId}/chunks`);
+  } else {
+    documentDetail.value = null;
+    documentDetailChunks.value = [];
+  }
 }
-async function createBase() {
-  await run(async () => { const base = await api<Base>('', 'POST', { name: name.value }); selected.value = base.id; name.value = ''; await reload(); }, '知识库已创建，默认不参与访客问答。');
-  if (!error.value) dialog.value = 'upload';
+async function reload() {
+  loading.value = true; error.value = '';
+  try {
+    bases.value = await api<Base[]>();
+    if (canManage.value) profiles.value = await api<Profile[]>('/embedding-profiles');
+    const routeId = typeof route.params.baseId === 'string' ? Number(route.params.baseId) : null;
+    view.value = currentRouteTab(route.params.subview);
+    selectedId.value = routeId !== null && bases.value.some((base) => base.id === routeId) ? routeId : null;
+    if (selectedId.value) await loadDetails();
+  } catch (cause) { error.value = cause instanceof Error ? cause.message : '无法读取知识库。'; }
+  finally { loading.value = false; }
 }
-async function saveConfig() {
+async function refresh() { await run(async () => { await reload(); }, '内容已刷新。'); }
+function openView(next: View) {
+  if (!selectedId.value) return;
+  view.value = next;
+  void router.push(`/admin/knowledge/${selectedId.value}/${next}`);
+}
+function openDocument(id: number) {
+  if (selectedId.value) void router.push(`/admin/knowledge/${selectedId.value}/documents/${id}`);
+}
+async function toggleDocumentEnabled(doc: DocumentItem) {
   await run(async () => {
-    const value = { ...config.value };
-    if (value.indexMode === 'economy') { value.retrievalMode = 'fulltext'; value.embeddingProfileId = null; }
-    await api(`/${selected.value}/config`, 'PATCH', value); await reload();
-  }, '草稿已保存；构建并启用新版本后生效。');
+    await api(`/${selectedId.value}/documents/${doc.id}/retrieval-status`, 'PATCH', { enabled: doc.enabledForRetrieval === false });
+    await loadDetails();
+  }, doc.enabledForRetrieval === false ? '文档已启用检索。' : '文档已停用检索。');
 }
-async function upload() {
+async function toggleDocumentArchive(doc: DocumentItem) {
+  await run(async () => {
+    await api(`/${selectedId.value}/documents/${doc.id}/${doc.archivedAt ? 'unarchive' : 'archive'}`, 'PATCH');
+    await loadDetails();
+  }, doc.archivedAt ? '文档已取消归档。' : '文档已归档。');
+}
+function openBase(id: number) { selectedId.value = id; void router.push(`/admin/knowledge/${id}/documents`); }
+function openCreate() { name.value = ''; description.value = ''; createStep.value = 1; createConfig.value = { ...defaults }; dialog.value = 'create'; }
+function openUpload() { files.value = []; uploadedIds.value = []; uploadProgress.value = { done: 0, total: 0 }; uploadStep.value = 'select'; processingConfig.value = { chunkMode: 'general', separatorMode: 'auto', preserveHeading: true, chunkChars: 800, overlapChars: 60 }; dialog.value = 'upload'; }
+function openEdit() { if (!current.value) return; name.value = current.value.name; description.value = current.value.description; dialog.value = 'edit'; }
+async function saveBase() {
+  const editing = dialog.value === 'edit';
+  if (!editing && createStep.value === 1) { createStep.value = 2; return; }
+  if (!editing && createConfig.value.indexMode === 'high_quality' && !createConfig.value.embeddingProfileId) {
+    error.value = '高级模式需要先选择 Embedding 模型。';
+    return;
+  }
+  await run(async () => {
+    const body = { name: name.value, description: description.value, ...(editing ? {} : { enabledForChat: true, draftConfig: { ...createConfig.value, ...(createConfig.value.indexMode === 'economy' ? { retrievalMode: 'fulltext', embeddingProfileId: null } : {}) } }) };
+    const base = editing ? await api<Base>(`/${selectedId.value}`, 'PATCH', body) : await api<Base>('', 'POST', body);
+    dialog.value = null;
+    await reload();
+    if (!editing) { selectedId.value = base.id; view.value = 'documents'; await router.push(`/admin/knowledge/${base.id}/documents`); }
+  }, editing ? '知识库信息已保存。' : '知识库已创建。');
+}
+async function saveSettings() {
+  const value = { ...config.value };
+  if (value.retrievalMode !== 'fulltext' && value.indexMode === 'economy') {
+    const profile = profiles.value.find((item) => item.enabled);
+    if (!profile) { error.value = '向量检索和混合检索需要先配置可用的 Embedding 模型。'; return; }
+    value.indexMode = 'high_quality';
+    value.embeddingProfileId = value.embeddingProfileId ?? profile.id;
+  }
+  if (value.indexMode === 'economy') value.embeddingProfileId = null;
+  await run(async () => { await api(`/${selectedId.value}/config`, 'PATCH', value); await loadDetails(); }, '检索与分段设置已保存。');
+}
+async function uploadDocuments() {
   const selectedFiles = [...files.value];
+  if (!selectedFiles.length) return;
   await run(async () => {
-    if (!selectedFiles.length) return;
-    const results = await Promise.allSettled(selectedFiles.map((selectedFile) => {
-      const data = new FormData(); data.append('file', selectedFile);
-      return api(`/${selected.value}/documents`, 'POST', data);
-    }));
-    files.value = [];
+    uploadProgress.value = { done: 0, total: selectedFiles.length };
+    const failed: File[] = [];
+    for (const file of selectedFiles) {
+      const form = new FormData(); form.append('file', file);
+      form.append('deferProcessing', 'true');
+      try {
+        const uploaded = await api<{ id: number }>(`/${selectedId.value}/documents`, 'POST', form);
+        uploadedIds.value.push(uploaded.id);
+      } catch {
+        failed.push(file);
+      }
+      uploadProgress.value.done++;
+    }
+    files.value = failed;
     await loadDetails();
-    const failed = results.filter((result) => result.status === 'rejected').length;
-    if (failed) throw new Error(`${selectedFiles.length - failed} 份资料已上传，${failed} 份上传失败，请单独重试。`);
-  }, `${selectedFiles.length} 份资料已进入解析队列。`);
-  if (!error.value) dialog.value = null;
+    if (failed.length) throw new Error(`已上传 ${uploadedIds.value.length} 份，${failed.length} 份失败。失败文件仍在列表中，请重试上传。`);
+    uploadStep.value = 'processing';
+  }, '文档上传成功，请设置解析方式。');
 }
-async function documentAction(id: number, action: 'archive' | 'reprocess') { await run(async () => {
-  await api(`/${selected.value}/documents/${id}/${action}`, action === 'archive' ? 'PATCH' : 'POST'); await loadDetails();
-}, action === 'archive' ? '资料已下架，所有版本立即停止检索该资料。' : '已加入解析队列。'); }
-async function reprocessAll() {
-  let queued = 0;
+async function processUploadedDocuments() {
+  const ids = [...uploadedIds.value];
+  if (!ids.length) return;
   await run(async () => {
-    const result = await api<{ queued: number }>(`/${selected.value}/documents/reprocess`, 'POST');
-    queued = result.queued;
+    const outcomes = await Promise.allSettled(ids.map((id) => api(`/${selectedId.value}/documents/${id}/reprocess`, 'POST', { chunkOverride: processingConfig.value })));
+    uploadedIds.value = ids.filter((_, index) => outcomes[index].status === 'rejected');
     await loadDetails();
+    const failures = uploadedIds.value.length;
+    if (failures) throw new Error(`${ids.length - failures} 份已开始处理，${failures} 份无法开始处理，可重试。`);
+    dialog.value = null;
+    uploadedIds.value = [];
+  }, `${ids.length} 份文档已加入处理队列。`);
+}
+async function archiveDocument(id: number) {
+  const doc = documents.value.find((item) => item.id === id);
+  if (!doc) return;
+  pendingAction.value = { title: '归档资料', description: `“${doc.title}”归档后会从该知识库的文档列表与检索结果中移除。`, run: async () => {
+    await run(async () => { await api(`/${selectedId.value}/documents/${id}/archive`, 'PATCH'); await loadDetails(); }, '资料已归档。');
+    pendingAction.value = null;
+  } };
+}
+async function reprocess(ids: number[]) {
+  reprocessIds.value = [...ids];
+  customChunks.value = false;
+  const first = documents.value.find((doc) => doc.id === ids[0]);
+  reprocessConfig.value = { chunkMode: 'general', separatorMode: 'auto', preserveHeading: true, chunkChars: 800, overlapChars: 60, ...(first?.chunkOverride ?? {}) };
+}
+async function confirmReprocess() {
+  const ids = [...reprocessIds.value];
+  if (!ids.length) return;
+  await run(async () => {
+    const outcomes = await Promise.allSettled(ids.map((id) => api(`/${selectedId.value}/documents/${id}/reprocess`, 'POST', { chunkOverride: ids.length === 1 || customChunks.value ? reprocessConfig.value : documents.value.find(doc => doc.id === id)?.chunkOverride ?? null })));
+    reprocessIds.value = ids.filter((_, index) => outcomes[index].status === 'rejected');
+    await loadDetails();
+    const failures = outcomes.filter((item) => item.status === 'rejected').length;
+    if (failures) throw new Error(`${ids.length - failures} 份已加入处理队列，${failures} 份无法重新处理。`);
+    reprocessIds.value = [];
+  }, `${ids.length} 份资料已加入处理队列。`);
+}
+async function archiveSelected() {
+  const ids = [...selectedDocuments.value];
+  if (!ids.length) return;
+  pendingAction.value = { title: `归档 ${ids.length} 份资料`, description: '所选资料归档后不再出现在活动文档与检索结果中。', run: async () => {
+    await run(async () => {
+      const outcomes = await Promise.allSettled(ids.map((id) => api(`/${selectedId.value}/documents/${id}/archive`, 'PATCH')));
+      await loadDetails();
+      const failures = outcomes.filter((item) => item.status === 'rejected').length;
+      if (failures) throw new Error(`${ids.length - failures} 份已归档，${failures} 份未能归档。`);
+    }, `${ids.length} 份资料已归档。`);
+    pendingAction.value = null;
+  } };
+}
+function toggleAll() {
+  const ids = visibleDocuments.value.filter((doc) => !doc.archivedAt).map((doc) => doc.id);
+  selectedDocuments.value = allVisibleSelected.value ? selectedDocuments.value.filter((id) => !ids.includes(id))
+    : [...new Set([...selectedDocuments.value, ...ids])];
+}
+function toggleActionMenu(id: number) { openActionId.value = openActionId.value === id ? null : id; }
+function closeActionMenu(event: Event) {
+  const target = event.target;
+  if (!(target instanceof Element) || !target.closest('.kb-action-menu')) openActionId.value = null;
+}
+async function preview(doc: DocumentItem) {
+  await run(async () => {
+    previewChunks.value = await api<Chunk[]>(`/${selectedId.value}/documents/${doc.id}/chunks`);
+    previewTitle.value = doc.title;
+    previewDialog.value = true;
   });
-  if (!error.value) notice.value = queued ? `已将 ${queued} 份资料加入解析队列。` : '没有需要重新解析的资料。';
 }
-async function publish(id: number) { await run(async () => { await api(`/${selected.value}/versions/${id}/activate`, 'POST'); await reload(); }, `已启用版本 #${id}。`); }
-async function saveFaq() { await run(async () => {
-  await api(`/${selected.value}/faqs${editingFaq.value ? `/${editingFaq.value}` : ''}`, editingFaq.value ? 'PATCH' : 'POST', faqForm.value);
-  editingFaq.value = null; faqForm.value = { question: '', answer: '', category: '', source: '' }; await loadDetails();
-}, 'FAQ 已保存；重新构建并启用索引后参与问答。'); }
-function editFaq(faq: Faq) { editingFaq.value = faq.id; faqForm.value = { question: faq.question, answer: faq.answer, category: faq.category, source: faq.source }; }
 async function downloadDocument(doc: DocumentItem) {
-  await run(async()=>{
-    const response=await fetch(`/api/admin/knowledge-bases/${selected.value}/documents/${doc.id}/file`,{headers:{Authorization:`Bearer ${props.token}`}});
-    if(!response.ok)throw new Error(`下载失败（${response.status}）`);
-    const url=URL.createObjectURL(await response.blob());
-    const link=document.createElement('a');link.href=url;link.download=doc.originalFilename;link.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  await run(async () => {
+    const response = await fetch(`/api/admin/knowledge-bases/${selectedId.value}/documents/${doc.id}/file`, { headers: { Authorization: `Bearer ${props.token}` } });
+    if (!response.ok) throw new Error(`下载失败（${response.status}）`);
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement('a'); link.href = url; link.download = doc.originalFilename; link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 }
-onMounted(() => run(reload));
+async function saveProfile() {
+  await run(async () => {
+    await api('/embedding-profiles', 'POST', profileForm.value);
+    profiles.value = await api<Profile[]>('/embedding-profiles');
+    const profile = profiles.value.find((item) => item.name === profileForm.value.name);
+    if (profile) { config.value.indexMode = 'high_quality'; config.value.retrievalMode = 'hybrid'; config.value.embeddingProfileId = profile.id; }
+    profileDialog.value = false;
+  }, 'Embedding 模型配置已添加。');
+}
+async function recall() {
+  await run(async () => {
+    recallResult.value = await api<RecallResult>(`/${selectedId.value}/recall-test`, 'POST', { query: query.value, topK: topK.value, retrievalMode: recallMode.value });
+  });
+}
+async function setKnowledgeBaseEnabled(enabled: boolean) {
+  if (!current.value) return;
+  await run(async () => { await api(`/${current.value!.id}`, 'PATCH', { enabledForChat: enabled }); await reload(); }, enabled ? '知识库已启用。' : '知识库已停用。');
+}
+async function requestArchiveBase() {
+  if (!current.value || current.value.isDefault) return;
+  pendingAction.value = { title: '归档知识库', description: `归档“${current.value.name}”后，该库不会再参与访客检索。`, run: async () => {
+    await run(async () => { await api(`/${current.value!.id}/archive`, 'POST'); await router.push('/admin/knowledge'); await reload(); }, '知识库已归档。');
+    pendingAction.value = null;
+  } };
+}
+
+watch(() => [route.params.baseId, route.params.subview, route.params.documentId], async ([baseId, rawSubview, rawDocumentId]) => {
+  if (typeof baseId !== 'string') return;
+  const id = Number(baseId);
+  view.value = currentRouteTab(rawSubview);
+  selectedId.value = id;
+  await loadDetails();
+  const canonical = rawDocumentId ? `/admin/knowledge/${id}/documents/${rawDocumentId}` : `/admin/knowledge/${id}/${view.value}`;
+  if (route.path !== canonical) void router.replace(canonical);
+});
+watch(() => config.value.indexMode, (mode) => {
+  if (mode === 'economy') { config.value.retrievalMode = 'fulltext'; config.value.embeddingProfileId = null; }
+});
+watch(() => route.path, (path) => { if (path === '/admin/knowledge') selectedId.value = null; });
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
+async function refreshProcessing() {
+  if (!selectedId.value || busy.value || !processingCount.value) return;
+  try { documents.value = await api<DocumentItem[]>(`/${selectedId.value}/documents?limit=100`); }
+  catch { /* Keep the current view usable; manual refresh surfaces request errors. */ }
+}
+onMounted(() => { void reload(); refreshTimer = setInterval(() => void refreshProcessing(), 4000); document.addEventListener('click', closeActionMenu, true); });
+onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.removeEventListener('click', closeActionMenu, true); });
 </script>
 
 <template>
-  <section class="kb-workspace">
-    <div v-if="viewMode === 'directory'" class="admin-heading kb-directory-heading"><div><h1>知识库</h1><p>管理企业知识库、维护文档并配置检索策略。</p></div><button v-if="canManage" class="admin-primary" @click="dialog = 'create'"><Plus :size="16" /> 新建知识库</button></div>
-    <p v-if="error" class="admin-error" role="alert">{{ error }}</p><p v-if="notice" class="admin-notice" role="status">{{ notice }}</p>
-    <template v-if="viewMode === 'directory'">
-      <div class="kb-directory-toolbar">
-        <select v-model="listStatus" aria-label="知识库状态"><option value="all">全部知识库</option><option value="enabled">问答已启用</option><option value="disabled">问答未启用</option></select>
-        <label><Search :size="16" /><input v-model="listQuery" placeholder="搜索知识库名称或描述" /></label>
-        <span>{{ filteredBases.length }} 个知识库</span><select v-model="listSort" aria-label="排序方式"><option value="updated">按更新时间</option><option value="name">按名称</option></select>
-        <button :disabled="busy" @click="run(reload)">刷新</button>
+  <section class="kb-page">
+    <AdminPageHeader v-if="!current || route.path === '/admin/knowledge'" eyebrow="知识管理" title="知识库" description="组织业务资料，配置检索方式，并验证内容召回质量。">
+      <template #actions><button v-if="canManage" class="kb-primary" type="button" @click="openCreate"><Plus :size="16" /> 新建知识库</button></template>
+    </AdminPageHeader>
+    <ToastNotice :message="error || notice" :type="error ? 'error' : 'success'" @dismiss="error ? (error = '') : (notice = '')" />
+
+    <template v-if="route.path === '/admin/knowledge' || !current">
+      <div class="kb-toolbar">
+        <label class="kb-search"><Search :size="16" /><input v-model="listQuery" placeholder="搜索知识库名称或描述" /></label>
+        <select v-model="listStatus" aria-label="筛选知识库"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option><option value="archived">已归档</option></select>
+        <span class="kb-result-count">{{ filteredBases.length }} 个知识库</span>
+        <button type="button" class="kb-quiet" :disabled="loading" @click="refresh">刷新</button>
       </div>
-      <div class="kb-directory">
-        <div class="kb-directory-main">
-          <div class="kb-directory-table">
-            <table>
-              <thead><tr><th class="kb-select-cell"></th><th>名称</th><th>文档</th><th>索引方式</th><th>当前版本</th><th>问答状态</th><th>更新时间</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="base in filteredBases" :key="base.id" :class="{ selected: selected === base.id }" @click="selectBase(base.id)">
-                  <td class="kb-select-cell"><input type="radio" name="selected-knowledge-base" :checked="selected === base.id" :aria-label="`选择 ${base.name}`" @click.stop @change="selectBase(base.id)" /></td>
-                  <td><button class="kb-base-link" @click.stop="selectBase(base.id).then(() => openWorkspace('documents'))"><strong>{{ base.name }}</strong><small>{{ base.description || '尚未添加知识库说明' }}</small></button></td>
-                  <td>{{ base.documentCount }}</td>
-                  <td>{{ base.draftConfig?.indexMode === 'high_quality' ? ({ fulltext: '全文检索', vector: '向量检索', hybrid: '混合检索' }[base.draftConfig?.retrievalMode || 'hybrid']) : '经济检索' }}</td>
-                  <td>{{ base.activeIndexVersionId ? `#${base.activeIndexVersionId}` : '未发布' }}</td>
-                  <td><span class="kb-state" :class="base.enabledForChat && !base.archivedAt ? 'ready' : 'archived'">{{ base.archivedAt ? '已归档' : base.enabledForChat ? '已启用' : '未启用' }}</span></td>
-                  <td>{{ formatDate(base.updatedAt) }}</td>
-                  <td><button class="kb-row-action" @click.stop="selectBase(base.id).then(() => openWorkspace('documents'))">管理</button></td>
-                </tr>
-              </tbody>
-            </table>
-            <div v-if="!filteredBases.length" class="kb-directory-empty">没有匹配的知识库。</div>
-          </div>
-        </div>
-        <aside v-if="current" class="kb-directory-inspector" aria-label="知识库详情">
-          <div class="kb-inspector-title"><span><FileText :size="21" /></span><div><strong>{{ current.name }}</strong><small>{{ current.description || '尚未添加说明' }}</small></div><span class="kb-state" :class="current.enabledForChat && !current.archivedAt ? 'ready' : 'archived'">{{ current.enabledForChat && !current.archivedAt ? '已启用' : '未启用' }}</span></div>
-          <nav class="kb-inspector-tabs"><button :class="{ active: inspectorTab === 'overview' }" @click="inspectorTab = 'overview'">概览</button><button :class="{ active: inspectorTab === 'documents' }" @click="inspectorTab = 'documents'">文档（{{ current.documentCount }}）</button><button :class="{ active: inspectorTab === 'settings' }" @click="inspectorTab = 'settings'">设置</button></nav>
-          <div v-if="inspectorTab === 'overview'" class="kb-inspector-content">
-            <section><h3>基本信息</h3><dl><dt>知识库名称</dt><dd>{{ current.name }}</dd><dt>描述</dt><dd>{{ current.description || '尚未添加说明' }}</dd><dt>创建时间</dt><dd>{{ formatDate(current.createdAt) }}</dd><dt>更新时间</dt><dd>{{ formatDate(current.updatedAt) }}</dd></dl></section>
-            <section><h3>版本信息</h3><dl><dt>当前版本</dt><dd>{{ current.activeIndexVersionId ? `#${current.activeIndexVersionId}` : '尚未发布' }}</dd><dt>索引分段</dt><dd>{{ activeVersion ? `${activeVersion.chunkCount} 个` : '—' }}</dd></dl></section>
-            <section><h3>检索配置</h3><dl><dt>索引方式</dt><dd>{{ config.indexMode === 'high_quality' ? '高质量' : '经济' }}</dd><dt>检索方式</dt><dd>{{ retrievalLabel }}</dd><dt>分段模式</dt><dd>{{ config.chunkMode === 'parent_child' ? '父子分段' : '通用分段' }}</dd><dt>Embedding</dt><dd>{{ activeProfile?.config.model || '未使用' }}</dd></dl></section>
-          </div>
-          <div v-else-if="inspectorTab === 'documents'" class="kb-inspector-content"><section><h3>最近文档</h3><button v-for="doc in activeDocuments.slice(0, 6)" :key="doc.id" class="kb-inspector-doc" @click="openWorkspace('documents')"><span>{{ doc.title }}</span><small>{{ documentStatus(doc) }}</small></button><p v-if="!activeDocuments.length" class="kb-hint">还没有有效文档。</p></section></div>
-          <div v-else class="kb-inspector-content"><section><h3>当前草稿</h3><dl><dt>分段字符数</dt><dd>{{ config.chunkMode === 'general' ? config.chunkChars : config.childChars }}</dd><dt>文本阈值</dt><dd>{{ config.lexicalThreshold }}</dd><dt>向量阈值</dt><dd>{{ config.indexMode === 'high_quality' ? config.vectorThreshold : '不适用' }}</dd></dl></section></div>
-          <div class="kb-inspector-actions"><h3>快捷操作</h3><button v-if="can('documents.upload') && !current.archivedAt" class="primary" @click="dialog = 'upload'"><Upload :size="16" /> 上传文档</button><button @click="openWorkspace('search')"><MessageSquareText :size="16" /> 测试问答</button><button @click="openWorkspace('config')"><Settings2 :size="16" /> 管理配置</button></div>
-        </aside>
+      <div v-if="loading && !bases.length" class="kb-empty">正在读取知识库…</div>
+      <div v-else-if="!filteredBases.length" class="kb-empty"><strong>{{ bases.length ? '没有匹配的知识库' : '还没有知识库' }}</strong><p>{{ bases.length ? '试试其他搜索词或状态筛选。' : '创建知识库后，再上传第一份资料。' }}</p><button v-if="!bases.length && canManage" class="kb-primary" @click="openCreate"><Plus :size="16" /> 新建知识库</button></div>
+      <div v-else class="kb-table-wrap">
+        <table class="kb-table"><thead><tr><th>知识库</th><th>文档</th><th>索引状态</th><th>检索策略</th><th>最近更新</th><th></th></tr></thead>
+          <tbody><tr v-for="base in filteredBases" :key="base.id" class="kb-base-row" @click="openBase(base.id)">
+            <td><div class="kb-base-name"><span class="kb-base-icon"><Database :size="18" /></span><span><strong>{{ base.name }}</strong><small>{{ base.description || '尚未添加描述' }}</small></span></div></td>
+            <td>{{ base.documentCount }}</td>
+            <td><span class="kb-badge" :class="base.archivedAt ? 'muted' : base.enabledForChat ? 'green' : 'gray'">{{ base.archivedAt ? '已归档' : base.enabledForChat ? '已启用' : '已停用' }}</span><small class="kb-cell-note">{{ base.readyDocumentCount ?? '—' }} 份可检索</small></td>
+            <td>{{ base.draftConfig?.retrievalMode ? retrievalName(base.draftConfig.retrievalMode) : '混合检索' }}</td><td>{{ fmtDate(base.updatedAt) }}</td>
+            <td><button class="kb-link-button" @click.stop="openBase(base.id)">管理 <span>›</span></button></td>
+          </tr></tbody>
+        </table>
       </div>
-    </template>
-    <template v-else>
-      <div class="kb-workspace-heading"><button @click="viewMode = 'directory'"><ArrowLeft :size="17" /> 返回知识库</button><div><p class="section-label">知识库工作区</p><h1>{{ current?.name }}</h1><p>{{ current?.description || '管理资料、索引版本与访客问答范围。' }}</p></div><button v-if="can('documents.upload') && current && !current.archivedAt" class="admin-primary" @click="dialog = 'upload'"><Upload :size="16" /> 上传资料</button></div>
-      <div v-if="current" class="kb-detail">
-      <div class="kb-detail-head"><div><p class="section-label">当前知识库</p><h2>{{ current.name }}</h2><p>{{ current.description || '尚未添加说明' }}</p></div><span class="kb-state" :class="current.enabledForChat ? 'ready' : 'archived'">{{ current.enabledForChat ? '问答已启用' : '问答已关闭' }}</span></div>
-      <div class="kb-status"><span>当前索引：{{ activeVersion ? `版本 #${activeVersion.id} · ${activeVersion.chunkCount} 个分段` : '未发布' }}</span><span>访客问答：{{ current.enabledForChat ? '已启用' : '已关闭' }}</span>
-        <button v-if="canManage && !current.archivedAt" :disabled="busy || (!current.enabledForChat && !activeVersion)" :title="!current.enabledForChat && !activeVersion ? '请先构建并启用一个索引版本' : ''" @click="run(async () => { await api(`/${selected}`, 'PATCH', { enabledForChat: !current?.enabledForChat }); await reload(); })">{{ current.enabledForChat ? '停止参与问答' : activeVersion ? '参与访客问答' : '发布索引后可启用' }}</button>
-        <button v-if="canManage && !current.isDefault && !current.archivedAt" :disabled="busy" @click="run(async () => { await api(`/${selected}/archive`, 'POST'); await reload(); })">归档知识库</button>
-      </div>
-      <div class="kb-flow" aria-label="知识库操作步骤">
-        <button :class="{ complete: activeDocuments.length > 0, active: tab === 'documents' }" @click="tab = 'documents'"><b>1</b><span>准备资料<small>{{ activeDocuments.length ? `${activeDocuments.length} 份资料` : '上传或添加 FAQ' }}</small></span></button>
-        <button :class="{ complete: buildReady, active: tab === 'config' }" @click="tab = 'config'"><b>2</b><span>配置索引<small>{{ config.chunkMode === 'parent_child' ? '父子分段' : '通用分段' }}</small></span></button>
-        <button :class="{ complete: !!activeVersion, active: tab === 'versions' }" @click="tab = 'versions'"><b>3</b><span>构建与发布<small>{{ activeVersion ? `当前 #${activeVersion.id}` : '尚未发布' }}</small></span></button>
-        <button :class="{ active: tab === 'search' }" @click="tab = 'search'"><b>4</b><span>检索验证<small>发布前可测试</small></span></button>
-      </div>
-      <nav class="kb-tabs" aria-label="知识库管理"><button v-for="item in ([['documents','资料'],['config','分段与检索'],['versions','索引版本'],['search','检索验证'],['faq','FAQ']] as const)" :key="item[0]" :aria-current="tab === item[0] ? 'page' : undefined" @click="tab = item[0]">{{ item[1] }}</button></nav>
-      <div v-if="tab === 'documents'">
-        <div class="kb-section-head"><div><h3>资料</h3><p>{{ activeDocuments.length }} 份有效资料；上传、检查解析状态并预览分段。</p></div><div class="kb-heading-actions"><button v-if="documents.some(document => document.archivedAt)" @click="showArchived = !showArchived">{{ showArchived ? '隐藏已下架' : '查看已下架' }}</button><button v-if="can('documents.upload') && !current.archivedAt" class="admin-primary" @click="dialog = 'upload'">上传资料</button></div></div>
-        <div v-if="legacyDocuments.length || waitingDocuments.length" class="kb-readiness" :class="{ warning: legacyDocuments.length || waitingDocuments.length }">
-          <div><strong>{{ legacyDocuments.length ? `${legacyDocuments.length} 份旧资料尚未准备` : `${waitingDocuments.length} 份资料正在处理` }}</strong><p v-if="legacyDocuments.length">旧资料只有历史分段，需重新解析为 Block 后才能构建 V1 索引。</p><p v-else>处理完成后会自动显示为“可构建”；刷新即可更新状态。</p></div>
-          <button v-if="legacyDocuments.length && can('documents.reprocess')" :disabled="busy" @click="reprocessAll">一键重新解析 {{ legacyDocuments.length }} 份资料</button>
-        </div>
-        <p class="kb-hint">支持 Markdown、Word 和可选中文字的 PDF。只有“可构建”的资料会进入新版本；下架的资料立即从所有版本中排除。</p>
-        <div class="kb-table"><table><thead><tr><th>资料</th><th>准备状态</th><th>操作</th></tr></thead><tbody><tr v-for="doc in visibleDocuments" :key="doc.id"><td>{{ doc.title }}<small>{{ doc.originalFilename }}</small></td><td><span class="kb-state" :class="doc.archivedAt ? 'archived' : doc.parserVersion || doc.sourceType === 'faq' ? 'ready' : doc.status">{{ documentStatus(doc) }}</span><small v-if="doc.errorMessage">{{ documentError(doc.errorMessage) }}</small></td><td><button v-if="doc.parserVersion || doc.sourceType === 'faq'" :disabled="busy" @click="run(async () => { preview = await api<Preview[]>(`/${selected}/documents/${doc.id}/preview`); })">预览分段</button> <button v-if="can('documents.reprocess') && doc.sourceType !== 'faq' && !doc.archivedAt" :disabled="busy" @click="documentAction(doc.id,'reprocess')">{{ doc.parserVersion ? '重新解析' : '准备资料' }}</button> <button v-if="doc.originalFilename !== 'FAQ'" :disabled="busy" @click="downloadDocument(doc)">下载</button> <button v-if="can('documents.archive') && !doc.archivedAt" :disabled="busy" @click="documentAction(doc.id,'archive')">下架</button></td></tr></tbody></table></div>
-        <p v-if="!visibleDocuments.length" class="kb-hint">{{ showArchived ? '没有已下架资料。' : '暂无有效资料，请上传文件或添加 FAQ。' }}</p>
-        <div v-if="preview.length" class="kb-preview"><h2>草稿分段预览 · {{ preview.length }} 块</h2><details v-for="chunk in preview" :key="chunk.ordinal"><summary>#{{ chunk.ordinal }} · {{ chunk.kind }} · {{ chunk.headingPath }} <span v-if="chunk.parentOrdinal">（父块 #{{ chunk.parentOrdinal }}）</span></summary><small>{{ chunk.sourceLocator.type }} {{ chunk.sourceLocator.start }}–{{ chunk.sourceLocator.end }}</small><pre>{{ chunk.content }}</pre></details></div>
-      </div>
-      <form v-else-if="tab === 'config'" @submit.prevent="saveConfig">
-        <details v-if="canManage"><summary>可用模型配置</summary><p class="kb-hint">停用配置只阻止新的构建；已发布版本仍使用其快照和对应密钥连接。</p><div v-for="profile in profiles" :key="profile.id" class="kb-inline"><span>{{ profile.name }} · {{ profile.enabled ? '启用' : '停用' }}</span><button type="button" :disabled="busy" @click="run(async()=>{ await api(`/embedding-profiles/${profile.id}`,'PATCH',{enabled:!profile.enabled}); profiles=await api<Profile[]>('/embedding-profiles'); })">{{ profile.enabled ? '停用' : '启用' }}</button></div><label>新增配置的凭据引用<input v-model="profileForm.config.secretRef" /></label><p class="kb-hint">default 使用 EMBEDDING_API_KEY；其他引用由部署端 EMBEDDING_CONNECTIONS_JSON 显式注册。</p></details>
-        <fieldset :disabled="busy || !canManage || !!current.archivedAt" class="kb-fields"><legend>索引草稿</legend>
-          <label>索引方式<select v-model="config.indexMode"><option value="economy">经济 · 不调用 Embedding</option><option value="high_quality">高质量 · 向量索引</option></select></label>
-          <label>分段模式<select v-model="config.chunkMode"><option value="general">通用</option><option value="parent_child">父子 · 子块召回，父块作为证据</option></select></label>
-          <template v-if="config.chunkMode === 'general'"><label>分段字符数<input v-model.number="config.chunkChars" type="number" min="200" max="4000" /></label><label>重叠字符数<input v-model.number="config.overlapChars" type="number" min="0" max="400" /></label></template>
-          <template v-else><label>父块字符上限<input v-model.number="config.parentChars" type="number" min="500" max="6000" /></label><label>子块字符数<input v-model.number="config.childChars" type="number" min="100" max="2000" /></label><label>子块重叠<input v-model.number="config.childOverlapChars" type="number" min="0" max="200" /></label></template>
-          <template v-if="config.indexMode === 'high_quality'"><label>Embedding 配置<select v-model="config.embeddingProfileId"><option :value="null">请选择</option><option v-for="profile in profiles" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }} · {{ profile.config.dimensions }} 维</option></select></label><label>检索模式<select v-model="config.retrievalMode"><option value="fulltext">全文检索</option><option value="vector">向量检索</option><option value="hybrid">混合检索 · RRF</option></select></label><label>向量相似度阈值<input v-model.number="config.vectorThreshold" type="number" min="-1" max="1" step="0.05" /></label></template>
-          <label>文本相关度阈值<input v-model.number="config.lexicalThreshold" type="number" min="0" max="1" step="0.01" /></label><button type="submit" class="admin-primary">保存草稿</button>
-        </fieldset>
-        <details v-if="canManage" class="kb-preview"><summary>添加 Embedding 配置</summary><p class="kb-hint">密钥只从部署环境读取；地址必须与 EMBEDDING_BASE_URL 一致。配置创建后不可修改，版本保留配置快照。</p><div class="kb-fields"><label>名称<input v-model="profileForm.name" /></label><label>协议<select v-model="profileForm.config.provider"><option value="openai-compatible">OpenAI-compatible</option><option value="volcengine-multimodal">火山多模态向量</option></select></label><label>Base URL<input v-model="profileForm.config.baseUrl" /></label><label>模型 ID<input v-model="profileForm.config.model" /></label><label>维度<input v-model.number="profileForm.config.dimensions" type="number" /></label><button type="button" :disabled="busy" @click="run(async () => { await api('/embedding-profiles','POST',profileForm); profiles = await api<Profile[]>('/embedding-profiles'); }, '模型配置已添加。')">添加配置</button></div></details>
-      </form>
-      <div v-else-if="tab === 'versions'"><p class="kb-hint">构建会冻结当前资料和草稿。新版本 ready 后，先在“检索验证”测试，再手动启用；启用旧版本即可回退。</p><div v-if="!buildReady" class="kb-readiness warning"><div><strong>暂不能构建</strong><p v-if="!activeDocuments.length">请先上传资料或添加 FAQ。</p><p v-else>先完成资料准备：{{ legacyDocuments.length }} 份需重新解析，{{ waitingDocuments.length }} 份正在处理。</p></div><button @click="tab = 'documents'">回到资料准备</button></div><button v-else-if="canManage && !current.archivedAt" class="admin-primary" :disabled="busy || versions.some(v => v.status === 'building')" @click="run(async () => { await api(`/${selected}/versions`,'POST'); await loadDetails(); }, '构建已入队，请刷新查看结果。')">构建新版本</button><div class="kb-table"><table><thead><tr><th>版本</th><th>状态</th><th>分段数</th><th>操作</th></tr></thead><tbody><tr v-for="version in versions" :key="version.id"><td>#{{ version.id }} {{ current.activeIndexVersionId === version.id ? '· 当前' : '' }}</td><td><span class="kb-state" :class="version.status">{{ version.status }}</span><small>{{ version.errorMessage }}</small></td><td>{{ version.chunkCount }}</td><td><button v-if="canManage && version.status === 'ready' && version.id !== current.activeIndexVersionId" :disabled="busy || !!current.archivedAt" @click="publish(version.id)">启用此版本</button></td></tr></tbody></table></div></div>
-      <div v-else-if="tab === 'search'">
-        <form class="kb-inline" @submit.prevent="run(async () => { searchResult = await api<SearchResult>(`/${selected}/search?q=${encodeURIComponent(query)}${diagnosticVersion ? `&versionId=${diagnosticVersion}` : ''}`); })">
-          <label>检索版本<select v-model="diagnosticVersion"><option :value="null">当前活动版本</option><option v-for="version in versions.filter(v=>v.status==='ready')" :key="version.id" :value="version.id">#{{ version.id }} · 可在发布前测试</option></select></label>
-          <label>测试问题<input v-model="query" required minlength="2" maxlength="200" /></label><button :disabled="busy">检索</button>
-        </form>
-        <template v-if="searchResult">
-          <p class="kb-hint">版本 {{ searchResult.versionIds.join(', ') || '未发布' }} · {{ searchResult.durationMs }} ms · Embedding 请求 {{ searchResult.embeddingCalls }} 次</p>
-          <p v-if="!searchResult.hits.length">没有满足阈值的资料。</p>
-          <article v-for="hit in searchResult.hits" :key="hit.chunkId" class="kb-evidence"><h3>{{ hit.documentTitle }} · {{ hit.headingPath }}</h3><small>引用 #{{ hit.chunkId }} · 原始相关度 {{ hit.score.toFixed(3) }}</small><pre>{{ hit.content }}</pre></article>
-          <details><summary>查看候选、分数与融合排名</summary><pre>{{ JSON.stringify(searchResult,null,2) }}</pre></details>
-        </template>
-      </div>
-      <div v-else-if="tab === 'faq'"><form v-if="canManage && !current.archivedAt" @submit.prevent="saveFaq" class="kb-fields"><label>问题<input v-model="faqForm.question" required maxlength="200" /></label><label>分类<input v-model="faqForm.category" maxlength="120" /></label><label class="kb-wide">答案<textarea v-model="faqForm.answer" required maxlength="6000" rows="4" /></label><label>来源说明<input v-model="faqForm.source" maxlength="500" /></label><button :disabled="busy">{{ editingFaq ? '保存修改' : '添加 FAQ' }}</button></form><details v-if="canManage"><summary>批量导入 CSV（最多 100 行）</summary><p>表头：question,answer,category,source；包含逗号或换行的字段使用双引号。</p><textarea v-model="csv" rows="5" aria-label="CSV 内容" /><button :disabled="busy || !!current.archivedAt" @click="run(async () => { await api(`/${selected}/faqs/import`,'POST',{ csv }); csv = ''; await loadDetails(); }, 'FAQ 已导入，发布新版本后生效。')">导入</button></details><article v-for="faq in faqs" :key="faq.id" class="kb-evidence"><h3>{{ faq.question }}</h3><pre>{{ faq.answer }}</pre><small>{{ faq.category }} · {{ faq.source }}</small><button v-if="canManage" :disabled="busy" @click="editFaq(faq)">编辑</button></article></div>
-      </div>
-      <div v-else class="kb-empty"><strong>选择一个知识库</strong><p>从知识库列表选择后再进入工作区。</p></div>
     </template>
 
-    <UiDialog :open="dialog !== null" :title="dialog === 'create' ? '新建知识库' : '导入资料'" :description="dialog === 'create' ? '先创建一个空知识库，随后继续导入文件。' : `向「${current?.name || ''}」添加资料，文件将分别处理。`" :size="dialog === 'upload' ? 'lg' : 'sm'" @update:open="dialog = $event ? dialog : null">
-      <form v-if="dialog === 'create'" class="grid gap-5" @submit.prevent="createBase">
-        <label class="grid gap-2 text-sm font-medium text-slate-700">知识库名称<input v-model.trim="name" class="ui-input" required maxlength="120" autofocus placeholder="例如：售后服务" /></label>
-        <div class="flex justify-end gap-2"><button type="button" class="ui-button" @click="dialog = null">取消</button><button class="ui-button ui-button-primary" :disabled="busy">{{ busy ? '创建中…' : '创建并继续' }}</button></div>
+    <template v-else>
+      <template v-if="documentDetail">
+        <div class="kb-document-actions"><button class="kb-quiet" @click="router.push(`/admin/knowledge/${selectedId}/documents`)">返回文档</button><button v-if="!documentDetail.archivedAt && can('documents.reprocess') && ['pending','ready','failed','extracted'].includes(documentDetail.status)" class="kb-quiet" @click="reprocess([documentDetail.id])">重新解析</button></div>
+        <section class="kb-document-detail">
+          <div class="kb-document-detail-meta"><span class="kb-file-type" :class="fileTypeClass(documentDetail)" role="img" :aria-label="`${fileType(documentDetail)} 文件`"><FileText :size="22" /></span><div><strong>{{ documentDetail.originalFilename }}</strong><p>{{ fileType(documentDetail) }} · {{ charCount(documentDetail) }} 字符 · {{ documentDetailChunks.length }} 个分段</p></div></div>
+          <div v-if="!documentDetailChunks.length" class="kb-empty"><FileText :size="28" /><strong>暂无分段</strong><p>文档处理完成后，分段会显示在这里。</p></div>
+          <article v-for="chunk in documentDetailChunks" :key="chunk.id" class="kb-document-chunk"><header><strong>分段 {{ String(chunk.ordinal).padStart(2, '0') }}</strong><span>{{ chunk.headingPath || '正文' }}</span><small>原文 {{ chunk.sourceStartLine }}–{{ chunk.sourceEndLine }}</small></header><p>{{ chunk.content }}</p></article>
+        </section>
+      </template>
+      <template v-else>
+      <AdminPageHeader class="kb-detail-header" :title="current.name">
+        <template #badge><span class="kb-badge admin-page-header-badge" :class="current.archivedAt ? 'muted' : current.enabledForChat ? 'green' : 'gray'">{{ current.archivedAt ? '已归档' : current.enabledForChat ? '已启用' : '已停用' }}</span></template>
+        <template #actions><button v-if="canManage" class="kb-quiet" @click="openEdit">编辑信息</button><button v-if="canManage && !current.archivedAt" class="kb-quiet" @click="setKnowledgeBaseEnabled(!current.enabledForChat)">{{ current.enabledForChat ? '停用知识库' : '启用知识库' }}</button><button v-if="canManage && !current.archivedAt" class="kb-danger-quiet" @click="requestArchiveBase">归档</button></template>
+      </AdminPageHeader>
+      <nav class="kb-tabs" aria-label="知识库管理页面"><button :aria-current="view === 'documents' ? 'page' : undefined" @click="openView('documents')">文档 <span>{{ activeDocuments.length }}</span></button><button :aria-current="view === 'settings' ? 'page' : undefined" @click="openView('settings')">设置</button><button :aria-current="view === 'recall-test' ? 'page' : undefined" @click="openView('recall-test')">召回测试</button></nav>
+
+      <section v-if="view === 'documents'" class="kb-content">
+        <div class="kb-stat-row"><div><span>文档总数</span><strong>{{ activeDocuments.length }}</strong></div><div><span>可检索</span><strong>{{ readyCount }}</strong></div><div><span>处理中</span><strong>{{ processingCount }}</strong></div><div><span>处理失败</span><strong>{{ failedCount }}</strong></div></div>
+        <div class="kb-doc-toolbar"><label class="kb-search"><Search :size="16" /><input v-model="documentQuery" placeholder="搜索文档名称" /></label><select v-model="documentStatusFilter" aria-label="文档状态"><option value="all">全部状态</option><option value="processing">处理中</option><option value="ready">可检索</option><option value="failed">处理失败</option><option value="archived">已归档</option></select>
+          <div class="kb-toolbar-spacer"></div><button v-if="selectedDocuments.length && can('documents.archive')" class="kb-quiet" @click="archiveSelected">归档所选（{{ selectedDocuments.length }}）</button><button v-if="selectedDocuments.length && can('documents.reprocess')" class="kb-quiet" @click="reprocess(selectedDocuments)">重新解析（{{ selectedDocuments.length }}）</button><button v-if="can('documents.upload') && !current.archivedAt" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button>
+        </div>
+        <div v-if="processingCount" class="kb-processing-banner"><span class="kb-status-dot amber"></span><div><strong>{{ processingCount }} 份文档等待处理或正在处理中</strong><p>解析完成后会自动进入可检索状态，无需单独发布。</p></div></div>
+        <div v-if="failedCount" class="kb-processing-banner failed"><span class="kb-status-dot red"></span><div><strong>{{ failedCount }} 份文档处理失败</strong><p>检查错误信息后，可对失败文档重新解析。</p></div></div>
+        <div v-if="!visibleDocuments.length" class="kb-empty kb-empty-doc"><FileText :size="30" /><strong>{{ activeDocuments.length ? '没有符合条件的文档' : '还没有文档' }}</strong><p>{{ activeDocuments.length ? '调整搜索词或状态筛选。' : '上传 Markdown、DOCX 或可复制文字的 PDF，解析成功后会自动参与检索。' }}</p><button v-if="!activeDocuments.length && can('documents.upload')" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button></div>
+        <div v-else class="kb-table-wrap"><table class="kb-table kb-doc-table"><thead><tr><th class="check-cell"><input type="checkbox" :checked="allVisibleSelected" aria-label="选择所有文档" @change="toggleAll" /></th><th>文档名称</th><th>类型</th><th>字符数</th><th>分段数</th><th>状态</th><th>检索</th><th>更新时间</th><th>操作</th></tr></thead>
+          <tbody><tr v-for="doc in visibleDocuments" :key="doc.id" class="kb-document-row" @click="openDocument(doc.id)"><td class="check-cell" @click.stop><input v-if="!doc.archivedAt" v-model="selectedDocuments" type="checkbox" :value="doc.id" :aria-label="`选择 ${doc.title}`" /></td><td><div class="kb-doc-name"><span class="kb-file-type" :class="fileTypeClass(doc)" role="img" :aria-label="`${fileType(doc)} 文件`"><FileText :size="18" :stroke-width="1.8" /></span><span><strong>{{ doc.title }}</strong><small>{{ doc.originalFilename }}</small><small v-if="doc.errorMessage" class="kb-doc-error">{{ doc.errorMessage }}</small></span></div></td>
+            <td>{{ fileType(doc) }}</td><td>{{ charCount(doc) }}</td><td>{{ chunkCount(doc) }}</td><td><span class="kb-badge" :class="doc.archivedAt ? 'muted' : doc.enabledForRetrieval === false ? 'disabled' : statusClass(doc)"><i class="kb-status-dot"></i>{{ doc.archivedAt ? '已归档' : doc.enabledForRetrieval === false ? '已停用' : statusLabel(doc) }}</span></td><td @click.stop><label v-if="!doc.archivedAt && can('documents.archive')" class="kb-switch" :class="{ on: doc.enabledForRetrieval !== false }" :aria-label="doc.enabledForRetrieval !== false ? '停用检索' : '启用检索'"><input type="checkbox" :checked="doc.enabledForRetrieval !== false" @change="toggleDocumentEnabled(doc)" /><span></span></label><span v-else class="kb-muted-dash">—</span></td><td>{{ fmtDate(doc.updatedAt) }}</td><td @click.stop><div class="kb-action-menu" @keydown.esc="openActionId = null"><button class="kb-menu-trigger" aria-label="文档操作" :aria-expanded="openActionId === doc.id" @click="toggleActionMenu(doc.id)">•••</button><div v-if="openActionId === doc.id" class="kb-action-menu-panel" @click="openActionId = null"><button @click="openDocument(doc.id)">查看详情</button><button v-if="!doc.archivedAt && can('documents.reprocess') && ['pending','ready','failed','extracted'].includes(doc.status)" @click="reprocess([doc.id])">重新解析</button><button v-if="can('documents.archive')" @click="toggleDocumentArchive(doc)">{{ doc.archivedAt ? '取消归档' : '归档' }}</button><button v-if="!doc.archivedAt" @click="downloadDocument(doc)">下载原文件</button></div></div></td>
+          </tr></tbody></table></div>
+      </section>
+
+      <section v-else-if="view === 'settings'" class="kb-content kb-settings">
+        <div class="kb-section-heading"><div><h2>索引与检索设置</h2><p>统一管理本知识库的索引质量、Embedding 模型和检索参数。</p></div><Settings2 :size="19" /></div>
+        <form @submit.prevent="saveSettings">
+          <fieldset :disabled="busy || !canManage || !!current.archivedAt">
+          <div class="kb-setting-note">文档分段配置已移至上传和重新解析流程，知识库设置只负责索引质量、Embedding 模型与检索方式。</div>
+          <section class="kb-setting-group"><div><h3>Embedding 设置</h3><p>向量模型负责把文档片段和用户问题映射到同一语义空间。</p></div><div class="kb-setting-fields"><label>索引质量<select v-model="config.indexMode"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式只使用全文检索；高级模式支持向量和混合检索。</small></label><label v-if="config.indexMode === 'high_quality'">Embedding 模型<select v-model.number="config.embeddingProfileId"><option :value="null">选择已配置模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }} · {{ profile.config.dimensions }} 维</option></select><small v-if="currentProfile">当前：{{ currentProfile.name }}</small><small v-else-if="!profiles.some(item => item.enabled)">尚无可用模型配置，请先添加。</small></label><button v-if="canManage" class="kb-text-action" type="button" @click="profileDialog = true">{{ profiles.length ? '添加或管理模型配置' : '配置 Embedding 模型' }}</button></div></section>
+          <section class="kb-setting-group"><div><h3>检索设置</h3><p>控制召回算法、候选数量与相关度过滤。</p></div><div class="kb-setting-fields"><label>检索方式<select v-model="config.retrievalMode"><option value="fulltext">全文检索</option><template v-if="config.indexMode === 'high_quality'"><option value="vector">向量检索</option><option value="hybrid">混合检索</option></template></select><small>经济模式只提供全文检索；高级模式可选择向量或混合检索。</small></label><label>Top K<input v-model.number="config.topK" type="number" min="1" max="8" /><small>访客问答最多使用 8 个候选片段。</small></label><label>{{ config.retrievalMode === 'fulltext' ? '全文相关度阈值' : '相似度阈值' }}<input v-if="config.retrievalMode === 'fulltext'" v-model.number="config.lexicalThreshold" type="number" min="0" max="1" step="0.01" /><input v-else v-model.number="config.vectorThreshold" type="number" min="-1" max="1" step="0.05" /></label><label class="kb-disabled-option">重排模型<select disabled><option>暂未启用</option></select><small>后续版本开放。</small></label></div></section>
+          </fieldset>
+          <div class="kb-settings-footer"><p>修改索引质量或检索方式后，已有文档可能需要重新建立索引。</p><button class="kb-primary" type="submit" :disabled="busy || !canManage || !!current.archivedAt">保存设置</button></div>
+        </form>
+      </section>
+
+      <section v-else class="kb-content kb-recall">
+        <div class="kb-section-heading"><div><h2>召回测试</h2><p>仅验证知识库检索结果，不会生成 AI 回答。</p></div></div>
+        <form class="kb-recall-form" @submit.prevent="recall"><label>测试问题<textarea v-model.trim="query" required minlength="2" maxlength="200" rows="3" placeholder="例如：退货需要满足什么条件？" /></label><div class="kb-recall-controls"><label>检索方式<select v-model="recallMode"><option value="fulltext">全文检索</option><option value="vector">向量检索</option><option value="hybrid">混合检索</option></select></label><label>Top K<input v-model.number="topK" type="number" min="1" max="20" /></label><span class="kb-toolbar-spacer"></span><button class="kb-primary" :disabled="busy || query.trim().length < 2">{{ busy ? '检索中…' : '执行检索' }}</button></div></form>
+        <div v-if="recallResult" class="kb-recall-results"><div class="kb-recall-summary"><strong>{{ recallResult.hits.length }} 条召回结果</strong><span>{{ retrievalName(recallMode) }}</span><span>{{ recallResult.durationMs ?? '—' }} ms</span><span>向量索引 {{ recallResult.vectorIndexedChunks ?? 0 }} 段</span></div>
+          <div v-if="!recallResult.hits.length" class="kb-empty kb-empty-doc"><strong>没有召回结果</strong><p>确认文档已处理完成，并尝试调整检索方式、分段或相似度阈值。</p></div>
+          <article v-for="(hit, index) in recallResult.hits" :key="hit.chunkId" class="kb-hit"><div class="kb-hit-head"><span class="kb-hit-number">{{ String(index + 1).padStart(2, '0') }}</span><div><strong>{{ hit.documentTitle }}</strong><small>{{ hit.originalFilename }}<template v-if="hit.headingPath"> · {{ hit.headingPath }}</template></small></div><span class="kb-hit-score">{{ Number(hit.score).toFixed(3) }}</span></div><p>{{ hit.content }}</p><footer><span>分段 #{{ hit.chunkId }}</span><span>{{ hit.matchType || retrievalName(recallMode) }}</span></footer></article>
+        </div>
+        <div v-else class="kb-recall-placeholder"><Search :size="22" /><p>输入问题后运行检索，查看召回的文档片段、匹配分数和耗时。</p></div>
+      </section>
+      </template>
+    </template>
+
+    <UiDialog :open="dialog !== null" :title="dialog === 'create' ? '新建知识库' : dialog === 'edit' ? '编辑知识库' : '上传文档'" :description="dialog === 'upload' ? '支持 Markdown、DOCX 和可复制文字的 PDF，单个文件最大 2 MB。' : dialog === 'create' ? '创建后会进入知识库详情页，可继续导入文档。' : '更新知识库的名称和说明。'" @update:open="dialog = $event ? dialog : null">
+      <form v-if="dialog === 'create' || dialog === 'edit'" class="kb-dialog-form" @submit.prevent="saveBase">
+        <template v-if="dialog === 'edit' || createStep === 1"><label>知识库名称<input v-model.trim="name" class="ui-input" required maxlength="120" placeholder="例如：售后服务知识库" /></label><label>描述<textarea v-model.trim="description" class="ui-input" rows="3" maxlength="2000" placeholder="简要说明知识库包含的内容" /></label></template>
+        <template v-else><div class="kb-wizard-step"><span class="active">2</span><strong>索引设置</strong><small>决定知识库如何检索资料</small></div><label>索引质量<select v-model="createConfig.indexMode" class="ui-input"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式使用全文检索；高级模式可使用向量或混合检索。</small></label><label>检索方式<select v-model="createConfig.retrievalMode" class="ui-input"><option value="fulltext">全文检索</option><template v-if="createConfig.indexMode === 'high_quality'"><option value="vector">向量检索</option><option value="hybrid">混合检索</option></template></select></label><label v-if="createConfig.indexMode === 'high_quality'">Embedding 模型<select v-model.number="createConfig.embeddingProfileId" class="ui-input"><option :value="null">选择模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }}</option></select><small v-if="!profiles.some(item => item.enabled)">请先在设置中配置 Embedding 模型。</small></label><label>Top K<input v-model.number="createConfig.topK" class="ui-input" type="number" min="1" max="8" /></label></template>
+        <footer><button type="button" class="ui-button" @click="dialog = null">取消</button><button v-if="dialog === 'create' && createStep === 2" type="button" class="ui-button" @click="createStep = 1">上一步</button><button class="ui-button ui-button-primary" :disabled="busy">{{ dialog === 'edit' ? '保存修改' : createStep === 1 ? '下一步' : '创建知识库' }}</button></footer>
       </form>
-      <form v-else class="grid gap-5" @submit.prevent="upload">
-        <div class="flex items-center justify-center gap-4 text-xs font-medium text-slate-400"><span class="text-brand-600">① 选择数据源</span><i class="h-px w-10 bg-slate-200"></i><span>② 分段与索引</span><i class="h-px w-10 bg-slate-200"></i><span>③ 处理完成</span></div>
-        <label class="kb-file-drop"><input type="file" multiple required accept=".md,.docx,.pdf" @change="files = Array.from(($event.target as HTMLInputElement).files || [])" /><span>{{ files.length ? `已选择 ${files.length} 份资料` : '拖入文件，或点击选择多个文件' }}</span><small>支持 Markdown、DOCX、可选中文字的 PDF · 单个文件不超过 2 MB</small></label>
-        <div v-if="files.length" class="max-h-56 divide-y divide-slate-100 overflow-auto rounded-xl border border-slate-200"><div v-for="selectedFile in files" :key="`${selectedFile.name}-${selectedFile.size}`" class="flex items-center justify-between gap-4 px-4 py-3 text-sm"><span class="truncate text-slate-700">{{ selectedFile.name }}</span><small class="m-0 flex-none text-slate-400">{{ (selectedFile.size / 1024).toFixed(0) }} KB</small></div></div>
-        <div class="flex justify-end gap-2"><button type="button" class="ui-button" @click="dialog = null">取消</button><button class="ui-button ui-button-primary" :disabled="busy || !files.length">{{ busy ? '上传中…' : `上传 ${files.length || ''} 份资料` }}</button></div>
+<form v-else class="kb-dialog-form" @submit.prevent="uploadStep === 'select' ? uploadDocuments() : processUploadedDocuments()">
+<div class="kb-wizard-step"><strong>{{ uploadStep === 'select' ? '1. 上传文件' : '2. 设置解析方式' }}</strong></div>
+<template v-if="uploadStep === 'select'">
+<label class="kb-upload-zone"><input type="file" multiple required accept=".md,.markdown,.docx,.pdf" :disabled="busy" @change="files = Array.from(($event.target as HTMLInputElement).files || [])" /><span class="kb-upload-icon"><Upload :size="21" /></span><strong>{{ files.length ? `待上传 ${files.length} 个文件` : '选择文件' }}</strong><small>Markdown、DOCX、可复制文字的 PDF · 最多 2 MB / 文件</small></label>
+<p v-if="uploadedIds.length || (busy && uploadProgress.total)" class="kb-upload-confirmed">已上传 {{ uploadedIds.length }} 份<span v-if="busy && uploadProgress.total"> · 正在提交 {{ uploadProgress.done }}/{{ uploadProgress.total }}</span></p>
+<ul v-if="files.length" class="kb-file-list"><li v-for="file in files" :key="`${file.name}-${file.size}`"><FileText :size="16" /><span>{{ file.name }}</span><small>{{ (file.size / 1024).toFixed(0) }} KB</small></li></ul>
+</template>
+<template v-else><p class="kb-upload-confirmed">{{ uploadedIds.length }} 份文档已上传。确认设置后开始解析；稍后处理的文档可在列表中继续。</p><div class="kb-processing-fields">
+<strong>解析设置</strong>
+<label>分段方式<select v-model="processingConfig.chunkMode" class="ui-input"><option value="general">通用分段</option></select></label>
+<label>分隔方式<select v-model="processingConfig.separatorMode" class="ui-input"><option value="auto">自动识别</option><option value="heading_paragraph">按标题和段落</option><option value="fixed">固定长度</option></select></label>
+<label>分段长度<input v-model.number="processingConfig.chunkChars" class="ui-input" type="number" min="200" max="4000" required /></label>
+<label>重叠长度<input v-model.number="processingConfig.overlapChars" class="ui-input" type="number" min="0" :max="Math.min(400, processingConfig.chunkChars - 1)" required /></label>
+<label class="kb-heading-option"><span><input v-model="processingConfig.preserveHeading" type="checkbox" /> 保留标题层级</span></label>
+</div></template>
+<footer><button type="button" class="ui-button" :disabled="busy" @click="dialog = null">{{ uploadStep === 'select' ? '取消' : '稍后处理' }}</button><button class="ui-button ui-button-primary" :disabled="busy || (uploadStep === 'select' ? !files.length : !uploadedIds.length)">{{ busy ? '提交中…' : uploadStep === 'select' ? uploadedIds.length ? '重试剩余文件' : '上传并继续' : '确认并开始解析' }}</button></footer>
+</form>
+    </UiDialog>
+    <UiDialog :open="profileDialog" title="Embedding 模型配置" description="配置引用部署环境密钥的模型连接；密钥不会显示或保存在浏览器中。" size="lg" @update:open="profileDialog = $event"><form class="kb-dialog-form" @submit.prevent="saveProfile"><label>配置名称<input v-model.trim="profileForm.name" class="ui-input" required maxlength="120" placeholder="例如：火山方舟 Embedding" /></label><label>Provider<input v-model.trim="profileForm.config.provider" class="ui-input" required /></label><label>Base URL<input v-model.trim="profileForm.config.baseUrl" class="ui-input" required /></label><label>模型 ID<input v-model.trim="profileForm.config.model" class="ui-input" required /></label><label>向量维度<input v-model.number="profileForm.config.dimensions" class="ui-input" type="number" min="1" required /></label><label>凭据引用<input v-model.trim="profileForm.config.secretRef" class="ui-input" required /><small>default 使用部署环境中的 EMBEDDING_API_KEY。</small></label><footer><button type="button" class="ui-button" @click="profileDialog = false">取消</button><button class="ui-button ui-button-primary" :disabled="busy">保存模型配置</button></footer></form></UiDialog>
+    <UiDialog :open="previewDialog" :title="previewTitle" description="文档切分后的检索片段。" size="lg" @update:open="previewDialog = $event"><div class="kb-preview-list"><article v-for="chunk in previewChunks" :key="chunk.id"><header><strong>分段 {{ chunk.ordinal }}</strong><span>{{ chunk.headingPath || '正文' }}</span></header><p>{{ chunk.content }}</p><small>原文位置：{{ chunk.sourceStartLine }}–{{ chunk.sourceEndLine }}</small></article><p v-if="!previewChunks.length" class="kb-empty">该文档还没有可查看的分段。</p></div></UiDialog>
+    <UiDialog :open="pendingAction !== null" :title="pendingAction?.title || '确认操作'" :description="pendingAction?.description" size="sm" @update:open="pendingAction = $event ? pendingAction : null"><div class="kb-confirm-actions"><button class="ui-button" @click="pendingAction = null">取消</button><button class="kb-danger-button" :disabled="busy" @click="pendingAction?.run()">确认</button></div></UiDialog>
+    <UiDialog :open="reprocessIds.length > 0" title="重新解析文档" description="已载入文档保存的解析设置，修改后用于本次及后续解析。" @update:open="!$event && (reprocessIds = [])">
+      <form class="kb-dialog-form" @submit.prevent="confirmReprocess">
+        <label v-if="reprocessIds.length > 1">批量设置<select v-model="customChunks" class="ui-input"><option :value="false">保留各文档原有设置</option><option :value="true">统一修改解析设置</option></select></label>
+        <template v-if="reprocessIds.length === 1 || customChunks"><div class="kb-processing-fields">
+<strong>解析设置</strong>
+<label>分段方式<select v-model="reprocessConfig.chunkMode" class="ui-input"><option value="general">通用分段</option></select></label>
+<label>分隔方式<select v-model="reprocessConfig.separatorMode" class="ui-input"><option value="auto">自动识别</option><option value="heading_paragraph">按标题和段落</option><option value="fixed">固定长度</option></select></label>
+<label>分段长度<input v-model.number="reprocessConfig.chunkChars" class="ui-input" type="number" min="200" max="4000" required /></label>
+<label>重叠长度<input v-model.number="reprocessConfig.overlapChars" class="ui-input" type="number" min="0" :max="Math.min(400, reprocessConfig.chunkChars - 1)" required /></label>
+<label class="kb-heading-option"><span><input v-model="reprocessConfig.preserveHeading" type="checkbox" /> 保留标题层级</span></label>
+</div></template>
+        <footer><button type="button" class="ui-button" @click="reprocessIds = []">取消</button><button class="kb-primary" :disabled="busy">重新构建 {{ reprocessIds.length }} 份文档</button></footer>
       </form>
     </UiDialog>
   </section>
 </template>
 
 <style scoped>
-.kb-workspace { max-width:none; }
-.kb-directory-heading { margin-bottom:24px; }
-.kb-directory-heading .admin-primary,.kb-workspace-heading .admin-primary { display:inline-flex; align-items:center; gap:8px; }
-.kb-directory-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
-.kb-directory-toolbar > select { width:155px; }
-.kb-directory-toolbar > label { position:relative; display:block; width:min(330px,35vw); }
-.kb-directory-toolbar > label svg { position:absolute; z-index:1; top:50%; left:12px; transform:translateY(-50%); color:#8b99aa; }
-.kb-directory-toolbar > label input { width:100%; padding-left:36px; box-sizing:border-box; }
-.kb-directory-toolbar > span { margin-left:auto; color:#8894a3; font-size:12px; }
-.kb-directory { display:grid; grid-template-columns:minmax(0,1fr) 350px; min-height:610px; border-top:1px solid #e3e8ef; }
-.kb-directory-main { min-width:0; padding-right:20px; }
-.kb-directory-table { overflow:auto; }
-.kb-directory-table table { min-width:820px; margin:0; }
-.kb-directory-table th { height:44px; padding:0 12px; border-color:#edf0f4; color:#667085; font-size:11px; }
-.kb-directory-table td { height:68px; padding:8px 12px; border-color:#edf0f4; color:#344054; font-size:12px; }
-.kb-directory-table tr { cursor:pointer; transition:background .15s ease; }
-.kb-directory-table tbody tr:hover,.kb-directory-table tbody tr.selected { background:#eef4ff; }
-.kb-directory-table tr.selected { box-shadow:inset 3px 0 #2457e6; }
-.kb-select-cell { width:28px; padding-right:2px !important; }
-.kb-select-cell input { width:16px; height:16px; padding:0; accent-color:#2457e6; }
-.kb-base-link { display:block; width:100%; min-width:170px; padding:0 !important; border:0 !important; background:transparent !important; text-align:left; }
-.kb-base-link strong { display:block; overflow:hidden; color:#1f2a44; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
-.kb-base-link small { max-width:250px; overflow:hidden; margin:4px 0 0; color:#8490a3; text-overflow:ellipsis; white-space:nowrap; }
-.kb-row-action { padding:6px 9px !important; color:#2457e6; white-space:nowrap; }
-.kb-directory-empty { padding:70px 20px; color:#8b96a8; text-align:center; font-size:13px; }
-.kb-directory-inspector { min-width:0; margin-right:-46px; padding:22px 26px 28px; border-left:1px solid #e3e8ef; background:#fff; }
-.kb-inspector-title { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:start; gap:10px; padding-bottom:18px; }
-.kb-inspector-title > span:first-child { display:grid; width:34px; height:34px; place-items:center; border:1px solid #dce4ee; border-radius:8px; color:#344054; }
-.kb-inspector-title strong { display:block; overflow:hidden; color:#172033; font-size:15px; text-overflow:ellipsis; white-space:nowrap; }
-.kb-inspector-title small { display:-webkit-box; margin:5px 0 0; overflow:hidden; color:#7c8899; font-size:11px; line-height:1.55; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
-.kb-inspector-tabs { display:grid; grid-template-columns:repeat(3,1fr); border-bottom:1px solid #e5eaf0; }
-.kb-inspector-tabs button { border:0; border-radius:0; background:transparent; color:#667085; }
-.kb-inspector-tabs button.active { margin-bottom:-1px; border-bottom:2px solid #2457e6; color:#2457e6; font-weight:650; }
-.kb-inspector-content { min-height:365px; }
-.kb-inspector-content section { padding:20px 0; border-bottom:1px solid #edf0f4; }
-.kb-inspector-content h3,.kb-inspector-actions h3 { margin:0 0 14px; color:#253047; font-size:13px; }
-.kb-inspector-content dl { display:grid; grid-template-columns:92px minmax(0,1fr); gap:11px 12px; margin:0; font-size:12px; line-height:1.55; }
-.kb-inspector-content dt { color:#8490a3; }.kb-inspector-content dd { margin:0; color:#344054; overflow-wrap:anywhere; }
-.kb-inspector-doc { display:flex; justify-content:space-between; gap:12px; width:100%; padding:10px 0 !important; border:0 !important; border-bottom:1px solid #f0f2f5 !important; border-radius:0 !important; text-align:left; }
-.kb-inspector-doc span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.kb-inspector-doc small { flex:none; margin:0; }
-.kb-inspector-actions { padding-top:20px; }
-.kb-inspector-actions button { display:flex; align-items:center; justify-content:center; gap:8px; width:100%; margin-top:9px; color:#2457e6; }
-.kb-inspector-actions button.primary { border-color:#2457e6; background:#2457e6; color:#fff; }
-.kb-workspace-heading { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:start; gap:18px; margin-bottom:28px; padding-bottom:24px; border-bottom:1px solid #e3e8ef; }
-.kb-workspace-heading > button:first-child { display:flex; align-items:center; gap:7px; margin-top:2px; border:0; background:transparent; color:#64748b; }
-.kb-workspace-heading h1 { margin:2px 0 7px; color:#172033; font-size:28px; }.kb-workspace-heading p { margin:0; color:#7c8899; font-size:13px; }
-.kb-heading-actions { display:flex; gap:8px; }
-.kb-layout { display:grid; grid-template-columns:220px minmax(0,1fr); align-items:start; gap:28px; }
-.kb-library { position:sticky; top:22px; overflow:hidden; border:1px solid #dde4de; border-radius:10px; background:#fff; }
-.kb-library-head { display:flex; justify-content:space-between; padding:14px 14px 10px; color:#52605a; font-size:12px; }.kb-library-head small { margin:0; }
-.kb-library > button { display:flex; align-items:center; justify-content:space-between; gap:12px; width:100%; min-height:62px; padding:11px 14px; border:0; border-top:1px solid #edf0ed; border-radius:0; text-align:left; }.kb-library > button:hover,.kb-library > button.active { background:#f0f5f1; }.kb-library > button span { min-width:0; }.kb-library strong { display:block; overflow:hidden; color:#2c4335; font-size:13px; text-overflow:ellipsis; white-space:nowrap; }.kb-library i { flex:0 0 auto; width:7px; height:7px; border-radius:50%; background:#c9d0ca; }.kb-library i.online { background:#3da36f; box-shadow:0 0 0 3px #e3f2e8; }
-.kb-detail { min-width:0; }.kb-detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; padding-bottom:18px; border-bottom:1px solid #e2e7e2; }.kb-detail-head h2 { margin:3px 0 5px; color:#263d30; font-size:22px; letter-spacing:-.02em; }.kb-detail-head p { margin:0; color:#7b897f; font-size:12px; }.kb-detail-head .section-label { margin-bottom:3px; }
-.kb-section-head { display:flex; justify-content:space-between; align-items:center; gap:20px; margin:3px 0 18px; }.kb-section-head h3 { margin:0; color:#2c4335; font-size:17px; }.kb-section-head p { margin:5px 0 0; color:#7b897f; font-size:12px; }.kb-empty { min-height:360px; display:grid; align-content:center; justify-items:center; color:#7b897f; }.kb-empty strong { color:#405448; }.kb-empty p { margin:7px 0; font-size:13px; }
-.kb-inline,.kb-status { display:flex; align-items:end; gap:16px; flex-wrap:wrap; margin:20px 0; }
-.kb-workspace label { display:grid; gap:8px; font-size:13px; color:#52605a; } .kb-selector { max-width:400px; margin:24px 0; }
-.kb-workspace input,.kb-workspace select,.kb-workspace textarea { border:1px solid #d8ded8; border-radius:6px; padding:10px 12px; font:inherit; background:white; min-width:0; }
-.kb-workspace button { cursor:pointer; padding:9px 12px; border:1px solid #d8ded8; border-radius:6px; background:white; font:inherit; font-size:13px; }
-.kb-workspace button:disabled { opacity:.45; cursor:default; } .kb-workspace .admin-primary { background:#2457e6; color:white; border-color:#2457e6; }
-.kb-flow { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:1px; margin:12px 0 2px; overflow:hidden; border:1px solid #dce4de; border-radius:10px; background:#dce4de; }
-.kb-flow button { min-width:0; min-height:74px; display:flex; align-items:flex-start; gap:10px; border:0; border-radius:0; padding:14px; text-align:left; background:#fff; color:#52605a; }
-.kb-flow button:hover,.kb-flow button.active { background:#eef4ff; color:#2457e6; }
-.kb-flow button.complete b { background:#2457e6; color:#fff; }
-.kb-flow b { flex:0 0 auto; display:grid; place-items:center; width:22px; height:22px; border-radius:50%; background:#e5ebe6; color:#52605a; font-size:12px; }
-.kb-flow span { min-width:0; font-size:13px; font-weight:650; line-height:1.35; }.kb-flow small { margin:3px 0 0; font-size:11px; font-weight:400; }
-.kb-tabs { display:flex; gap:24px; border-bottom:1px solid #d8ded8; margin:28px 0; overflow:auto; }
-.kb-tabs button { border:0; border-radius:0; background:none; white-space:nowrap; padding:12px 0; color:#69756e; }
-.kb-tabs button[aria-current] { color:#2457e6; border-bottom:2px solid #2457e6; font-weight:600; }
-.kb-status,.kb-hint { font-size:13px; color:#69756e; line-height:1.7; } .kb-fields { border:0; padding:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; margin:24px 0; } .kb-fields legend { font-size:16px; font-weight:600; margin-bottom:16px; } .kb-wide { grid-column:1/-1; }
-.kb-readiness { display:flex; align-items:center; justify-content:space-between; gap:20px; margin:20px 0; padding:16px 18px; border:1px solid #dce4de; border-radius:8px; background:#f8faf8; }.kb-readiness.warning { border-color:#ead8a4; background:#fffaf0; }.kb-readiness p { margin:5px 0 0; color:#69756e; font-size:13px; line-height:1.6; }.kb-readiness button { flex:0 0 auto; }
-.kb-table { overflow:auto; margin:24px 0; } table { width:100%; border-collapse:collapse; text-align:left; font-size:14px; } th,td { padding:14px 8px; border-bottom:1px solid #e5e9e4; } th { color:#69756e; font-size:12px; font-weight:500; }
-.kb-state { display:inline-flex; align-items:center; min-height:22px; padding:0 7px; border-radius:999px; background:#edf2ee; color:#315947; font-size:12px; }.kb-state.queued,.kb-state.processing,.kb-state.extracted,.kb-state.building { background:#fff3d7; color:#8a6100; }.kb-state.failed { background:#fde8e7; color:#a33632; }.kb-state.archived { background:#eef0ef; color:#69756e; }
-.kb-file-drop { position:relative; min-height:130px; place-items:center; align-content:center; border:1px dashed #aebbd4; border-radius:12px; background:#f8faff; cursor:pointer; text-align:center; }.kb-file-drop input { position:absolute; width:1px; height:1px; opacity:0; }.kb-file-drop span { color:#2457e6; font-weight:600; }.kb-file-drop small { margin-top:8px; font-weight:400; }.kb-file-drop:hover { border-color:#6487ef; background:#f1f5ff; }
-small { display:block; color:#69756e; margin:6px 0; } pre { white-space:pre-wrap; overflow-wrap:anywhere; font:inherit; line-height:1.8; font-size:14px; } .kb-preview,.kb-evidence { margin:24px 0; padding-top:20px; border-top:1px solid #e5e9e4; } details { padding:12px 0; } summary { cursor:pointer; } .kb-workspace textarea { width:100%; box-sizing:border-box; }
-@media(max-width:1100px) { .kb-directory { grid-template-columns:minmax(0,1fr) 310px; }.kb-directory-inspector { margin-right:0; padding:20px; } }
-@media(max-width:900px) { .kb-directory { display:block; }.kb-directory-main { padding-right:0; }.kb-directory-inspector { margin-top:20px; border:1px solid #e3e8ef; border-radius:10px; }.kb-inspector-content { min-height:0; }.kb-layout { grid-template-columns:1fr; }.kb-library { position:static; display:flex; overflow-x:auto; }.kb-library-head { display:none; }.kb-library > button { min-width:180px; border-top:0; border-right:1px solid #edf0ed; } }
-@media(max-width:700px) { .kb-directory-toolbar { align-items:stretch; flex-wrap:wrap; }.kb-directory-toolbar > select,.kb-directory-toolbar > label { width:100%; }.kb-directory-toolbar > span { margin-left:0; }.kb-directory-main { overflow:hidden; }.kb-directory-inspector { padding:18px; }.kb-workspace-heading { grid-template-columns:1fr auto; }.kb-workspace-heading > button:first-child { grid-column:1/-1; justify-self:start; }.kb-flow { grid-template-columns:1fr 1fr; }.kb-readiness { align-items:flex-start; flex-direction:column; gap:12px; }.kb-fields { grid-template-columns:1fr; } .kb-tabs { gap:18px; }.kb-detail-head { align-items:flex-start; flex-direction:column; } }
+.kb-upload-confirmed{grid-column:1/-1;margin:0;color:#667085;font-size:13px;line-height:1.7}
+.kb-page{max-width:1440px;margin:0 auto;padding:0 0 56px;color:#172033}
+.kb-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 15px;border:1px solid #2457e6;border-radius:8px;background:#2457e6;color:#fff;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
+.kb-primary:hover{background:#1748ce}.kb-primary:disabled{opacity:.55;cursor:not-allowed}
+.kb-quiet,.kb-danger-quiet{min-height:38px;padding:0 13px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;color:#475467;font-size:13px;white-space:nowrap;cursor:pointer}
+.kb-danger-quiet{border-color:#f2d1d0;color:#b42318}
+.kb-toolbar,.kb-doc-toolbar{display:flex;align-items:center;gap:12px;margin:22px 0;padding:13px 0}
+.kb-toolbar select,.kb-doc-toolbar select,.kb-recall-controls select,.kb-setting-fields select,.kb-setting-fields input,.kb-recall-form textarea{min-height:40px;padding:0 11px;border:1px solid #dfe4ec;border-radius:8px;background:#fff;color:#344054;font:inherit;font-size:13px}
+.kb-search{display:flex;align-items:center;gap:9px;width:min(390px,100%);height:40px;padding:0 12px;border:1px solid #dfe4ec;border-radius:8px;background:#fff;color:#8290a2}
+.kb-search input{width:100%;min-width:0;border:0;outline:0;color:#344054;font:inherit;font-size:13px}
+.kb-result-count{margin-left:auto;color:#8490a0;font-size:12px;white-space:nowrap}
+.kb-table-wrap{overflow:visible;border:1px solid #e5e9ef;border-radius:11px;background:#fff}
+.kb-table{width:100%;min-width:760px;border-collapse:collapse;text-align:left;font-size:13px}
+.kb-table th{height:46px;padding:0 16px;border-bottom:1px solid #e8ebf0;background:#fafbfc;color:#7b8798;font-size:11px;font-weight:600;white-space:nowrap}
+.kb-table td{height:69px;padding:10px 16px;border-bottom:1px solid #eef0f3;color:#475467;white-space:nowrap}
+.kb-table tr:last-child td{border-bottom:0}.kb-base-row,.kb-document-row{cursor:pointer}.kb-base-row:hover,.kb-document-row:hover{background:#f8faff}
+.kb-base-name,.kb-doc-name{display:flex;align-items:center;gap:12px;min-width:230px}
+.kb-base-icon{display:grid;place-items:center;width:38px;height:38px;flex:none;border:1px solid #e5eaf5;border-radius:10px;background:#f4f7ff;color:#2457e6}
+.kb-base-name strong,.kb-doc-name strong{display:block;color:#243049;font-size:13px;font-weight:600}
+.kb-base-name small,.kb-doc-name small,.kb-cell-note{display:block;margin-top:5px;color:#8a96a8;font-size:11px;font-weight:400;white-space:normal}
+.kb-link-button{border:0;background:none;color:#2457e6;font-size:12px;white-space:nowrap;cursor:pointer}.kb-link-button span{padding-left:5px;font-size:18px}
+.kb-badge{display:inline-flex;align-items:center;gap:6px;min-height:24px;padding:0 9px;border-radius:999px;background:#f1f3f6;color:#667085;font-size:11px;white-space:nowrap}
+.kb-badge.green{background:#edf8f1;color:#21834e}.kb-badge.gray,.kb-badge.muted{background:#f1f3f6;color:#667085}.kb-badge.processing{background:#fff7e8;color:#996400}.kb-badge.failed{background:#fff0ef;color:#b42318}.kb-badge.pending{background:#f3f6ff;color:#4963a7}
+.kb-status-dot{width:7px;height:7px;border-radius:50%;background:#98a2b3}.kb-badge .kb-status-dot{background:currentColor}
+.kb-empty{display:grid;justify-items:center;gap:8px;padding:64px 24px;color:#8490a0;text-align:center}.kb-empty strong{color:#344054;font-size:15px}.kb-empty p{max-width:500px;margin:0;color:#8792a2;font-size:13px;line-height:1.65}.kb-empty .kb-primary{margin-top:10px}
+.kb-feedback{margin:0 0 15px;padding:11px 14px;border-radius:8px;font-size:13px}.kb-feedback.error{background:#fff0ef;color:#b42318}.kb-feedback.success{background:#eff9f2;color:#237747}
+.kb-tabs{display:flex;gap:30px;margin:0;border-bottom:1px solid #e4e8ee;overflow-x:auto}.kb-tabs button{display:flex;align-items:center;gap:8px;min-height:47px;padding:0 2px;border:0;border-bottom:2px solid transparent;background:none;color:#667085;font-size:13px;white-space:nowrap;cursor:pointer}.kb-tabs button[aria-current=page]{border-bottom-color:#2457e6;color:#2457e6;font-weight:600}.kb-tabs button span{display:grid;place-items:center;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:#f1f3f6;color:#7b8798;font-size:10px}
+.kb-content{padding-top:25px}.kb-stat-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:0 0 24px}.kb-stat-row>div{display:flex;align-items:center;justify-content:space-between;min-height:66px;padding:0 17px;border:1px solid #e7eaf0;border-radius:10px;background:#fff}.kb-stat-row span{color:#7b8798;font-size:12px}.kb-stat-row strong{color:#25324a;font-size:21px;font-weight:600}
+.kb-doc-toolbar{flex-wrap:wrap;margin:0 0 8px}.kb-toolbar-spacer{flex:1}.kb-processing-banner{display:flex;align-items:center;gap:12px;margin:9px 0 14px;padding:13px 15px;border:1px solid #f1dfb5;border-radius:9px;background:#fffaf0}.kb-processing-banner.failed{border-color:#f2d1d0;background:#fff7f6}.kb-processing-banner strong{color:#4b5565;font-size:12px}.kb-processing-banner p{margin:4px 0 0;color:#8290a2;font-size:11px}.kb-status-dot.amber{background:#d99a18}.kb-status-dot.red{background:#d0443e}
+.kb-empty-doc{padding:50px 22px}.kb-empty-doc>svg{color:#98a2b3}.kb-doc-table{min-width:980px}.kb-doc-table .check-cell{width:38px;padding-right:0}.kb-doc-table input[type=checkbox]{width:15px;height:15px;accent-color:#2457e6}.kb-file-type{display:grid;place-items:center;width:38px;height:40px;flex:none;border:1px solid #e8ecf2;border-radius:9px;background:#f7f8fa;color:#687385}.kb-file-type.pdf{border-color:#fee2e2;background:#fff1f1;color:#dc2626}.kb-file-type.word{border-color:#dbeafe;background:#eff6ff;color:#2563eb}.kb-file-type.markdown{border-color:#ede9fe;background:#f5f3ff;color:#7c3aed}.kb-file-type.generic{border-color:#e5e7eb;background:#f8fafc;color:#64748b}.kb-doc-error{max-width:420px;color:#b42318!important}.kb-row-actions{display:flex;align-items:center;gap:11px}.kb-row-actions button{padding:0;border:0;background:none;color:#526078;font-size:11px;white-space:nowrap;cursor:pointer}.kb-row-actions button:hover,.kb-text-action:hover{color:#2457e6}.kb-row-actions .kb-danger-quiet{min-height:unset;padding:0;border:0;color:#b42318}
+.kb-settings{max-width:1040px}.kb-section-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;color:#8792a2}.kb-section-heading h2{margin:0;color:#202c42;font-size:18px;font-weight:620}.kb-section-heading p{margin:6px 0 0;color:#7b8798;font-size:12px}.kb-setting-group{display:grid;grid-template-columns:230px minmax(0,1fr);gap:30px;padding:24px 0;border-top:1px solid #e9ecf1}.kb-setting-group h3{margin:0;color:#344054;font-size:13px}.kb-setting-group>div:first-child p{margin:7px 0 0;color:#8a96a8;font-size:11px;line-height:1.6}.kb-setting-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.kb-setting-fields label,.kb-recall-form label{display:grid;align-content:start;gap:7px;color:#475467;font-size:12px;font-weight:600}.kb-setting-fields select,.kb-setting-fields input{width:100%;box-sizing:border-box}.kb-setting-fields select:disabled,.kb-setting-fields input:disabled{background:#f7f8fa;color:#98a2b3}.kb-setting-fields small{color:#8a96a8;font-size:10px;font-weight:400;line-height:1.5}.kb-text-action{justify-self:start;padding:0;border:0;background:none;color:#2457e6;font-size:12px;cursor:pointer}.kb-disabled-option{opacity:.62}.kb-heading-option>span{display:flex;align-items:center;gap:8px;color:#475467;font-size:12px;font-weight:600}.kb-heading-option input{width:15px;min-height:15px;margin:0;accent-color:#2457e6}.kb-settings-footer{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 0;border-top:1px solid #e9ecf1}.kb-settings-footer p{margin:0;color:#8490a0;font-size:11px}
+.kb-setting-note{margin-bottom:18px;padding:13px 15px;border:1px solid #e2e8f1;border-radius:9px;background:#f8fafc;color:#758196;font-size:12px;line-height:1.6}.kb-wizard-step{display:flex;align-items:center;gap:9px;grid-column:1/-1;padding-bottom:6px;border-bottom:1px solid #edf0f4;color:#344054}.kb-wizard-step span{display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:#2457e6;color:#fff;font-size:11px;font-weight:700}.kb-wizard-step small{margin-left:4px;color:#8a96a8;font-size:11px;font-weight:400}.kb-processing-fields{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:15px;border:1px solid #e4e9f0;border-radius:9px;background:#fafbfc}.kb-processing-fields>strong{grid-column:1/-1;color:#344054;font-size:13px}.kb-processing-fields label{display:grid;gap:6px;color:#475467;font-size:11px;font-weight:600}.kb-processing-fields .ui-input{min-height:36px}.kb-processing-fields .kb-heading-option{display:flex;align-items:center}
+.kb-recall{max-width:1000px}.kb-recall-form{padding:20px;border:1px solid #e6e9ef;border-radius:11px;background:#fff}.kb-recall-form textarea{width:100%;box-sizing:border-box;padding:11px;resize:vertical}.kb-recall-controls{display:flex;align-items:end;gap:12px;margin-top:15px}.kb-recall-controls label{display:grid;gap:6px;color:#667085;font-size:11px}.kb-recall-controls select,.kb-recall-controls input{min-width:150px}.kb-recall-controls input{box-sizing:border-box;width:110px;height:40px;padding:0 10px;border:1px solid #dfe4ec;border-radius:8px}.kb-recall-results{margin-top:22px}.kb-recall-summary{display:flex;align-items:center;gap:16px;margin-bottom:11px;color:#8390a1;font-size:11px}.kb-recall-summary strong{color:#344054;font-size:13px}.kb-hit{margin:10px 0;padding:17px 18px;border:1px solid #e7eaf0;border-radius:10px;background:#fff}.kb-hit-head{display:flex;align-items:center;gap:12px}.kb-hit-number{color:#2457e6;font-size:11px;font-weight:700}.kb-hit-head strong{display:block;color:#344054;font-size:13px}.kb-hit-head small{display:block;margin-top:4px;color:#8a96a8;font-size:10px}.kb-hit-score{margin-left:auto;padding:5px 8px;border-radius:6px;background:#f1f5ff;color:#3158c8;font-size:11px;font-weight:600}.kb-hit>p{margin:15px 0;color:#475467;font-size:12px;line-height:1.8;white-space:pre-wrap}.kb-hit footer{display:flex;gap:14px;padding-top:10px;border-top:1px solid #f0f2f5;color:#8a96a8;font-size:10px}.kb-recall-placeholder{display:grid;justify-items:center;gap:10px;margin-top:18px;padding:56px;border:1px dashed #dfe4ec;border-radius:10px;color:#98a2b3;text-align:center}.kb-recall-placeholder p{margin:0;font-size:12px}
+.kb-dialog-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.kb-dialog-form>label{display:grid;gap:7px;color:#475467;font-size:12px;font-weight:600}.kb-dialog-form>label:has(textarea),.kb-dialog-form>footer,.kb-upload-zone{grid-column:1/-1}.kb-dialog-form textarea{resize:vertical}.kb-dialog-form footer,.kb-confirm-actions{display:flex;justify-content:flex-end;gap:9px;grid-column:1/-1;padding-top:14px;border-top:1px solid #edf0f4}.kb-upload-zone{position:relative;display:grid;justify-items:center;gap:8px;padding:32px 16px;border:1px dashed #bac5d5;border-radius:10px;background:#fafbfc;text-align:center;cursor:pointer}.kb-upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.kb-upload-zone strong{color:#344054;font-size:13px}.kb-upload-zone small{color:#8a96a8;font-size:10px}.kb-upload-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:11px;background:#eff3ff;color:#2457e6}.kb-file-list{grid-column:1/-1;max-height:190px;overflow:auto;margin:0;padding:0;list-style:none;border:1px solid #e8ebf0;border-radius:8px}.kb-file-list li{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid #eef0f3;color:#667085;font-size:11px}.kb-file-list li:last-child{border:0}.kb-file-list li span{overflow:hidden;flex:1;color:#344054;text-overflow:ellipsis;white-space:nowrap}.kb-file-list li small{color:#98a2b3}.kb-preview-list{max-height:65vh;overflow:auto}.kb-preview-list article{padding:15px 0;border-bottom:1px solid #e9ecf1}.kb-preview-list header{display:flex;gap:12px;color:#344054;font-size:12px}.kb-preview-list header span{color:#8090a3}.kb-preview-list p{margin:10px 0;color:#475467;font-size:12px;line-height:1.8;white-space:pre-wrap}.kb-preview-list small{color:#8a96a8;font-size:10px}.kb-confirm-actions .kb-danger-button{min-height:38px;padding:0 15px;border:1px solid #b42318;border-radius:8px;background:#b42318;color:#fff}.ui-input{box-sizing:border-box;width:100%;min-height:39px;padding:8px 10px;border:1px solid #dfe4ec;border-radius:7px;color:#344054;font:inherit;font-size:13px}.kb-page button:focus-visible,.kb-page input:focus-visible,.kb-page select:focus-visible,.kb-page textarea:focus-visible{outline:3px solid #d8e2ff;outline-offset:1px}
+
+.kb-heading-option>span{display:flex;align-items:center;gap:8px;color:#475467;font-size:12px;font-weight:600}.kb-heading-option input{width:15px;min-height:15px;margin:0;accent-color:#2457e6}
+@media(max-width:900px){.kb-page{padding:0 0 42px}.kb-setting-group{grid-template-columns:1fr;gap:16px}.kb-stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.kb-detail-actions{flex-wrap:wrap}.kb-doc-table{min-width:980px}}
+@media(max-width:620px){.kb-page{padding:0 0 34px}.kb-toolbar,.kb-doc-toolbar{align-items:stretch}.kb-toolbar{flex-wrap:wrap}.kb-toolbar .kb-search{flex:1 1 100%;width:100%;box-sizing:border-box}.kb-doc-toolbar .kb-search{width:100%;box-sizing:border-box}.kb-toolbar select{flex:0 0 145px}.kb-result-count{margin-left:auto}.kb-tabs{gap:20px}.kb-stat-row{gap:8px}.kb-stat-row>div{min-height:57px;padding:0 11px}.kb-stat-row strong{font-size:17px}.kb-setting-fields,.kb-dialog-form{grid-template-columns:1fr}.kb-dialog-form>label,.kb-dialog-form>footer,.kb-upload-zone{grid-column:1}.kb-settings-footer{align-items:flex-start;flex-direction:column}.kb-recall-controls{align-items:stretch;flex-wrap:wrap}.kb-recall-controls .kb-toolbar-spacer{display:none}.kb-recall-controls .kb-primary{width:100%}.kb-recall-summary{align-items:flex-start;flex-wrap:wrap;gap:8px 12px}.kb-hit{padding:13px}.kb-recall-placeholder{padding:35px 18px}}
+
+.kb-page :deep(.kb-detail-header) { align-items: center; margin-bottom: 0; padding-bottom: 16px; }
+.kb-page :deep(.kb-detail-header .admin-page-header-actions) { align-items: center; padding-top: 0; }
+.kb-page :deep(.admin-page-header-badge) { align-self: center; }
+.kb-tabs { margin-top: 0; }
+@media(max-width:900px){.kb-table-wrap{overflow:auto}.kb-table{min-width:760px}}
+.kb-badge.ready{background:#edf8f1;color:#21834e}
+.kb-action-menu{position:relative}.kb-action-menu .kb-menu-trigger{display:grid;place-items:center;width:32px;height:32px;border:1px solid #e1e6ee;border-radius:8px;background:#fff;color:#667085;cursor:pointer;list-style:none}.kb-action-menu .kb-menu-trigger::-webkit-details-marker{display:none}.kb-action-menu-panel{position:absolute;z-index:10;right:0;top:37px;display:grid;min-width:138px;padding:5px;border:1px solid #e5e9f0;border-radius:9px;background:#fff;box-shadow:0 10px 26px rgba(23,32,51,.14)}.kb-action-menu-panel button{padding:9px 11px;border:0;border-radius:5px;background:transparent;color:#475467;text-align:left;cursor:pointer}.kb-action-menu-panel button:hover{background:#eff4ff;color:#2457e6}
+.kb-switch{display:inline-flex;align-items:center;gap:7px;cursor:pointer}.kb-switch input{position:absolute;width:1px;height:1px;opacity:0}.kb-switch span{position:relative;display:inline-block;width:34px;height:20px;border-radius:10px;background:#cbd3df;transition:.18s}.kb-switch span::after{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #18223035;content:'';transition:.18s}.kb-switch.on span{background:#29a46a}.kb-switch.on span::after{transform:translateX(14px)}.kb-switch em{color:#687588;font-size:11px;font-style:normal}.kb-muted-dash{color:#a3adba}
+.kb-document-detail{padding-top:20px}.kb-document-detail-meta{display:flex;align-items:center;gap:16px;padding:17px 0;border-bottom:1px solid #e7eaf0}.kb-document-detail-meta>div:not(.kb-document-detail-status){flex:1;min-width:0}.kb-document-detail-meta p{margin:5px 0 0;color:#8490a0;font-size:12px}.kb-document-detail-status{display:flex;align-items:center;gap:14px}.kb-document-detail-toolbar{display:flex;align-items:center;justify-content:space-between;margin:25px 0 14px}.kb-document-detail-toolbar h2{margin:0;color:#25324a;font-size:16px}.kb-document-detail-toolbar p{margin:5px 0 0;color:#8a96a8;font-size:11px}.kb-document-chunk{position:relative;margin:12px 0;padding:18px 20px;border:1px solid #e5e9ef;border-radius:10px;background:#fff}.kb-document-chunk header{display:flex;align-items:center;gap:12px;padding-bottom:11px;border-bottom:1px solid #f0f2f5;font-size:12px;color:#7b8798}.kb-document-chunk header strong{color:#526078}.kb-document-chunk header span{color:#687588}.kb-document-chunk header small{margin-left:auto;color:#a0a9b6;font-size:10px}.kb-document-chunk p{margin:14px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#344054;font-size:13px;line-height:1.85}
 </style>

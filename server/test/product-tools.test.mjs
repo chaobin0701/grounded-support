@@ -48,4 +48,5 @@ test('agent rejects unsupported IDs and does not expose internal product IDs', (
   assert.equal(validateAgentAnswer(answer, [], products).answer, '清屿 A1 空气净化器');
   assert.equal(validateAgentAnswer(answer.replaceAll('purifier-a1', 'missing'), [], products).refused, true);
   assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '有 5 款', citationIds: [], productIds: [] }), [], products).refused, true);
+  assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '你好啊，我可以帮你查询产品和售后资料。', citationIds: [], productIds: [] }), [], [], 'auto').refused, false);
 });

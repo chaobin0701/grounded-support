@@ -1,4 +1,4 @@
-export type SkillResponseMode = 'grounded' | 'product';
+export type SkillResponseMode = 'auto' | 'grounded' | 'product' | 'conversational';
 
 export type SkillDefinition = {
   readonly id: string;
@@ -10,6 +10,9 @@ export type SkillDefinition = {
   readonly maxToolCalls: number;
   readonly maxRuntimeMs: number;
   readonly responseMode: SkillResponseMode;
+  readonly shouldPreRetrieve?: boolean;
+  readonly preRetrievalTopK?: number;
+  readonly summary?: string;
 };
 
 export type SelectedSkill = {

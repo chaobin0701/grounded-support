@@ -159,7 +159,7 @@ export class ConversationService {
     const lock = await this.database.query(
       `UPDATE conversations SET busy_until = now() + ${RUN_TIMEOUT_SQL}
        WHERE id = $1 AND visitor_session_id = $2 AND (busy_until IS NULL OR busy_until < now())
-       RETURNING id, busy_until AS "busyUntil"`, [id, ownerId],
+       RETURNING id, busy_until::text AS "busyUntil"`, [id, ownerId],
     );
     if (!lock.rowCount) {
       await this.get(ownerId, id);
@@ -173,7 +173,7 @@ export class ConversationService {
       }
       throw new ConflictException('Conversation is already answering a question');
     }
-    const busyUntil = lock.rows[0]?.busyUntil as Date | string | undefined;
+    const busyUntil = lock.rows[0]?.busyUntil as string | undefined;
     let runId: string | null = null;
     try {
       if (clientRequestId) {
@@ -314,7 +314,7 @@ export class ConversationService {
     }
   }
 
-  private async releaseBusy(ownerId: string, conversationId: string, busyUntil: Date | string | undefined): Promise<void> {
+  private async releaseBusy(ownerId: string, conversationId: string, busyUntil: string | undefined): Promise<void> {
     if (busyUntil === undefined) return;
     await this.database.query(
       'UPDATE conversations SET busy_until = NULL WHERE id = $1 AND visitor_session_id = $2 AND busy_until = $3',

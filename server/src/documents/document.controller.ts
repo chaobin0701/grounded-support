@@ -1,4 +1,4 @@
-import { Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, DefaultValuePipe, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AdminAuthGuard } from '../admin/admin-auth.guard';
 import { AdminRequest } from '../admin/admin.types';
@@ -27,7 +27,7 @@ export class DocumentController {
   }))
   upload(@Req() request: AdminRequest, @UploadedFile() file: Express.Multer.File, @Body() body: UploadDocumentDto) {
     const source = request as AdminRequest & { ip?: string; socket?: { remoteAddress?: string } };
-    return this.rateLimit.run('document-upload', source.ip || source.socket?.remoteAddress || `admin:${request.admin!.id}`, () => this.documents.upload(request.admin!.id, file, body.title));
+    return this.rateLimit.run('document-upload', source.ip || source.socket?.remoteAddress || `admin:${request.admin!.id}`, () => this.documents.upload(request.admin!.id, file, body.title, undefined, body.processingConfig, body.deferProcessing === 'true'));
   }
 
   @Get()
@@ -55,6 +55,19 @@ export class DocumentController {
   @RequirePermission('documents.archive')
   archive(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number) {
     return this.documents.archive(request.admin!.id, id);
+  }
+
+  @Patch(':id/unarchive')
+  @RequirePermission('documents.archive')
+  unarchive(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.documents.unarchive(request.admin!.id, id);
+  }
+
+  @Patch(':id/retrieval-status')
+  @RequirePermission('documents.archive')
+  setEnabled(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Body() body: { enabled?: unknown }) {
+    if (typeof body.enabled !== 'boolean') throw new BadRequestException('enabled must be boolean');
+    return this.documents.setEnabled(request.admin!.id, id, body.enabled);
   }
 
   @Post(':id/retry')

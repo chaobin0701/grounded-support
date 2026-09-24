@@ -12,6 +12,14 @@ export const router = createRouter({
     { path: '/help', name: 'help', component: routeSurface },
     { path: '/admin', name: 'admin-login', component: routeSurface },
     { path: '/admin/documents', redirect: '/admin/knowledge' },
+    { path: '/admin/knowledge/:baseId(\\d+)', redirect: (to) => `/admin/knowledge/${to.params.baseId}/documents` },
+    { path: '/admin/knowledge/:baseId(\\d+)/:legacy(index|config|publish|versions|search|faq)', redirect: (to) => {
+      const tab = ['index', 'config'].includes(String(to.params.legacy)) ? 'settings'
+        : ['publish', 'versions', 'search'].includes(String(to.params.legacy)) ? 'recall-test' : 'documents';
+      return `/admin/knowledge/${to.params.baseId}/${tab}`;
+    } },
+    { path: '/admin/knowledge/:baseId(\\d+)/documents/:documentId(\\d+)', name: 'admin-knowledge-document', component: routeSurface },
+    { path: '/admin/knowledge/:baseId(\\d+)/:subview(documents|settings|recall-test)', name: 'admin-knowledge-subview', component: routeSurface },
     { path: '/admin/:section(dashboard|knowledge|products|conversations|admins|roles|audit)', name: 'admin-section', component: routeSurface },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

@@ -10,4 +10,7 @@ export const customerSupportSkill: SkillDefinition = {
   maxToolCalls: 3,
   maxRuntimeMs: 30_000,
   responseMode: 'grounded',
+  shouldPreRetrieve: false,
+  preRetrievalTopK: 5,
+  summary: '基于已上传资料回答售后、政策和使用问题。',
 };

@@ -2,6 +2,7 @@ import type { SearchHit } from '../../documents/fuse-search-results';
 import type { ChatAnswer } from '../../chat/chat.service';
 import { validateAnswer } from './citation-validation';
 import type { ProductDetail, ProductSummary } from '../tools/product-catalog/product-catalog.service';
+import type { SkillResponseMode } from '../skills/skill.types';
 
 export const REFUSAL = '无法确定，建议联系人工。';
 
@@ -9,6 +10,8 @@ export function validateAgentAnswer(
   raw: string,
   hits: SearchHit[],
   products: Array<ProductSummary | ProductDetail>,
+  responseMode: SkillResponseMode = 'grounded',
+  evidenceRequired = responseMode !== 'conversational' && responseMode !== 'auto',
 ): ChatAnswer {
   const refusal: ChatAnswer = { answer: REFUSAL, refused: true, citations: [] };
   try {
@@ -17,7 +20,11 @@ export function validateAgentAnswer(
     if (parsed.status !== 'answered' || typeof parsed.answer !== 'string' || !parsed.answer.trim() || parsed.answer.length > 1200) return refusal;
     const citationIds = parsed.citationIds;
     const productIds = parsed.productIds;
-    if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length + productIds.length === 0 || citationIds.length > 5 || productIds.length > 10) return refusal;
+    if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length > 5 || productIds.length > 10) return refusal;
+    if (evidenceRequired && citationIds.length + productIds.length === 0) return refusal;
+    if (!evidenceRequired && citationIds.length + productIds.length === 0) {
+      return { answer: parsed.answer.trim(), refused: false, citations: [] };
+    }
     const byProduct = new Map(products.map((product) => [product.id, product]));
     if (productIds.some((id) => typeof id !== 'string' || !byProduct.has(id))) return refusal;
     const citations = citationIds.length ? validateAnswer(JSON.stringify({ status: 'answered', answer: parsed.answer, citationIds }), hits) : null;

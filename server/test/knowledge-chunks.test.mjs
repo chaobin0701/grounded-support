@@ -16,6 +16,14 @@ test('structured Markdown retains unsplit content and source locations', async (
   assert.equal(parsed.blocks[0].content, text);
 });
 
+test('document parsing applies the knowledge-base chunk size and overlap settings', async () => {
+  const parsed = await parseDocument(Buffer.from(`# A\n\n${'甲'.repeat(450)}`), 'configured.md', 200, 20);
+  assert.ok(parsed.chunks.every((chunk) => Array.from(chunk.content).length <= 200));
+  assert.equal(Array.from(parsed.chunks[0].content).length, 200);
+  assert.equal(parsed.chunks[1].content.slice(0, 20), parsed.chunks[0].content.slice(-20));
+  await assert.rejects(() => parseDocument(Buffer.from('# A\n\ntext'), 'configured.md', 200, 200));
+});
+
 test('parent child chunks keep bounded parent evidence and explicit relationships', async () => {
   const parsed = await parseDocument(Buffer.from(`# A\n\n${'甲'.repeat(2000)}\n\n# B\n\n独立章节`), 'sample.md');
   const chunks = buildChunks(parsed.blocks, knowledgeConfigSchema.parse({ chunkMode: 'parent_child', parentChars: 600, childChars: 200 }));

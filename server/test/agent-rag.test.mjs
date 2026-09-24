@@ -90,3 +90,33 @@ test('agent runner returns a normalized result after a tool step', async () => {
   assert.equal(result.totalTokens, 30);
   assert.equal(result.contextSnapshot.toolCalls.length, 1);
 });
+
+test('unified agent answers a greeting without preflight or citation', async () => {
+  const llm = {
+    model: 'test-model',
+    completeDetailed: async () => ({
+      content: JSON.stringify({
+        type: 'final',
+        status: 'answered',
+        answer: '你好啊，我可以帮你查询产品和售后资料。',
+        citationIds: [],
+        productIds: [],
+      }),
+      model: 'test-model',
+      inputTokens: null,
+      outputTokens: null,
+      totalTokens: null,
+    }),
+  };
+  const registry = { get: () => { throw new Error('tool should not be called'); } };
+  const contextBuilder = new ContextBuilder();
+  const execution = new ToolExecutionService(registry, new ToolPolicy());
+  const runner = new AgentRunner(new AgentLoop(llm, contextBuilder, execution), contextBuilder);
+  const result = await runner.run({ question: '你好啊', summary: '', recentHistory: [] });
+
+  assert.equal(result.result.refused, false);
+  assert.equal(result.result.answer, '你好啊，我可以帮你查询产品和售后资料。');
+  assert.equal(result.contextSnapshot.skill.id, 'question_answering');
+  assert.equal(result.contextSnapshot.executionSteps.some((step) => step.type === 'preflight'), false);
+  assert.equal(result.contextSnapshot.toolCalls.length, 0);
+});
