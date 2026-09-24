@@ -98,7 +98,9 @@ function formatMessageTime(value: string) {
 type ProgressStep = ProgressEvent & { key: string; stageLabel: string; stateLabel: string };
 
 function progressKey(event: ProgressEvent) {
-  return event.operationId || `${event.stage}:${event.tool || event.text}`;
+  if (event.operationId) return event.operationId;
+  if (event.stage === 'answer') return 'answer';
+  return `${event.stage}:${event.tool || event.text.replace(/[.…]+$/u, '')}`;
 }
 
 function progressSteps(events: ProgressEvent[]): ProgressStep[] {
@@ -111,6 +113,7 @@ function progressSteps(events: ProgressEvent[]): ProgressStep[] {
     steps.set(key, {
       ...(previous || {}),
       ...event,
+      text: event.text.replace(/[.…]+$/u, ''),
       key,
       stageLabel,
       stateLabel: event.status === 'running' ? '进行中' : '已完成',
