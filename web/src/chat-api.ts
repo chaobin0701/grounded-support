@@ -11,6 +11,19 @@ export interface ChatAnswer {
   answer: string;
   refused: boolean;
   citations: Citation[];
+  progressEvents?: ProgressEvent[];
+}
+
+export interface ProgressEvent {
+  type: 'progress';
+  id: string;
+  stage: 'planning' | 'preflight' | 'tool' | 'answer';
+  status: 'running' | 'completed';
+  text: string;
+  operationId?: string;
+  tool?: string;
+  durationMs?: number;
+  resultCount?: number;
 }
 
 export interface PreviousTurn { question: string; answer: string }
@@ -27,6 +40,7 @@ export interface ConversationMessage {
   content: string;
   refused: boolean | null;
   citations: Citation[];
+  progressEvents?: ProgressEvent[];
   createdAt: string;
 }
 
@@ -88,7 +102,7 @@ export async function askInConversation(conversationId: string, question: string
   return parseAnswer(await response.json());
 }
 
-export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, idempotencyKey?: string): Promise<ChatAnswer> {
+export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, idempotencyKey?: string, onProgress?: (event: ProgressEvent) => void): Promise<ChatAnswer> {
   const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
@@ -115,6 +129,9 @@ export async function askInConversationStream(conversationId: string, question: 
           const payload = JSON.parse(data) as { text?: unknown };
           if (typeof payload.text !== 'string') throw new Error('Invalid stream delta');
           onDelta(payload.text);
+        } else if (data && event === 'progress') {
+          const progress = JSON.parse(data) as ProgressEvent;
+          if (progress.type === 'progress' && typeof progress.id === 'string' && typeof progress.text === 'string') onProgress?.(progress);
         } else if (data && event === 'error') {
           const payload = JSON.parse(data) as { status?: unknown; message?: unknown };
           throw new ChatApiError(

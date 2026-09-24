@@ -55,7 +55,7 @@ export class AgentRunner {
     callbacks.onContext?.(state.contextSnapshot);
 
     for (let round = 0; round < skill.maxToolCalls; round += 1) {
-      const step = await this.loop.step(input, state);
+      const step = await this.loop.step(input, state, callbacks.onProgress);
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
 

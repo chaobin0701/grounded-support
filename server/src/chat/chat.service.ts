@@ -7,11 +7,23 @@ export { validateAnswer } from '../ai/agent/citation-validation';
 export type Citation = Pick<SearchHit, 'chunkId' | 'documentId' | 'documentTitle' | 'originalFilename' | 'sourceStartLine' | 'sourceEndLine'>;
 export type ToolStep = { id: string; label: string; status: 'running' | 'completed'; detail?: string; durationMs?: number };
 export type CommentaryEvent = { id: string; type: 'commentary'; text: string };
-export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent;
+export type PublicProgressEvent = {
+  type: 'progress';
+  id: string;
+  stage: 'planning' | 'preflight' | 'tool' | 'answer';
+  status: 'running' | 'completed';
+  text: string;
+  operationId?: string;
+  tool?: string;
+  durationMs?: number;
+  resultCount?: number;
+};
+export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent | PublicProgressEvent;
 export type ChatAnswer = { answer: string; refused: boolean; citations: Citation[]; toolSteps?: ToolStep[]; progressEvents?: ProcessEvent[] };
 export type ChatStreamCallbacks = {
   onAnswerStarted?: (metadata: { citations: Citation[] }) => void;
   onAnswerDelta?: (text: string) => void;
+  onProgress?: (event: PublicProgressEvent) => void;
 };
 export type ChatRun = {
   result: ChatAnswer;

@@ -2,6 +2,7 @@ import type { PreviousTurnDto } from '../../chat/chat.dto';
 import type { EventSink } from '../../channels/event-sink';
 import type { SkillDefinition } from '../skills/skill.types';
 import type { SearchHit } from '../../documents/fuse-search-results';
+import type { PublicProgressEvent } from '../../chat/chat.service';
 
 export type AgentInput = {
   question: string;
@@ -22,4 +23,5 @@ export type AgentInput = {
 export type AgentCallbacks = {
   onContext?: (context: Record<string, unknown>) => void;
   eventSink?: EventSink;
+  onProgress?: (event: PublicProgressEvent) => void;
 };

@@ -1,7 +1,7 @@
 import { Injectable, Optional } from '@nestjs/common';
 import { AgentRunner } from '../ai/agent/agent-runner';
 import type { PreviousTurnDto } from './chat.dto';
-import type { ChatRun, ChatStreamCallbacks, CommentaryEvent, ToolStep } from './chat.service';
+import type { ChatRun, ChatStreamCallbacks, CommentaryEvent, PublicProgressEvent, ToolStep } from './chat.service';
 import { LlmService } from './llm.service';
 import { SkillSelector } from '../ai/skills/skill-selector';
 import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
@@ -28,6 +28,11 @@ export class ChatOrchestratorService {
     requestedSkillId?: string,
     callbacks?: ChatStreamCallbacks,
   ): Promise<ChatRun> {
+    const progressEvents: PublicProgressEvent[] = [];
+    const emitProgress = (event: PublicProgressEvent) => {
+      progressEvents.push(event);
+      callbacks?.onProgress?.(event);
+    };
     const selected = this.skillSelector
       ? this.skillSelector.select(question, requestedSkillId)
       : { skill: questionAnsweringSkill, selectedBy: 'default' as const };
@@ -50,9 +55,12 @@ export class ChatOrchestratorService {
         },
         selectedBy: selected.selectedBy,
       },
-      { onContext },
+      { onContext, onProgress: emitProgress },
     );
+    const hasToolProgress = progressEvents.some((event) => event.stage === 'tool');
     if (!result.result.refused && callbacks?.onAnswerDelta) {
+      const answerOperationId = `${Date.now()}-answer`;
+      if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-start`, operationId: answerOperationId, stage: 'answer', status: 'running', text: '资料已准备完成，正在整理回答…' });
       callbacks.onAnswerStarted?.({ citations: result.result.citations });
       const streamed = await this.llm.streamText(
         '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。',
@@ -63,7 +71,9 @@ export class ChatOrchestratorService {
       result.inputTokens = (result.inputTokens ?? 0) + (streamed.inputTokens ?? 0);
       result.outputTokens = (result.outputTokens ?? 0) + (streamed.outputTokens ?? 0);
       result.totalTokens = (result.totalTokens ?? 0) + (streamed.totalTokens ?? 0);
+      if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-complete`, operationId: answerOperationId, stage: 'answer', status: 'completed', text: '回答生成完成', durationMs: streamed.durationMs });
     }
+    result.result = { ...result.result, progressEvents: [...(result.result.progressEvents ?? []), ...progressEvents] };
     return {
       result: result.result,
       contextSnapshot: result.contextSnapshot,

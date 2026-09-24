@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import { ContextBuilder } from '../../chat/context-builder';
-import type { ChatAnswer } from '../../chat/chat.service';
+import type { ChatAnswer, PublicProgressEvent } from '../../chat/chat.service';
 import { LlmService } from '../../chat/llm.service';
 import type { AgentInput } from './agent-input';
 import type { AgentState, AgentExecutionStep } from './agent-state';
@@ -55,7 +55,7 @@ export class AgentLoop {
     return this.toolExecution.createStateForSkill(allowedTools, maxToolCalls);
   }
 
-  async step(input: AgentInput, state: AgentState): Promise<AgentStepResult> {
+  async step(input: AgentInput, state: AgentState, onProgress?: (event: PublicProgressEvent) => void): Promise<AgentStepResult> {
     const builtContext = this.contextBuilder.build({
       question: input.question,
       summary: input.summary,
@@ -140,12 +140,18 @@ export class AgentLoop {
     if (!toolCall.success) return { type: 'complete', result: refusedAnswer() };
 
     const call = toolCall.data;
+    const toolStarted = Date.now();
+    const operationId = `${Date.now()}-tool-${state.toolCalls.length + 1}`;
+    const toolLabel = publicToolLabel(call.name);
+    onProgress?.({ type: 'progress', id: `${operationId}-start`, operationId, stage: 'tool', status: 'running', text: toolLabel, tool: call.name });
     const execution = await this.toolExecution.execute(
       call.name,
       call.arguments,
       state.toolContext,
       state.executionState,
     );
+    const resultCount = countToolResults(execution.result.data);
+    onProgress?.({ type: 'progress', id: `${operationId}-complete`, operationId, stage: 'tool', status: 'completed', text: execution.result.success ? `${toolLabel.replace('正在', '已')}` : '这一步未能取得有效资料', tool: call.name, durationMs: Date.now() - toolStarted, ...(resultCount === undefined ? {} : { resultCount }) });
     state.toolCalls.push(execution.trace);
     if (execution.result.success) this.collectToolData(call.name, execution.result.data, state);
     state.toolResults.push({
@@ -190,6 +196,22 @@ export class AgentLoop {
 
 function refusedAnswer(): ChatAnswer {
   return { answer: REFUSAL, refused: true, citations: [] };
+}
+
+function publicToolLabel(name: PlannerToolCall['name']): string {
+  if (name.includes('list_product_categories')) return '正在查看产品分类';
+  if (name.includes('list_products')) return '正在查看产品目录';
+  if (name.includes('get_product_detail')) return '正在读取产品详细规格';
+  return '正在检索知识库资料';
+}
+
+function countToolResults(value: unknown): number | undefined {
+  if (!isObject(value)) return undefined;
+  for (const key of ['hits', 'products', 'categories']) {
+    const candidate = value[key];
+    if (Array.isArray(candidate)) return candidate.length;
+  }
+  return undefined;
 }
 
 function parsePlannerOutput(raw: string): unknown {

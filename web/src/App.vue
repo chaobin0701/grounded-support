@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
-import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage } from './chat-api';
+import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage, type ProgressEvent } from './chat-api';
 import AdminApp from './AdminApp.vue';
 import HelpCenter from './HelpCenter.vue';
 import ProductSite from './ProductSite.vue';
-import { Bot, Check, Copy, FileText, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
+import { Bot, Check, CheckCircle2, Copy, Database, FileText, LoaderCircle, Search, Sparkles, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
 
 const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
@@ -21,7 +21,7 @@ const PENDING_REQUEST_KEY = 'grounded.pendingChatRequest';
 
 type Message =
   | { id: number; role: 'visitor'; text: string; createdAt: string }
-  | { id: number; role: 'assistant'; text: string; refused: boolean; citations: ConversationMessage['citations']; createdAt: string };
+  | { id: number; role: 'assistant'; text: string; refused: boolean; citations: ConversationMessage['citations']; progressEvents: ProgressEvent[]; createdAt: string };
 
 const suggestions = ['暖风机保修多久？', '满多少钱免基础配送费？', '退款一般多久能到账？'];
 const messages = ref<Message[]>([]);
@@ -34,6 +34,7 @@ const draftAnswer = ref('');
 const errorMessage = ref('');
 const copiedMessageId = ref<number | null>(null);
 const feedback = ref<Record<number, 'up' | 'down'>>({});
+const activeProgressEvents = ref<ProgressEvent[]>([]);
 const health = ref<'checking' | 'online' | 'offline'>('checking');
 const conversation = ref<HTMLElement | null>(null);
 let nextId = -1;
@@ -85,13 +86,50 @@ onMounted(async () => {
 function displayMessages(items: ConversationMessage[]): Message[] {
   return items.map((item) => item.role === 'user'
     ? { id: item.id, role: 'visitor', text: item.content, createdAt: item.createdAt }
-    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused), citations: item.citations || [], createdAt: item.createdAt });
+    : { id: item.id, role: 'assistant', text: item.content, refused: Boolean(item.refused), citations: item.citations || [], progressEvents: item.progressEvents || [], createdAt: item.createdAt });
 }
 
 function formatMessageTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
+}
+
+type ProgressStep = ProgressEvent & { key: string; stageLabel: string; stateLabel: string };
+
+function progressKey(event: ProgressEvent) {
+  return event.operationId || `${event.stage}:${event.tool || event.text}`;
+}
+
+function progressSteps(events: ProgressEvent[]): ProgressStep[] {
+  const steps = new Map<string, ProgressStep>();
+  for (const event of events) {
+    if (event.type !== 'progress' || !event.text || (event.stage !== 'tool' && event.stage !== 'answer')) continue;
+    const key = progressKey(event);
+    const previous = steps.get(key);
+    const stageLabel = event.stage === 'tool' ? '数据查询' : '回答整理';
+    steps.set(key, {
+      ...(previous || {}),
+      ...event,
+      key,
+      stageLabel,
+      stateLabel: event.status === 'running' ? '进行中' : '已完成',
+    });
+  }
+  return [...steps.values()];
+}
+
+function progressIcon(event: ProgressStep) {
+  if (event.status === 'running') return LoaderCircle;
+  if (event.stage === 'tool') return event.tool?.includes('search_knowledge') ? Search : Database;
+  if (event.stage === 'answer') return Sparkles;
+  return CheckCircle2;
+}
+
+function formatDuration(durationMs?: number) {
+  if (!durationMs || durationMs < 1) return '';
+  if (durationMs < 1000) return `${durationMs} ms`;
+  return `${(durationMs / 1000).toFixed(durationMs >= 10000 ? 0 : 1)} s`;
 }
 
 async function copyAnswer(message: Message) {
@@ -132,6 +170,7 @@ async function newConversation() {
     activeConversationId.value = item.id;
     window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, item.id);
     messages.value = [];
+    activeProgressEvents.value = [];
     question.value = '';
     errorMessage.value = '';
   } catch {
@@ -200,6 +239,7 @@ async function send(value = question.value) {
   question.value = '';
   isSending.value = true;
   draftAnswer.value = '';
+  activeProgressEvents.value = [];
   let pushed = false;
   let requestId: string | undefined;
   try {
@@ -220,8 +260,11 @@ async function send(value = question.value) {
     const result: ChatAnswer = await askInConversationStream(id, trimmed, (text) => {
       draftAnswer.value += text;
       void scrollToLatest();
-    }, requestId);
-    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused, citations: result.citations, createdAt: new Date().toISOString() });
+    }, requestId, (event) => {
+      activeProgressEvents.value = [...activeProgressEvents.value, event];
+      void scrollToLatest();
+    });
+    messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused, citations: result.citations, progressEvents: activeProgressEvents.value, createdAt: new Date().toISOString() });
     clearPendingRequest();
     try { conversations.value = await conversationApi.list(); } catch { /* Answer was saved; list can refresh later. */ }
   } catch (error) {
@@ -255,6 +298,7 @@ async function send(value = question.value) {
   } finally {
     isSending.value = false;
     draftAnswer.value = '';
+    activeProgressEvents.value = [];
     await scrollToLatest();
   }
 }
@@ -339,6 +383,16 @@ function chooseSuggestion(value: string) {
                 <button type="button" :class="{ selected: feedback[message.id] === 'up' }" aria-label="回答有帮助" @click="setFeedback(message, 'up')"><ThumbsUp :size="16" /></button>
                 <button type="button" :class="{ selected: feedback[message.id] === 'down' }" aria-label="回答需要改进" @click="setFeedback(message, 'down')"><ThumbsDown :size="16" /></button>
               </div>
+              <details v-if="message.progressEvents.length" class="process-collapsible message-process">
+                <summary><span class="process-summary-label"><Sparkles :size="14" aria-hidden="true" />查看处理过程</span><span>{{ progressSteps(message.progressEvents).length }} 步</span></summary>
+                <div class="process-content">
+                  <div v-for="event in progressSteps(message.progressEvents)" :key="event.key" class="process-step" :class="[event.status, `stage-${event.stage}`]">
+                    <span class="process-step-icon" aria-hidden="true"><component :is="progressIcon(event)" :size="14" :class="{ spinning: event.status === 'running' }" /></span>
+                    <span class="process-step-copy"><small>{{ event.stageLabel }}</small><span>{{ event.text }}</span></span>
+                    <span class="process-step-meta"><small>{{ event.stateLabel }}</small><small v-if="event.resultCount !== undefined">{{ event.resultCount }} 条</small><small v-if="formatDuration(event.durationMs)">{{ formatDuration(event.durationMs) }}</small></span>
+                  </div>
+                </div>
+              </details>
             </div>
           </template>
         </div>
@@ -347,8 +401,20 @@ function chooseSuggestion(value: string) {
           <span class="message-avatar assistant-avatar" aria-hidden="true"><Bot :size="18" :stroke-width="2.1" /></span>
           <div class="message-column">
             <div class="message-meta"><span>暖巢 · AI 助手</span></div>
-            <div v-if="!draftAnswer" class="message-bubble assistant-bubble"><div class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>正在查询资料并整理回答…</span></div></div>
-            <div v-else class="message-bubble assistant-bubble"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在发送已校验的回答…</p></div>
+            <div v-if="!draftAnswer" class="message-bubble assistant-bubble"><div class="typing" aria-label="正在生成回答"><i></i><i></i><i></i><span>{{ activeProgressEvents.length ? '正在处理资料并整理回答…' : '正在生成回答…' }}</span></div></div>
+            <div v-else class="message-bubble assistant-bubble"><p class="answer-text">{{ draftAnswer }}</p><p class="answer-note">正在输出回答…</p></div>
+            <div v-if="activeProgressEvents.length" class="process-panel pending-process">
+              <details class="process-collapsible" open>
+                <summary><span class="process-summary-label"><LoaderCircle :size="14" class="spinning" aria-hidden="true" />正在处理</span><span>{{ progressSteps(activeProgressEvents).length }} 步</span></summary>
+                <div class="process-content">
+                  <div v-for="event in progressSteps(activeProgressEvents)" :key="event.key" class="process-step" :class="[event.status, `stage-${event.stage}`]">
+                    <span class="process-step-icon" aria-hidden="true"><component :is="progressIcon(event)" :size="14" :class="{ spinning: event.status === 'running' }" /></span>
+                    <span class="process-step-copy"><small>{{ event.stageLabel }}</small><span>{{ event.text }}</span></span>
+                    <span class="process-step-meta"><small>{{ event.stateLabel }}</small><small v-if="event.resultCount !== undefined">{{ event.resultCount }} 条</small><small v-if="formatDuration(event.durationMs)">{{ formatDuration(event.durationMs) }}</small></span>
+                  </div>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
       </section>

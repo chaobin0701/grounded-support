@@ -64,6 +64,7 @@ export class ChatController {
               streamed = true;
               this.writeEvent(response, 'answer_delta', { text });
             },
+            onProgress: (event) => this.writeEvent(response, 'progress', event),
           },
         );
         await this.writeAnswerStream(response, answer, streamed);
