@@ -127,11 +127,23 @@ export interface ChatTraceDetail extends ChatTraceItem {
     categories?: { id: string; name: string }[];
     products?: { id: string; name: string }[];
     productDetails?: { id: string; name: string; specifications: Record<string, string> }[];
+    modelCalls?: unknown[];
   };
   rawModelOutput: string | null;
 }
 
-export type DebugCaseStatus = 'pending' | 'analyzing' | 'confirmed' | 'ignored';
+export interface ConversationListItem {
+  id: string; title: string; updatedAt: string; createdAt: string; visitorSessionId: string;
+  messageCount: number; turnCount: number; lastQuestion: string | null; lastStatus: string | null;
+  lastRefused: boolean | null; lastTraceId: string | null; hasFailed: boolean; hasRefused: boolean;
+}
+export interface ConversationDetail {
+  id: string; visitorSessionId: string; title: string; summary: string; busyUntil: string | null;
+  createdAt: string; updatedAt: string;
+  messages: { id: number; role: string; content: string; refused: boolean | null; citations: unknown; toolSteps: unknown; progressEvents: unknown; createdAt: string }[];
+  runs: { id: string; clientRequestId: string; question: string; status: string; startedAt: string | null; finishedAt: string | null; errorCode: string | null; userMessageId: number | null; assistantMessageId: number | null; createdAt: string }[];
+  traces: { id: string; kind: string; userMessageId: number | null; question: string; finalAnswer: string | null; refused: boolean | null; status: string; errorCode: string | null; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; durationMs: number; createdAt: string }[];
+}
 
 export interface DebugFinding {
   code: string;
@@ -220,6 +232,9 @@ export interface DebugConversation {
 
 export interface DebugInspection {
   requestedIds: string[];
+  requestedConversationIds: string[];
+  resolvedConversationIds: string[];
+  focusTraceIds: string[];
   notFoundIds: string[];
   requestedTraceIds: string[];
   notFoundTraceIds: string[];
@@ -227,20 +242,6 @@ export interface DebugInspection {
   inspectedAt: string;
   conversations: DebugConversation[];
   diagnostics: { findings: DebugFinding[]; metrics: DebugMetrics };
-}
-
-export interface DebugCase {
-  id: string;
-  title: string;
-  issueDescription: string;
-  conversationIds: unknown;
-  traceIds: unknown;
-  status: DebugCaseStatus;
-  snapshot?: DebugInspection;
-  createdBy: number;
-  inspectedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export class AdminApiError extends Error {
@@ -299,9 +300,7 @@ export const adminApi = {
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
-  debugInspect: (token: string, input: { conversationIds: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
-  debugCases: (token: string, limit = 50) => request<DebugCase[]>(`/debug/cases?limit=${limit}`, {}, token),
-  debugCase: (token: string, id: string) => request<DebugCase>(`/debug/cases/${encodeURIComponent(id)}`, {}, token),
-  createDebugCase: (token: string, input: { title?: string; conversationIds: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugCase>('/debug/cases', { method: 'POST', body: JSON.stringify(input) }, token),
-  updateDebugCaseStatus: (token: string, id: string, status: DebugCaseStatus) => request<DebugCase>(`/debug/cases/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }, token),
+  debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
+  conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string } = {}) => request<{ items: ConversationListItem[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}`, {}, token),
+  conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
 };

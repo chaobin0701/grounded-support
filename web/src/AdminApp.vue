@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Boxes, Bug, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import { Boxes, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
 import type { Component } from 'vue';
 import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
@@ -10,12 +10,11 @@ import KnowledgeBaseAdmin from './KnowledgeBaseAdmin.vue';
 import AdminDashboard from './AdminDashboard.vue';
 import ProductCatalogAdmin from './ProductCatalogAdmin.vue';
 import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
-import DebugCenterAdmin from './DebugCenterAdmin.vue';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
 
-type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'debug' | 'admins' | 'roles' | 'audit';
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
@@ -65,8 +64,7 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'dashboard', label: '概览', icon: LayoutDashboard, permissions: ['documents.read', 'knowledge_bases.manage', 'conversations.read'] },
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
   { id: 'products', label: '产品目录', icon: Boxes, permissions: ['knowledge_bases.manage'] },
-  { id: 'conversations', label: '对话轨迹', icon: MessageSquareText, permissions: ['conversations.read'] },
-  { id: 'debug', label: '调试中心', icon: Bug, permissions: ['conversations.debug'] },
+  { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
@@ -366,13 +364,13 @@ function auditActionLabel(action: string): string {
     'knowledge_base.created': '创建知识库', 'knowledge_base.updated': '更新知识库', 'knowledge_base.archived': '归档知识库',
     'knowledge_base.configured': '更新索引配置', 'knowledge_index.build_requested': '请求构建索引', 'knowledge_index.activated': '启用索引版本',
     'embedding_profile.created': '添加 Embedding 配置', 'embedding_profile.updated': '更新 Embedding 配置', 'faq.saved': '保存 FAQ',
-    'debug.inspected': '检查会话调试上下文', 'debug_case.created': '创建调试案例', 'debug_case.viewed': '查看调试案例', 'debug_case.status_updated': '更新调试案例状态',
+    'debug.inspected': '检查会话调试上下文',
   };
   return labels[action] ?? action;
 }
 
 function auditTargetLabel(targetType: string): string {
-  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', debug_case: '调试案例', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
+  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
 }
 
 async function runConfirmation() {
@@ -470,7 +468,6 @@ function sourceLocation(filename: string, start: number, end: number): string {
         </section>
 
         <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
-        <DebugCenterAdmin v-else-if="view === 'debug'" :token="session.token" />
 
         <section v-else-if="view === 'admins'">
           <AdminPageHeader eyebrow="账号管理" title="管理员" description="创建账号、分配角色和停用账号；实际授权始终由后端校验。">

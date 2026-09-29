@@ -254,20 +254,3 @@ export const chatTraces = pgTable('chat_traces', {
   index('chat_traces_created_at_idx').on(table.createdAt),
   index('chat_traces_conversation_id_idx').on(table.conversationId, table.createdAt),
 ]);
-
-export const debugCases = pgTable('debug_cases', {
-  id: uuid('id').primaryKey(),
-  title: varchar('title', { length: 200 }).notNull().default('未命名调试案例'),
-  issueDescription: text('issue_description').notNull().default(''),
-  conversationIds: jsonb('conversation_ids').notNull().default([]),
-  traceIds: jsonb('trace_ids').notNull().default([]),
-  status: varchar('status', { length: 20 }).notNull().default('pending'),
-  snapshot: jsonb('snapshot').notNull().default({}),
-  createdBy: bigint('created_by', { mode: 'number' }).notNull().references(() => admins.id),
-  inspectedAt: timestamp('inspected_at', { withTimezone: true }),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  index('debug_cases_created_at_idx').on(table.createdAt),
-  index('debug_cases_status_created_idx').on(table.status, table.createdAt),
-]);

@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { DocumentModule } from '../documents/document.module';
 import { AdminModule } from '../admin/admin.module';
 import { AdminChatTraceController } from './admin-chat-trace.controller';
+import { AdminConversationController } from './admin-conversation.controller';
+import { AdminConversationService } from './admin-conversation.service';
 import { AdminDebugController } from './admin-debug.controller';
 import { AdminDebugService } from './admin-debug.service';
 import { ChatController } from './chat.controller';
@@ -16,7 +18,7 @@ import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
 
 @Module({
   imports: [DocumentModule, AdminModule, AgentModule, SkillsModule],
-  controllers: [ChatController, AdminChatTraceController, AdminDebugController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, SkillPreflightService, AdminDebugService],
+  controllers: [ChatController, AdminChatTraceController, AdminConversationController, AdminDebugController],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, SkillPreflightService, AdminDebugService, AdminConversationService],
 })
 export class ChatModule {}

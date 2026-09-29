@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { DatabaseService } from '../database.service';
-import { CreateDebugCaseDto, DEBUG_CASE_STATUSES, DebugCaseStatus, InspectConversationDebugDto } from './admin-debug.dto';
+import { InspectConversationDebugDto } from './admin-debug.dto';
 
 type JsonRecord = Record<string, unknown>;
 type Severity = 'error' | 'warning' | 'info';
@@ -96,6 +96,9 @@ type DebugConversation = ConversationRow & {
 
 export type DebugInspection = {
   requestedIds: string[];
+  requestedConversationIds: string[];
+  resolvedConversationIds: string[];
+  focusTraceIds: string[];
   notFoundIds: string[];
   requestedTraceIds: string[];
   notFoundTraceIds: string[];
@@ -108,35 +111,28 @@ export type DebugInspection = {
   };
 };
 
-type DebugCaseRow = {
-  id: string;
-  title: string;
-  issueDescription: string;
-  conversationIds: unknown;
-  traceIds: unknown;
-  status: DebugCaseStatus;
-  snapshot: unknown;
-  createdBy: number;
-  inspectedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
-
 @Injectable()
 export class AdminDebugService {
   constructor(private readonly database: DatabaseService) {}
 
   async inspect(actorId: number, input: InspectConversationDebugDto): Promise<DebugInspection> {
-    const conversationIds = unique(input.conversationIds);
+    const conversationIds = unique(input.conversationIds ?? []);
     const traceIds = unique(input.traceIds ?? []);
-    if (conversationIds.length < 1 || conversationIds.length > 20) {
-      throw new BadRequestException('conversationIds must contain between 1 and 20 IDs');
+    if (conversationIds.length + traceIds.length < 1 || conversationIds.length + traceIds.length > 20) {
+      throw new BadRequestException('Provide between 1 and 20 unique conversationIds and traceIds in total');
     }
+
+    const resolvedTraces = traceIds.length
+      ? (await this.database.query<{ id: string; conversationId: string | null }>(
+        'SELECT id, conversation_id AS "conversationId" FROM chat_traces WHERE id = ANY($1::uuid[])', [traceIds],
+      )).rows
+      : [];
+    const resolvedIds = unique([...conversationIds, ...resolvedTraces.flatMap((trace) => trace.conversationId ? [trace.conversationId] : [])]);
 
     const conversations: DebugConversation[] = [];
     const notFoundIds: string[] = [];
-    const foundTraceIds = new Set<string>();
-    for (const conversationId of conversationIds) {
+    const foundTraceIds = new Set(resolvedTraces.map((trace) => trace.id));
+    for (const conversationId of resolvedIds) {
       const conversation = await this.loadConversation(conversationId);
       if (!conversation) {
         notFoundIds.push(conversationId);
@@ -160,6 +156,9 @@ export class AdminDebugService {
     const inspectedAt = new Date().toISOString();
     const result: DebugInspection = {
       requestedIds: conversationIds,
+      requestedConversationIds: conversationIds,
+      resolvedConversationIds: conversations.map((conversation) => conversation.id),
+      focusTraceIds: traceIds.filter((id) => foundTraceIds.has(id)),
       notFoundIds,
       requestedTraceIds: traceIds,
       notFoundTraceIds: traceIds.filter((id) => !foundTraceIds.has(id)),
@@ -176,59 +175,6 @@ export class AdminDebugService {
       findingCount: findings.length,
     });
     return result;
-  }
-
-  async createCase(actorId: number, input: CreateDebugCaseDto): Promise<DebugCaseRow> {
-    const inspection = await this.inspect(actorId, input);
-    const id = randomUUID();
-    const title = input.title?.trim() || input.issueDescription?.trim().slice(0, 200) || '未命名调试案例';
-    const result = await this.database.query<DebugCaseRow>(
-      `INSERT INTO debug_cases
-        (id, title, issue_description, conversation_ids, trace_ids, status, snapshot, created_by, inspected_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, 'pending', $6::jsonb, $7, $8)
-       RETURNING id, title, issue_description AS "issueDescription", conversation_ids AS "conversationIds",
-                 trace_ids AS "traceIds", status, snapshot, created_by::int AS "createdBy",
-                 inspected_at AS "inspectedAt", created_at AS "createdAt", updated_at AS "updatedAt"`,
-      [id, title, inspection.issueDescription, JSON.stringify(inspection.requestedIds), JSON.stringify(inspection.requestedTraceIds), JSON.stringify(inspection), actorId, inspection.inspectedAt],
-    );
-    await this.audit(actorId, 'debug_case.created', 'debug_case', id, { conversationIds: inspection.requestedIds });
-    return result.rows[0];
-  }
-
-  async listCases(limit = 50): Promise<Array<Omit<DebugCaseRow, 'snapshot'>>> {
-    const result = await this.database.query<Omit<DebugCaseRow, 'snapshot'>>(
-      `SELECT id, title, issue_description AS "issueDescription", conversation_ids AS "conversationIds",
-              trace_ids AS "traceIds", status, created_by::int AS "createdBy",
-              inspected_at AS "inspectedAt", created_at AS "createdAt", updated_at AS "updatedAt"
-       FROM debug_cases ORDER BY created_at DESC LIMIT $1`, [Math.max(1, Math.min(limit, 100))],
-    );
-    return result.rows;
-  }
-
-  async getCase(actorId: number, id: string): Promise<DebugCaseRow> {
-    const result = await this.database.query<DebugCaseRow>(
-      `SELECT id, title, issue_description AS "issueDescription", conversation_ids AS "conversationIds",
-              trace_ids AS "traceIds", status, snapshot, created_by::int AS "createdBy",
-              inspected_at AS "inspectedAt", created_at AS "createdAt", updated_at AS "updatedAt"
-       FROM debug_cases WHERE id = $1`, [id],
-    );
-    if (!result.rows[0]) throw new NotFoundException('Debug case not found');
-    await this.audit(actorId, 'debug_case.viewed', 'debug_case', id, {});
-    return result.rows[0];
-  }
-
-  async updateStatus(actorId: number, id: string, status: DebugCaseStatus): Promise<DebugCaseRow> {
-    if (!DEBUG_CASE_STATUSES.includes(status)) throw new BadRequestException('Invalid debug case status');
-    const result = await this.database.query<DebugCaseRow>(
-      `UPDATE debug_cases SET status = $2, updated_at = now()
-       WHERE id = $1
-       RETURNING id, title, issue_description AS "issueDescription", conversation_ids AS "conversationIds",
-                 trace_ids AS "traceIds", status, snapshot, created_by::int AS "createdBy",
-                 inspected_at AS "inspectedAt", created_at AS "createdAt", updated_at AS "updatedAt"`, [id, status],
-    );
-    if (!result.rows[0]) throw new NotFoundException('Debug case not found');
-    await this.audit(actorId, 'debug_case.status_updated', 'debug_case', id, { status });
-    return result.rows[0];
   }
 
   private async loadConversation(conversationId: string): Promise<DebugConversation | null> {
