@@ -29,7 +29,8 @@ const turns = computed(() => {
 });
 
 function date(value: string | null) { return value ? new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'; }
-function statusInfo(item: { status: string; refused?: boolean | null }) {
+function statusInfo(item: { status: string; refused?: boolean | null; busyUntil?: string | null }) {
+  if (item.busyUntil && new Date(item.busyUntil).getTime() > Date.now()) return { text: '处理中', className: 'active' };
   if (item.status === 'failed') return { text: '失败', className: 'failed' };
   if (item.refused) return { text: '拒答', className: 'refused' };
   return { text: '已回答', className: 'answered' };
@@ -83,7 +84,7 @@ onMounted(loadSessions);
     <div class="session-workspace">
       <aside class="session-list-panel">
         <div class="session-filters"><select v-model="status" @change="offset = 0; loadSessions()"><option value="all">全部状态</option><option value="answered">已回答</option><option value="refused">已拒答</option><option value="failed">失败</option><option value="active">处理中</option></select><label><Search :size="14" /><input v-model="query" placeholder="搜索会话或问题" @keyup.enter="offset = 0; void loadSessions()" /></label></div>
-        <div class="session-list"><button v-for="item in sessions" :key="item.id" class="session-item" :class="{ active: item.id === selectedConversation?.id }" @click="chooseConversation(item.id)"><span class="session-item-main"><strong>{{ item.title || '未命名会话' }}</strong><small>{{ item.lastQuestion || '暂无问题' }}</small><small>{{ item.turnCount }} 轮 · {{ date(item.updatedAt) }}</small></span><span :class="['status-pill', statusInfo({ status: item.lastStatus || 'completed', refused: item.lastRefused }).className]">{{ statusInfo({ status: item.lastStatus || 'completed', refused: item.lastRefused }).text }}</span></button><p v-if="!sessions.length && !loading" class="empty-copy">没有匹配的会话。</p></div>
+        <div class="session-list"><button v-for="item in sessions" :key="item.id" class="session-item" :class="{ active: item.id === selectedConversation?.id }" @click="chooseConversation(item.id)"><span class="session-item-main"><strong>{{ item.title || '未命名会话' }}</strong><small>{{ item.lastQuestion || '暂无问题' }}</small><small>{{ item.turnCount }} 轮 · {{ date(item.updatedAt) }}</small></span><span :class="['status-pill', statusInfo({ status: item.lastStatus || 'completed', refused: item.lastRefused, busyUntil: item.busyUntil }).className]">{{ statusInfo({ status: item.lastStatus || 'completed', refused: item.lastRefused, busyUntil: item.busyUntil }).text }}</span></button><p v-if="!sessions.length && !loading" class="empty-copy">没有匹配的会话。</p></div>
         <div class="session-pagination"><button :disabled="offset === 0 || loading" @click="nextPage(-1)">上一页</button><span>{{ Math.floor(offset / 30) + 1 }}</span><button :disabled="!hasMore || loading" @click="nextPage(1)">下一页</button></div>
       </aside>
 

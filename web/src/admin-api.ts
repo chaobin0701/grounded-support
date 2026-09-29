@@ -133,7 +133,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
 }
 
 export interface ConversationListItem {
-  id: string; title: string; updatedAt: string; createdAt: string; visitorSessionId: string;
+  id: string; title: string; updatedAt: string; createdAt: string; visitorSessionId: string; busyUntil: string | null;
   messageCount: number; turnCount: number; lastQuestion: string | null; lastStatus: string | null;
   lastRefused: boolean | null; lastTraceId: string | null; hasFailed: boolean; hasRefused: boolean;
 }

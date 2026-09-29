@@ -25,6 +25,7 @@ export class AdminConversationService {
        )
        SELECT c.id, c.title, c.updated_at AS "updatedAt", c.created_at AS "createdAt",
               c.visitor_session_id AS "visitorSessionId",
+              c.busy_until AS "busyUntil",
               COALESCE(ms."messageCount", 0) AS "messageCount",
               COALESCE(ms."turnCount", 0) AS "turnCount",
               lt.question AS "lastQuestion", lt.status AS "lastStatus", lt.refused AS "lastRefused",
