@@ -12,7 +12,7 @@ import { parsePlannerOutput } from './planner-output';
 import type { PlannerToolCall } from './planner-output';
 
 export const PLANNER_PROMPT = `你是暖巢电器的统一问答 Agent。先理解用户当前问题，再决定直接回复、调用工具或拒答。闲聊、问候和感谢可以自然回复；业务事实必须来自预检索资料或工具结果，不能使用常识补足。
-你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。通常输出一个 JSON 对象；如果同一轮需要多个独立工具，可以输出 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
+你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。通常输出一个 JSON 对象；如果多个独立工具的参数已经可以确定，应在同一次响应中批量返回，格式为 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。同一批次中的工具会按顺序执行；不要把依赖前一个结果的工具放进同一批次。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
 需要工具时输出：{"type":"tool","name":"工具名","arguments":{}}。
 不需要更多工具时输出：{"type":"final","status":"answered","answer":"简短中文回答","citationIds":[资料片段数字ID],"productIds":[产品ID]}。
 如果资料或产品结果不能支持回答，输出：{"type":"final","status":"refused","answer":"无法确定，建议联系人工。","citationIds":[],"productIds":[]}。
@@ -49,6 +49,8 @@ export class AgentLoop {
   }
 
   async step(input: AgentInput, state: AgentState, onProgress?: (event: PublicProgressEvent) => void): Promise<AgentStepResult> {
+    state.plannerRound += 1;
+    const plannerRound = state.plannerRound;
     const builtContext = this.contextBuilder.build({
       question: input.question,
       summary: input.summary,
@@ -60,13 +62,14 @@ export class AgentLoop {
     state.contextSnapshot.contextMetadata = builtContext.metadata;
 
     const skillPrompt = input.skill ? `\n当前 Skill：${input.skill.name}\nSkill 规则：${input.skill.systemInstructions}` : '';
-    const plannerSystemPrompt = `${PLANNER_PROMPT}${skillPrompt}`;
+    const planningHints = this.toolExecution.plannerHints();
+    const plannerSystemPrompt = `${PLANNER_PROMPT}\n工具调度提示：\n${planningHints || '没有额外的工具调度提示。'}${skillPrompt}`;
     const modelStarted = Date.now();
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     try {
       model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner');
     } catch (error) {
-      state.executionSteps.push({ type: 'llm_call', stage: 'planning', model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
+      state.executionSteps.push({ type: 'llm_call', stage: 'planning', plannerRound, model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
       state.contextSnapshot.executionSteps = state.executionSteps;
       throw error;
     }
@@ -74,6 +77,7 @@ export class AgentLoop {
     const modelStep: AgentExecutionStep = {
       type: 'llm_call',
       stage: 'planning',
+      plannerRound,
       model: model.model,
       ok: true,
       durationMs: model.durationMs ?? 0,
@@ -92,6 +96,7 @@ export class AgentLoop {
     const modelCall: AgentModelCall = {
       id: `planner-${state.modelCalls.length + 1}`,
       purpose: 'planner',
+      plannerRound,
       model: model.model,
       request: {
         messages: [
@@ -126,7 +131,7 @@ export class AgentLoop {
       if (final.status === 'answered' && evidenceRequired && Array.isArray(final.citationIds) && Array.isArray(final.productIds)
         && final.citationIds.length === 0 && final.productIds.length === 0) {
         state.toolResults.push({ validation: 'final_answer_requires_a_retrieved_citation_or_product_id' });
-        state.executionSteps.push({ type: 'validation', stage: 'answer_guard', ok: false, durationMs: 0, detail: '最终回答缺少有效资料或产品引用' });
+        state.executionSteps.push({ type: 'validation', stage: 'answer_guard', plannerRound, ok: false, durationMs: 0, detail: '最终回答缺少有效资料或产品引用' });
         state.contextSnapshot.toolResults = state.toolResults;
         state.contextSnapshot.executionSteps = state.executionSteps;
         return { type: 'continue' };
@@ -143,6 +148,7 @@ export class AgentLoop {
       state.executionSteps.push({
         type: 'validation',
         stage: 'answer_guard',
+        plannerRound,
         ok: !validated.refused || final.status === 'refused',
         durationMs: 0,
         detail: final.status === 'refused'
@@ -157,7 +163,9 @@ export class AgentLoop {
     }
 
     if (!parsed.toolCalls.length) return { type: 'complete', result: refusedAnswer() };
-    for (const call of parsed.toolCalls) {
+    const toolCalls = this.selectToolBatch(parsed.toolCalls);
+    const toolBatchId = `planner-${plannerRound}-tools`;
+    for (const [toolIndex, call] of toolCalls.entries()) {
       const toolStarted = Date.now();
       const operationId = `${Date.now()}-tool-${state.toolCalls.length + 1}`;
       const toolLabel = publicToolLabel(call.name);
@@ -179,6 +187,9 @@ export class AgentLoop {
       state.executionSteps.push({
         type: 'tool_call',
         stage: 'tool',
+        plannerRound,
+        toolBatchId,
+        toolIndex,
         name: call.name,
         ok: execution.trace.ok,
         durationMs: execution.trace.durationMs,
@@ -192,6 +203,13 @@ export class AgentLoop {
       if (!execution.result.success) return { type: 'complete', result: refusedAnswer() };
     }
     return { type: 'continue' };
+  }
+
+  private selectToolBatch(toolCalls: readonly PlannerToolCall[]): readonly PlannerToolCall[] {
+    if (toolCalls.length <= 1) return toolCalls;
+    const firstNonBatchIndex = toolCalls.findIndex((call) => !this.toolExecution.canBatch(call.name));
+    if (firstNonBatchIndex < 0) return toolCalls;
+    return toolCalls.slice(0, Math.max(1, firstNonBatchIndex));
   }
 
   private collectToolData(name: PlannerToolCall['name'], data: unknown, state: AgentState): void {

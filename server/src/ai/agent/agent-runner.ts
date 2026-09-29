@@ -93,6 +93,7 @@ export class AgentRunner {
       usageSeen: false,
       finalRaw: '',
       skill,
+      plannerRound: 0,
     };
   }
 

@@ -123,6 +123,9 @@ export interface ChatTraceDetail extends ChatTraceItem {
       result?: unknown;
       errorCode?: string;
       detail?: string;
+      plannerRound?: number;
+      toolBatchId?: string;
+      toolIndex?: number;
     }[];
     categories?: { id: string; name: string }[];
     products?: { id: string; name: string }[];
