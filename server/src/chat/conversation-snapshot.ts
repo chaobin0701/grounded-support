@@ -1,4 +1,5 @@
 import { PreviousTurnDto } from './chat.dto';
+import type { AgentTranscriptMessage } from './agent-transcript';
 
 export type SnapshotMessage = {
   id: number;
@@ -14,4 +15,5 @@ export interface ConversationSnapshot {
   summaryThroughMessageId: number | null;
   recentMessages: SnapshotMessage[];
   history: PreviousTurnDto[];
+  agentTranscript: AgentTranscriptMessage[];
 }

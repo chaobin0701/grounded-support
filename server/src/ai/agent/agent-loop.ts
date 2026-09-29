@@ -10,6 +10,7 @@ import type { ProductDetail, ProductSummary } from '../tools/product-catalog/pro
 import { ToolExecutionService } from '../tools/tool-execution';
 import { parsePlannerOutput } from './planner-output';
 import type { PlannerToolCall } from './planner-output';
+import { transcriptMessageBase } from '../../chat/agent-transcript';
 
 export const PLANNER_PROMPT = `你是暖巢电器的统一问答 Agent。先理解用户当前问题，再决定直接回复、调用工具或拒答。闲聊、问候和感谢可以自然回复；业务事实必须来自预检索资料或工具结果，不能使用常识补足。
 你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。通常输出一个 JSON 对象；如果多个独立工具的参数已经可以确定，应在同一次响应中批量返回，格式为 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。同一批次中的工具会按顺序执行；不要把依赖前一个结果的工具放进同一批次。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
@@ -58,6 +59,7 @@ export class AgentLoop {
       toolResults: state.toolResults,
       initialEvidence: input.initialEvidence,
       skill: input.skill,
+      transcript: state.transcript,
     });
     state.contextSnapshot.contextMetadata = builtContext.metadata;
 
@@ -145,6 +147,13 @@ export class AgentLoop {
       state.contextSnapshot.toolCalls = state.toolCalls;
       state.contextSnapshot.toolResults = state.toolResults;
       const validated = validateAgentAnswer(JSON.stringify(final), [...state.hits.values()], [...state.products.values()], state.skill.responseMode, evidenceRequired);
+      this.appendTranscript(state, {
+        ...this.transcriptBase(state),
+        role: 'assistant',
+        content: validated.answer,
+        citationIds: validated.citations.map((citation) => citation.chunkId),
+        productIds: Array.isArray(final.productIds) ? final.productIds.filter((id): id is string => typeof id === 'string') : [],
+      });
       state.executionSteps.push({
         type: 'validation',
         stage: 'answer_guard',
@@ -165,6 +174,16 @@ export class AgentLoop {
     if (!parsed.toolCalls.length) return { type: 'complete', result: refusedAnswer() };
     const toolCalls = this.selectToolBatch(parsed.toolCalls);
     const toolBatchId = `planner-${plannerRound}-tools`;
+    const transcriptToolCalls = toolCalls.map((call, toolIndex) => ({
+      id: `${toolBatchId}-${toolIndex + 1}`,
+      name: call.name,
+      arguments: call.arguments,
+    }));
+    this.appendTranscript(state, {
+      ...this.transcriptBase(state),
+      role: 'assistant',
+      toolCalls: transcriptToolCalls,
+    });
     for (const [toolIndex, call] of toolCalls.entries()) {
       const toolStarted = Date.now();
       const operationId = `${Date.now()}-tool-${state.toolCalls.length + 1}`;
@@ -183,6 +202,15 @@ export class AgentLoop {
       state.toolResults.push({
         tool: call.name,
         result: execution.result.success ? execution.result.content : { error: execution.result.errorCode ?? 'tool_failed' },
+      });
+      this.appendTranscript(state, {
+        ...this.transcriptBase(state),
+        role: 'tool',
+        toolCallId: transcriptToolCalls[toolIndex]!.id,
+        toolName: call.name,
+        content: execution.result.success
+          ? typeof execution.result.data === 'string' ? execution.result.data : JSON.stringify(execution.result.data ?? execution.result.content)
+          : JSON.stringify({ error: execution.result.errorCode ?? 'tool_failed' }),
       });
       state.executionSteps.push({
         type: 'tool_call',
@@ -210,6 +238,16 @@ export class AgentLoop {
     const firstNonBatchIndex = toolCalls.findIndex((call) => !this.toolExecution.canBatch(call.name));
     if (firstNonBatchIndex < 0) return toolCalls;
     return toolCalls.slice(0, Math.max(1, firstNonBatchIndex));
+  }
+
+  private transcriptBase(state: AgentState) {
+    const first = state.traceTranscript[0];
+    return transcriptMessageBase(first?.conversationId, first?.traceId, state.transcript.length + 1);
+  }
+
+  private appendTranscript(state: AgentState, message: AgentState['traceTranscript'][number]): void {
+    state.transcript.push(message);
+    state.traceTranscript.push(message);
   }
 
   private collectToolData(name: PlannerToolCall['name'], data: unknown, state: AgentState): void {

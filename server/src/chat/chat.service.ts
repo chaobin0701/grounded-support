@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SearchHit } from '../documents/fuse-search-results';
 import { PreviousTurnDto } from './chat.dto';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
+import type { AgentTranscriptMessage } from './agent-transcript';
 export { validateAnswer } from '../ai/agent/citation-validation';
 
 export type Citation = Pick<SearchHit, 'chunkId' | 'documentId' | 'documentTitle' | 'originalFilename' | 'sourceStartLine' | 'sourceEndLine'>;
@@ -26,6 +27,7 @@ export type ChatStreamCallbacks = {
   onProgress?: (event: PublicProgressEvent) => void;
 };
 export type ChatRun = {
+  traceId?: string;
   result: ChatAnswer;
   contextSnapshot: Record<string, unknown>;
   rawModelOutput: string | null;
@@ -49,8 +51,8 @@ export class ChatService {
     return (await this.askDetailed(question, history)).result;
   }
 
-  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string, callbacks?: ChatStreamCallbacks): Promise<ChatRun> {
-    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId, callbacks);
+  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string, callbacks?: ChatStreamCallbacks, agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[] }): Promise<ChatRun> {
+    return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId, callbacks, agentContext);
   }
 
 }

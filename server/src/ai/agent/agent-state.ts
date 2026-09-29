@@ -4,6 +4,7 @@ import type { ToolContext } from '../tools/tool-context';
 import type { ToolExecutionTrace } from '../tools/tool-execution';
 import type { ToolExecutionState } from '../tools/tool-policy';
 import type { SkillDefinition } from '../skills/skill.types';
+import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 
 export type AgentModelCall = {
   id: string;
@@ -69,4 +70,6 @@ export type AgentState = {
   finalRaw: string;
   skill: SkillDefinition;
   plannerRound: number;
+  transcript: AgentTranscriptMessage[];
+  traceTranscript: AgentTranscriptMessage[];
 };

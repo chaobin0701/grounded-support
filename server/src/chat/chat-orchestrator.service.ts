@@ -7,6 +7,7 @@ import { SkillSelector } from '../ai/skills/skill-selector';
 import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
 import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
 import type { AgentModelCall } from '../ai/agent/agent-state';
+import type { AgentTranscriptMessage } from './agent-transcript';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -28,6 +29,7 @@ export class ChatOrchestratorService {
     _onCommentary?: (event: CommentaryEvent) => void,
     requestedSkillId?: string,
     callbacks?: ChatStreamCallbacks,
+    agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[] },
   ): Promise<ChatRun> {
     const progressEvents: PublicProgressEvent[] = [];
     const emitProgress = (event: PublicProgressEvent) => {
@@ -55,6 +57,9 @@ export class ChatOrchestratorService {
           ...(preflight.errorCode ? { errorCode: preflight.errorCode } : {}),
         },
         selectedBy: selected.selectedBy,
+        conversationId: agentContext?.conversationId,
+        traceId: agentContext?.traceId,
+        priorTranscript: agentContext?.priorTranscript,
       },
       { onContext, onProgress: emitProgress },
     );
@@ -91,6 +96,7 @@ export class ChatOrchestratorService {
     }
     result.result = { ...result.result, progressEvents: [...(result.result.progressEvents ?? []), ...progressEvents] };
     return {
+      traceId: agentContext?.traceId,
       result: result.result,
       contextSnapshot: result.contextSnapshot,
       rawModelOutput: result.rawModelOutput,

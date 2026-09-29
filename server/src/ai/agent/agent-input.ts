@@ -3,6 +3,7 @@ import type { EventSink } from '../../channels/event-sink';
 import type { SkillDefinition } from '../skills/skill.types';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import type { PublicProgressEvent } from '../../chat/chat.service';
+import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 
 export type AgentInput = {
   question: string;
@@ -18,6 +19,9 @@ export type AgentInput = {
     errorCode?: string;
   };
   selectedBy?: 'default' | 'explicit' | 'deterministic';
+  conversationId?: string;
+  traceId?: string;
+  priorTranscript?: AgentTranscriptMessage[];
 };
 
 export type AgentCallbacks = {
