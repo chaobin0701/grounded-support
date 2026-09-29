@@ -36,6 +36,7 @@ export class AdminConversationService {
        LEFT JOIN message_stats ms ON ms.conversation_id = c.id
        LEFT JOIN latest_trace lt ON lt.conversation_id = c.id
        WHERE ($1 = '%%' OR c.id::text ILIKE $1 OR c.title ILIKE $1 OR COALESCE(lt.question, '') ILIKE $1)
+         AND COALESCE(ms."messageCount", 0) > 0
          AND ($2 = 'all'
            OR ($2 = 'answered' AND lt.status = 'completed' AND COALESCE(lt.refused, false) = false)
            OR ($2 = 'refused' AND lt.refused = true)
