@@ -134,6 +134,7 @@ export const documentChunks = pgTable('document_chunks', {
 export const visitorSessions = pgTable('visitor_sessions', {
   id: uuid('id').primaryKey(),
   tokenHash: varchar('token_hash', { length: 64 }).notNull().unique(),
+  clientType: varchar('client_type', { length: 40 }).notNull().default('browser'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 });

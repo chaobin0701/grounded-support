@@ -2,13 +2,16 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { DatabaseService } from '../database.service';
 
 export type ConversationStatusFilter = 'all' | 'answered' | 'refused' | 'failed' | 'active';
+const CLIENT_TYPES = new Set(['all', 'browser', 'mobile', 'wechat', 'feishu', 'api']);
 
 @Injectable()
 export class AdminConversationService {
   constructor(private readonly database: DatabaseService) {}
 
-  async list(limit: number, offset: number, query = '', status: string = 'all') {
+  async list(limit: number, offset: number, query = '', status: string = 'all', visitorId = '', device = 'all', since: string | null = null) {
     const filter = this.normalizeStatus(status);
+    if (!CLIENT_TYPES.has(device)) throw new BadRequestException('Invalid conversation device filter');
+    if (since && Number.isNaN(new Date(since).getTime())) throw new BadRequestException('Invalid conversation time filter');
     const safeLimit = Math.max(1, Math.min(limit, 100));
     const safeOffset = Math.max(0, offset);
     const search = `%${query.trim()}%`;
@@ -25,6 +28,7 @@ export class AdminConversationService {
        )
        SELECT c.id, c.title, c.updated_at AS "updatedAt", c.created_at AS "createdAt",
               c.visitor_session_id AS "visitorSessionId",
+              vs.client_type AS "clientType",
               c.busy_until AS "busyUntil",
               COALESCE(ms."messageCount", 0) AS "messageCount",
               COALESCE(ms."turnCount", 0) AS "turnCount",
@@ -33,20 +37,30 @@ export class AdminConversationService {
               EXISTS (SELECT 1 FROM chat_traces t WHERE t.conversation_id = c.id AND t.status = 'failed') AS "hasFailed",
               EXISTS (SELECT 1 FROM chat_traces t WHERE t.conversation_id = c.id AND t.refused = true) AS "hasRefused"
        FROM conversations c
+       JOIN visitor_sessions vs ON vs.id = c.visitor_session_id
        LEFT JOIN message_stats ms ON ms.conversation_id = c.id
        LEFT JOIN latest_trace lt ON lt.conversation_id = c.id
        WHERE ($1 = '%%' OR c.id::text ILIKE $1 OR c.title ILIKE $1 OR COALESCE(lt.question, '') ILIKE $1)
          AND COALESCE(ms."messageCount", 0) > 0
+         AND ($3 = '' OR c.visitor_session_id::text = $3)
+         AND ($4 = 'all' OR vs.client_type = $4)
+         AND ($5::timestamptz IS NULL OR c.updated_at >= $5::timestamptz)
          AND ($2 = 'all'
            OR ($2 = 'answered' AND lt.status = 'completed' AND COALESCE(lt.refused, false) = false)
            OR ($2 = 'refused' AND lt.refused = true)
            OR ($2 = 'failed' AND (lt.status = 'failed' OR EXISTS (SELECT 1 FROM chat_traces t2 WHERE t2.conversation_id = c.id AND t2.status = 'failed')))
            OR ($2 = 'active' AND c.busy_until IS NOT NULL AND c.busy_until > now()))
        ORDER BY c.updated_at DESC
-       LIMIT $3 OFFSET $4`, [search, filter, safeLimit + 1, safeOffset],
+       LIMIT $6 OFFSET $7`, [search, filter, visitorId, device, since, safeLimit + 1, safeOffset],
     );
     const hasMore = result.rows.length > safeLimit;
-    return { items: result.rows.slice(0, safeLimit), pagination: { limit: safeLimit, offset: safeOffset, hasMore } };
+    const filters = await this.database.query<{ visitorId: string; conversationCount: number; clientType: string }>(
+      `SELECT c.visitor_session_id::text AS "visitorId", count(*)::int AS "conversationCount", vs.client_type AS "clientType"
+       FROM conversations c JOIN visitor_sessions vs ON vs.id = c.visitor_session_id
+       WHERE EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)
+       GROUP BY c.visitor_session_id, vs.client_type ORDER BY max(c.updated_at) DESC LIMIT 100`,
+    );
+    return { items: result.rows.slice(0, safeLimit), filters: filters.rows, pagination: { limit: safeLimit, offset: safeOffset, hasMore } };
   }
 
   async detail(id: string) {

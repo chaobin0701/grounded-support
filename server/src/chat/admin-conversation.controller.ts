@@ -16,8 +16,11 @@ export class AdminConversationController {
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('q') query = '',
     @Query('status') status = 'all',
+    @Query('visitorId') visitorId = '',
+    @Query('device') device = 'all',
+    @Query('since') since = '',
   ) {
-    return this.conversations.list(limit, offset, query, status);
+    return this.conversations.list(limit, offset, query, status, visitorId, device, since || null);
   }
 
   @Get(':id')

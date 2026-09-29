@@ -135,7 +135,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
 export interface ConversationListItem {
   id: string; title: string; updatedAt: string; createdAt: string; visitorSessionId: string; busyUntil: string | null;
   messageCount: number; turnCount: number; lastQuestion: string | null; lastStatus: string | null;
-  lastRefused: boolean | null; lastTraceId: string | null; hasFailed: boolean; hasRefused: boolean;
+  lastRefused: boolean | null; lastTraceId: string | null; hasFailed: boolean; hasRefused: boolean; clientType: string;
 }
 export interface ConversationDetail {
   id: string; visitorSessionId: string; title: string; summary: string; busyUntil: string | null;
@@ -301,6 +301,6 @@ export const adminApi = {
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
   debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
-  conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string } = {}) => request<{ items: ConversationListItem[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}`, {}, token),
+  conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}`, {}, token),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
 };
