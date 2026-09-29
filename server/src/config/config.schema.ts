@@ -3,6 +3,8 @@ import { z } from 'zod';
 const DEFAULT_LLM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
 const DEFAULT_LLM_MODEL = 'deepseek-v4-1-flash-260910';
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
+const DEFAULT_LLM_CONTEXT_WINDOW_TOKENS = 32_000;
+const DEFAULT_LLM_MAX_OUTPUT_TOKENS = 1_200;
 const DEFAULT_UPLOAD_ROOT = '/data/uploads';
 const DEFAULT_TRUST_PROXY = 1;
 const DEFAULT_CHAT_WINDOW_MS = 60_000;
@@ -63,12 +65,16 @@ export const configSchema = z.object({
     baseUrl: z.string().url().default(DEFAULT_LLM_BASE_URL),
     model: z.string().trim().min(1).default(DEFAULT_LLM_MODEL),
     timeoutMs: z.coerce.number().int().min(1_000).max(120_000).default(DEFAULT_LLM_TIMEOUT_MS),
+    contextWindowTokens: z.coerce.number().int().min(1_024).max(1_000_000).default(DEFAULT_LLM_CONTEXT_WINDOW_TOKENS),
+    maxOutputTokens: z.coerce.number().int().min(128).max(32_000).default(DEFAULT_LLM_MAX_OUTPUT_TOKENS),
   }).default({
     provider: 'openai-compatible',
     apiKey: '',
     baseUrl: DEFAULT_LLM_BASE_URL,
     model: DEFAULT_LLM_MODEL,
     timeoutMs: DEFAULT_LLM_TIMEOUT_MS,
+    contextWindowTokens: DEFAULT_LLM_CONTEXT_WINDOW_TOKENS,
+    maxOutputTokens: DEFAULT_LLM_MAX_OUTPUT_TOKENS,
   }),
 });
 
@@ -118,6 +124,8 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       baseUrl: env.LLM_BASE_URL?.trim(),
       model: env.LLM_MODEL?.trim(),
       timeoutMs: env.LLM_TIMEOUT_MS,
+      contextWindowTokens: env.LLM_CONTEXT_WINDOW_TOKENS,
+      maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
     },
   });
   if (!parsed.success) {
@@ -147,6 +155,8 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       'llm.baseUrl': 'LLM_BASE_URL',
       'llm.model': 'LLM_MODEL',
       'llm.timeoutMs': 'LLM_TIMEOUT_MS',
+      'llm.contextWindowTokens': 'LLM_CONTEXT_WINDOW_TOKENS',
+      'llm.maxOutputTokens': 'LLM_MAX_OUTPUT_TOKENS',
     };
     const details = parsed.error.issues
       .map((issue) => `${names[issue.path.join('.')] ?? (issue.path.join('.') || 'config')} ${issue.message}`)

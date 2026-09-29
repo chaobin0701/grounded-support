@@ -7,10 +7,11 @@ import { AgentLoop } from './agent-loop';
 import { AgentRunner } from './agent-runner';
 import { SkillsModule } from '../skills/skills.module';
 import { McpModule } from '../mcp/mcp.module';
+import { ContextGovernor } from '../../chat/context-governor';
 
 @Module({
   imports: [AiModule, ToolsModule, SkillsModule, McpModule],
-  providers: [ContextBuilder, LlmService, AgentLoop, AgentRunner],
-  exports: [ContextBuilder, LlmService, AgentLoop, AgentRunner],
+  providers: [ContextBuilder, ContextGovernor, LlmService, AgentLoop, AgentRunner],
+  exports: [ContextBuilder, ContextGovernor, LlmService, AgentLoop, AgentRunner],
 })
 export class AgentModule {}

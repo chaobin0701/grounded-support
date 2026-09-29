@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import { ContextBuilder } from '../../chat/context-builder';
 import type { ChatAnswer, PublicProgressEvent } from '../../chat/chat.service';
@@ -11,6 +11,7 @@ import { ToolExecutionService } from '../tools/tool-execution';
 import { parsePlannerOutput } from './planner-output';
 import type { PlannerToolCall } from './planner-output';
 import { transcriptMessageBase } from '../../chat/agent-transcript';
+import { ContextGovernor } from '../../chat/context-governor';
 
 export const PLANNER_PROMPT = `你是暖巢电器的统一问答 Agent。先理解用户当前问题，再决定直接回复、调用工具或拒答。闲聊、问候和感谢可以自然回复；业务事实必须来自预检索资料或工具结果，不能使用常识补足。
 你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。通常输出一个 JSON 对象；如果多个独立工具的参数已经可以确定，应在同一次响应中批量返回，格式为 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。同一批次中的工具会按顺序执行；不要把依赖前一个结果的工具放进同一批次。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
@@ -31,6 +32,7 @@ export class AgentLoop {
     private readonly llm: LlmService,
     private readonly contextBuilder: ContextBuilder,
     private readonly toolExecution: ToolExecutionService,
+    @Optional() private readonly contextGovernor?: ContextGovernor,
   ) {}
 
   get maxToolCalls(): number {
@@ -66,6 +68,19 @@ export class AgentLoop {
     const skillPrompt = input.skill ? `\n当前 Skill：${input.skill.name}\nSkill 规则：${input.skill.systemInstructions}` : '';
     const planningHints = this.toolExecution.plannerHints();
     const plannerSystemPrompt = `${PLANNER_PROMPT}\n工具调度提示：\n${planningHints || '没有额外的工具调度提示。'}${skillPrompt}`;
+    const contextBudget = this.contextGovernor?.inspect({
+      systemPrompt: plannerSystemPrompt,
+      userPrompt: builtContext.userPrompt,
+      purpose: 'planner',
+      rawMessageCount: builtContext.metadata.transcriptCount + builtContext.metadata.historyCount + 2,
+      includedMessageCount: builtContext.metadata.transcriptCount + builtContext.metadata.historyCount + 2,
+    });
+    if (contextBudget) {
+      const budgets = Array.isArray(state.contextSnapshot.contextBudgets) ? state.contextSnapshot.contextBudgets : [];
+      budgets.push({ purpose: 'planner', plannerRound, ...contextBudget });
+      state.contextSnapshot.contextBudgets = budgets;
+      state.contextSnapshot.contextBudget = contextBudget;
+    }
     const modelStarted = Date.now();
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     try {
@@ -117,6 +132,7 @@ export class AgentLoop {
       },
       durationMs: model.durationMs,
       attempts: model.attempts,
+      ...(contextBudget ? { contextBudget } : {}),
     };
     state.modelCalls.push(modelCall);
     state.contextSnapshot.modelCalls = state.modelCalls;

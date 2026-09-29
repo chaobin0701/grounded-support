@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { DatabaseService } from '../database.service';
@@ -7,6 +7,7 @@ import { LlmService, ModelFailure } from './llm.service';
 import { ConversationSnapshot } from './conversation-snapshot';
 import type { AgentModelCall } from '../ai/agent/agent-state';
 import { flattenTranscript } from './agent-transcript';
+import { ContextGovernor } from './context-governor';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -40,7 +41,7 @@ function clientType(request: Request): string {
 export class ConversationService {
   private readonly logger = new Logger(ConversationService.name);
 
-  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService) {}
+  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService, @Optional() private readonly contextGovernor?: ContextGovernor) {}
 
   async session(request: Request, response: Response): Promise<string> {
     const raw = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1);
@@ -394,11 +395,20 @@ export class ConversationService {
     if (messages.rows.length < 12) return;
     const toSummarize = messages.rows.slice(0, -4);
     const contextSnapshot = { previousSummary: oldSummary, messages: toSummarize.map(({ role, content }) => ({ role, content })) };
+    const summaryUserPrompt = JSON.stringify(contextSnapshot);
+    const contextBudget = this.contextGovernor?.inspect({
+      systemPrompt: SUMMARY_PROMPT,
+      userPrompt: summaryUserPrompt,
+      purpose: 'summary',
+      rawMessageCount: toSummarize.length + 1,
+      includedMessageCount: toSummarize.length + 1,
+    });
     const started = Date.now();
     try {
-      const result = await this.llm.completeDetailed(SUMMARY_PROMPT, JSON.stringify(contextSnapshot), this.llm.model, 'summary');
+      const result = await this.llm.completeDetailed(SUMMARY_PROMPT, summaryUserPrompt, this.llm.model, 'summary');
       const traceContext = {
         ...contextSnapshot,
+        ...(contextBudget ? { contextBudget } : {}),
         modelCalls: [{
           id: 'summary-1',
           purpose: 'summary' as const,
