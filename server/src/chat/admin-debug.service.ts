@@ -137,7 +137,7 @@ export class AdminDebugService {
     const notFoundIds: string[] = [];
     const foundTraceIds = new Set<string>();
     for (const conversationId of conversationIds) {
-      const conversation = await this.loadConversation(conversationId, traceIds);
+      const conversation = await this.loadConversation(conversationId);
       if (!conversation) {
         notFoundIds.push(conversationId);
         continue;
@@ -231,7 +231,7 @@ export class AdminDebugService {
     return result.rows[0];
   }
 
-  private async loadConversation(conversationId: string, traceIds: string[]): Promise<DebugConversation | null> {
+  private async loadConversation(conversationId: string): Promise<DebugConversation | null> {
     const conversationResult = await this.database.query<ConversationRow>(
       `SELECT id, visitor_session_id AS "visitorSessionId", title, summary,
               busy_until AS "busyUntil", created_at AS "createdAt", updated_at AS "updatedAt"
@@ -252,22 +252,13 @@ export class AdminDebugService {
                 assistant_message_id::int AS "assistantMessageId", created_at AS "createdAt"
          FROM conversation_runs WHERE conversation_id = $1 ORDER BY created_at ASC`, [conversationId],
       ),
-      traceIds.length
-        ? this.database.query<TraceRow>(
-          `SELECT id, kind, conversation_id AS "conversationId", user_message_id::int AS "userMessageId",
-                  question, context_snapshot AS "contextSnapshot", model,
-                  raw_model_output AS "rawModelOutput", final_answer AS "finalAnswer", refused, status,
-                  error_code AS "errorCode", input_tokens AS "inputTokens", output_tokens AS "outputTokens",
-                  total_tokens AS "totalTokens", duration_ms AS "durationMs", created_at AS "createdAt"
-           FROM chat_traces WHERE conversation_id = $1 AND id = ANY($2::uuid[]) ORDER BY created_at ASC`, [conversationId, traceIds],
-        )
-        : this.database.query<TraceRow>(
-          `SELECT id, kind, conversation_id AS "conversationId", user_message_id::int AS "userMessageId",
-                  question, context_snapshot AS "contextSnapshot", model,
-                  raw_model_output AS "rawModelOutput", final_answer AS "finalAnswer", refused, status,
-                  error_code AS "errorCode", input_tokens AS "inputTokens", output_tokens AS "outputTokens",
-                  total_tokens AS "totalTokens", duration_ms AS "durationMs", created_at AS "createdAt"
-           FROM chat_traces WHERE conversation_id = $1 ORDER BY created_at ASC`, [conversationId]),
+      this.database.query<TraceRow>(
+        `SELECT id, kind, conversation_id AS "conversationId", user_message_id::int AS "userMessageId",
+                question, context_snapshot AS "contextSnapshot", model,
+                raw_model_output AS "rawModelOutput", final_answer AS "finalAnswer", refused, status,
+                error_code AS "errorCode", input_tokens AS "inputTokens", output_tokens AS "outputTokens",
+                total_tokens AS "totalTokens", duration_ms AS "durationMs", created_at AS "createdAt"
+         FROM chat_traces WHERE conversation_id = $1 ORDER BY created_at ASC`, [conversationId]),
     ]);
     const base = {
       ...conversation,
@@ -309,7 +300,11 @@ export class AdminDebugService {
       if (!message.content.trim()) add({ code: 'empty_assistant_message', severity: 'error', title: '助手消息为空', detail: `助手消息 ${message.id} 没有内容。` });
       const citations = asArray(message.citations);
       const sourceIds = new Set<number>();
-      for (const trace of conversation.traces.filter((item) => item.userMessageId === message.id)) {
+      const messageIndex = conversation.messages.findIndex((item) => item.id === message.id);
+      const precedingUserMessageId = messageIndex > 0 && conversation.messages[messageIndex - 1]?.role === 'user'
+        ? conversation.messages[messageIndex - 1]!.id
+        : null;
+      for (const trace of conversation.traces.filter((item) => item.userMessageId === precedingUserMessageId)) {
         const context = asRecord(trace.contextSnapshot);
         for (const source of asArray(context.sources)) {
           const chunkId = asNumber(asRecord(source).chunkId);
@@ -323,6 +318,9 @@ export class AdminDebugService {
         if ((trace.totalTokens ?? 0) > 12000) add({ code: 'high_token_usage', severity: 'warning', title: 'Token 消耗较高', detail: `轨迹消耗 ${trace.totalTokens} tokens。`, traceId: trace.id });
         const steps = asArray(context.executionSteps);
         const toolCalls = steps.filter((step) => asRecord(step).type === 'tool_call');
+        if (trace.refused === true && toolCalls.length === 0 && looksLikeToolIntent(trace.rawModelOutput)) {
+          add({ code: 'planner_tool_not_executed', severity: 'error', title: '模型请求了工具但未执行', detail: `轨迹 ${trace.id} 的原始模型输出包含工具请求，但执行步骤中没有对应的工具调用，随后进入了拒答。`, traceId: trace.id });
+        }
         const failedTools = toolCalls.filter((step) => asRecord(step).ok === false);
         if (failedTools.length) add({ code: 'tool_failed', severity: 'error', title: '工具调用失败', detail: `轨迹 ${trace.id} 有 ${failedTools.length} 次工具调用失败。`, traceId: trace.id });
         if (toolCalls.length >= 5) add({ code: 'tool_call_limit_risk', severity: 'warning', title: '工具调用次数较多', detail: `轨迹 ${trace.id} 共调用 ${toolCalls.length} 次工具。`, traceId: trace.id });
@@ -404,4 +402,9 @@ function asArray(value: unknown): unknown[] {
 
 function asNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function looksLikeToolIntent(value: string | null): boolean {
+  if (!value) return false;
+  return /"type"\s*:\s*"tool"/u.test(value) || /<｜｜DSML｜｜\s*(?:calls|invoke)/u.test(value);
 }
