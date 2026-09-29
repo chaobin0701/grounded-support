@@ -5,7 +5,7 @@ import { ContextBuilder } from '../../chat/context-builder';
 import type { ChatAnswer, PublicProgressEvent } from '../../chat/chat.service';
 import { LlmService } from '../../chat/llm.service';
 import type { AgentInput } from './agent-input';
-import type { AgentState, AgentExecutionStep } from './agent-state';
+import type { AgentState, AgentExecutionStep, AgentModelCall } from './agent-state';
 import { REFUSAL, validateAgentAnswer } from './agent-answer';
 import type { ProductDetail, ProductSummary } from '../tools/product-catalog/product-catalog.service';
 import { ToolExecutionService } from '../tools/tool-execution';
@@ -67,10 +67,11 @@ export class AgentLoop {
     state.contextSnapshot.contextMetadata = builtContext.metadata;
 
     const skillPrompt = input.skill ? `\n当前 Skill：${input.skill.name}\nSkill 规则：${input.skill.systemInstructions}` : '';
+    const plannerSystemPrompt = `${PLANNER_PROMPT}${skillPrompt}`;
     const modelStarted = Date.now();
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     try {
-      model = await this.llm.completeDetailed(`${PLANNER_PROMPT}${skillPrompt}`, builtContext.userPrompt, this.llm.model, 'planner');
+      model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner');
     } catch (error) {
       state.executionSteps.push({ type: 'llm_call', stage: 'planning', model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
       state.contextSnapshot.executionSteps = state.executionSteps;
@@ -95,6 +96,30 @@ export class AgentLoop {
     state.inputTokens += model.inputTokens ?? 0;
     state.outputTokens += model.outputTokens ?? 0;
     state.totalTokens += model.totalTokens ?? 0;
+    const modelCall: AgentModelCall = {
+      id: `planner-${state.modelCalls.length + 1}`,
+      purpose: 'planner',
+      model: model.model,
+      request: {
+        messages: [
+          { role: 'system', content: plannerSystemPrompt },
+          { role: 'user', content: builtContext.userPrompt },
+        ],
+        temperature: 0.1,
+        maxTokens: 1200,
+      },
+      response: {
+        content: model.content,
+        finishReason: model.finishReason,
+        inputTokens: model.inputTokens,
+        outputTokens: model.outputTokens,
+        totalTokens: model.totalTokens,
+      },
+      durationMs: model.durationMs,
+      attempts: model.attempts,
+    };
+    state.modelCalls.push(modelCall);
+    state.contextSnapshot.modelCalls = state.modelCalls;
 
     const parsed = parsePlannerOutput(model.content);
     const final = parseFinalOutput(parsed);

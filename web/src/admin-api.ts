@@ -131,6 +131,118 @@ export interface ChatTraceDetail extends ChatTraceItem {
   rawModelOutput: string | null;
 }
 
+export type DebugCaseStatus = 'pending' | 'analyzing' | 'confirmed' | 'ignored';
+
+export interface DebugFinding {
+  code: string;
+  severity: 'error' | 'warning' | 'info';
+  title: string;
+  detail: string;
+  conversationId?: string;
+  traceId?: string;
+}
+
+export interface DebugMetrics {
+  messageCount: number;
+  userMessageCount: number;
+  assistantMessageCount: number;
+  runCount: number;
+  failedRunCount: number;
+  activeRunCount: number;
+  traceCount: number;
+  failedTraceCount: number;
+  refusedTraceCount: number;
+  toolCallCount: number;
+  modelCallCount: number;
+  totalDurationMs: number;
+  totalTokens: number;
+}
+
+export interface DebugMessage {
+  id: number;
+  role: string;
+  content: string;
+  refused: boolean | null;
+  citations: unknown;
+  toolSteps: unknown;
+  progressEvents: unknown;
+  createdAt: string;
+}
+
+export interface DebugRun {
+  id: string;
+  clientRequestId: string;
+  question: string;
+  status: string;
+  expiresAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  errorCode: string | null;
+  userMessageId: number | null;
+  assistantMessageId: number | null;
+  createdAt: string;
+}
+
+export interface DebugTrace {
+  id: string;
+  kind: string;
+  conversationId: string | null;
+  userMessageId: number | null;
+  question: string;
+  contextSnapshot: Record<string, unknown>;
+  model: string | null;
+  rawModelOutput: string | null;
+  finalAnswer: string | null;
+  refused: boolean | null;
+  status: string;
+  errorCode: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number;
+  createdAt: string;
+}
+
+export interface DebugConversation {
+  id: string;
+  visitorSessionId: string;
+  title: string;
+  summary: string;
+  busyUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: DebugMessage[];
+  runs: DebugRun[];
+  traces: DebugTrace[];
+  findings: DebugFinding[];
+  metrics: DebugMetrics;
+}
+
+export interface DebugInspection {
+  requestedIds: string[];
+  notFoundIds: string[];
+  requestedTraceIds: string[];
+  notFoundTraceIds: string[];
+  issueDescription: string;
+  inspectedAt: string;
+  conversations: DebugConversation[];
+  diagnostics: { findings: DebugFinding[]; metrics: DebugMetrics };
+}
+
+export interface DebugCase {
+  id: string;
+  title: string;
+  issueDescription: string;
+  conversationIds: unknown;
+  traceIds: unknown;
+  status: DebugCaseStatus;
+  snapshot?: DebugInspection;
+  createdBy: number;
+  inspectedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class AdminApiError extends Error {
   constructor(readonly status: number, message: string) {
     super(message);
@@ -187,4 +299,9 @@ export const adminApi = {
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
+  debugInspect: (token: string, input: { conversationIds: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
+  debugCases: (token: string, limit = 50) => request<DebugCase[]>(`/debug/cases?limit=${limit}`, {}, token),
+  debugCase: (token: string, id: string) => request<DebugCase>(`/debug/cases/${encodeURIComponent(id)}`, {}, token),
+  createDebugCase: (token: string, input: { title?: string; conversationIds: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugCase>('/debug/cases', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateDebugCaseStatus: (token: string, id: string, status: DebugCaseStatus) => request<DebugCase>(`/debug/cases/${encodeURIComponent(id)}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }, token),
 };

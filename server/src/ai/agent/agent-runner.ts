@@ -72,6 +72,7 @@ export class AgentRunner {
       toolCalls: [],
       toolResults: [],
       executionSteps: [],
+      modelCalls: [],
       hits: new Map(),
       products: new Map(),
       contextSnapshot: {
@@ -83,6 +84,7 @@ export class AgentRunner {
         contextMetadata: initialContext.metadata,
         toolCalls: [],
         executionSteps: [],
+        modelCalls: [],
         skill: { id: skill.id, version: skill.version, name: skill.name, responseMode: skill.responseMode },
       },
       inputTokens: 0,
@@ -104,6 +106,7 @@ export class AgentRunner {
     state.contextSnapshot.toolCalls ??= state.toolCalls;
     state.contextSnapshot.toolResults ??= state.toolResults;
     state.contextSnapshot.executionSteps = state.executionSteps;
+    state.contextSnapshot.modelCalls = state.modelCalls;
     return {
       result,
       contextSnapshot: state.contextSnapshot,

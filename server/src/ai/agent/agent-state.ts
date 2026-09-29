@@ -5,6 +5,26 @@ import type { ToolExecutionTrace } from '../tools/tool-execution';
 import type { ToolExecutionState } from '../tools/tool-policy';
 import type { SkillDefinition } from '../skills/skill.types';
 
+export type AgentModelCall = {
+  id: string;
+  purpose: 'planner' | 'answer' | 'summary';
+  model: string;
+  request: {
+    messages: Array<{ role: string; content: string }>;
+    temperature: number;
+    maxTokens: number;
+  };
+  response: {
+    content: string;
+    finishReason: string | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  };
+  durationMs: number;
+  attempts: number;
+};
+
 export type AgentExecutionStep = {
   type: 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
   stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
@@ -34,6 +54,7 @@ export type AgentState = {
   toolCalls: ToolExecutionTrace[];
   toolResults: Array<Record<string, unknown>>;
   executionSteps: AgentExecutionStep[];
+  modelCalls: AgentModelCall[];
   hits: Map<number, SearchHit>;
   products: Map<string, ProductSummary | ProductDetail>;
   contextSnapshot: Record<string, unknown>;

@@ -5,6 +5,7 @@ import { DatabaseService } from '../database.service';
 import { ChatService, ChatAnswer, ChatRun, ChatStreamCallbacks, CommentaryEvent, ProcessEvent, ToolStep } from './chat.service';
 import { LlmService, ModelFailure } from './llm.service';
 import { ConversationSnapshot } from './conversation-snapshot';
+import type { AgentModelCall } from '../ai/agent/agent-state';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -374,6 +375,29 @@ export class ConversationService {
     const started = Date.now();
     try {
       const result = await this.llm.completeDetailed(SUMMARY_PROMPT, JSON.stringify(contextSnapshot), this.llm.model, 'summary');
+      const traceContext = {
+        ...contextSnapshot,
+        modelCalls: [{
+          id: 'summary-1',
+          purpose: 'summary' as const,
+          model: result.model,
+          request: {
+            messages: [{ role: 'system', content: SUMMARY_PROMPT }, { role: 'user', content: JSON.stringify(contextSnapshot) }],
+            temperature: 0.1,
+            maxTokens: 800,
+          },
+          response: {
+            content: result.content,
+            finishReason: result.finishReason,
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            totalTokens: result.totalTokens,
+          },
+          durationMs: Date.now() - started,
+          attempts: result.attempts,
+        } satisfies AgentModelCall],
+        promptVersion: 'conversation-summary-v1',
+      };
       await this.database.transaction(async (client) => {
         const update = await client.query(
           `UPDATE conversations SET summary = $2, summary_through_message_id = $3
@@ -386,7 +410,7 @@ export class ConversationService {
             (id, kind, conversation_id, question, context_snapshot, model, raw_model_output,
              final_answer, status, input_tokens, output_tokens, total_tokens, duration_ms)
            VALUES ($1, 'summary', $2, '（会话摘要）', $3::jsonb, $4, $5, $6, 'completed', $7, $8, $9, $10)`,
-          [randomUUID(), conversationId, JSON.stringify(contextSnapshot), result.model,
+          [randomUUID(), conversationId, JSON.stringify(traceContext), result.model,
             result.content, result.content.slice(0, 1500), result.inputTokens,
             result.outputTokens, result.totalTokens, Date.now() - started],
         );

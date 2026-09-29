@@ -25,7 +25,7 @@ export class AdminChatTraceController {
   @Get(':id')
   @RequirePermission('conversations.read')
   async detail(@Param('id', ParseUUIDPipe) id: string) {
-    const result = await this.database.query(
+    const result = await this.database.query<Record<string, unknown>>(
       `SELECT id, kind, conversation_id AS "conversationId", question, context_snapshot AS "contextSnapshot",
               model, raw_model_output AS "rawModelOutput", final_answer AS "finalAnswer",
               refused, status, error_code AS "errorCode", input_tokens AS "inputTokens",
@@ -34,6 +34,12 @@ export class AdminChatTraceController {
        FROM chat_traces WHERE id = $1`, [id],
     );
     if (!result.rows[0]) throw new NotFoundException('Trace not found');
-    return result.rows[0];
+    const { rawModelOutput: _rawModelOutput, contextSnapshot, ...trace } = result.rows[0];
+    const context = contextSnapshot && typeof contextSnapshot === 'object' && !Array.isArray(contextSnapshot)
+      ? { ...(contextSnapshot as Record<string, unknown>) }
+      : {};
+    delete context.systemPrompt;
+    delete context.modelCalls;
+    return { ...trace, contextSnapshot: context, rawModelOutput: null };
   }
 }

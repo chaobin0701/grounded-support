@@ -6,6 +6,7 @@ import { LlmService } from './llm.service';
 import { SkillSelector } from '../ai/skills/skill-selector';
 import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
 import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
+import type { AgentModelCall } from '../ai/agent/agent-state';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -62,11 +63,26 @@ export class ChatOrchestratorService {
       const answerOperationId = `${Date.now()}-answer`;
       if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-start`, operationId: answerOperationId, stage: 'answer', status: 'running', text: '资料已准备完成，正在整理回答…' });
       callbacks.onAnswerStarted?.({ citations: result.result.citations });
+      const answerSystemPrompt = '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。';
+      const answerUserPrompt = JSON.stringify({ question, draftAnswer: result.result.answer, citations: result.result.citations, context: { sources: result.contextSnapshot.sources ?? [], products: result.contextSnapshot.products ?? [] } });
       const streamed = await this.llm.streamText(
-        '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。',
-        JSON.stringify({ question, draftAnswer: result.result.answer, citations: result.result.citations, context: { sources: result.contextSnapshot.sources ?? [], products: result.contextSnapshot.products ?? [] } }),
+        answerSystemPrompt,
+        answerUserPrompt,
         callbacks.onAnswerDelta,
       );
+      const modelCalls = Array.isArray(result.contextSnapshot.modelCalls)
+        ? result.contextSnapshot.modelCalls.filter(isAgentModelCall)
+        : [];
+      modelCalls.push({
+        id: `answer-${modelCalls.length + 1}`,
+        purpose: 'answer',
+        model: streamed.model,
+        request: { messages: [{ role: 'system', content: answerSystemPrompt }, { role: 'user', content: answerUserPrompt }], temperature: 0.1, maxTokens: 1200 },
+        response: { content: streamed.content, finishReason: streamed.finishReason, inputTokens: streamed.inputTokens, outputTokens: streamed.outputTokens, totalTokens: streamed.totalTokens },
+        durationMs: streamed.durationMs,
+        attempts: streamed.attempts,
+      });
+      result.contextSnapshot.modelCalls = modelCalls;
       if (streamed.content.trim()) result.result = { ...result.result, answer: streamed.content.trim() };
       result.inputTokens = (result.inputTokens ?? 0) + (streamed.inputTokens ?? 0);
       result.outputTokens = (result.outputTokens ?? 0) + (streamed.outputTokens ?? 0);
@@ -83,4 +99,19 @@ export class ChatOrchestratorService {
       totalTokens: result.totalTokens,
     };
   }
+}
+
+function isAgentModelCall(value: unknown): value is AgentModelCall {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  const request = item.request && typeof item.request === 'object' && !Array.isArray(item.request) ? item.request as Record<string, unknown> : null;
+  const response = item.response && typeof item.response === 'object' && !Array.isArray(item.response) ? item.response as Record<string, unknown> : null;
+  return typeof item.id === 'string'
+    && ['planner', 'answer', 'summary'].includes(String(item.purpose))
+    && typeof item.model === 'string'
+    && request !== null
+    && Array.isArray(request.messages)
+    && typeof response?.content === 'string'
+    && typeof item.durationMs === 'number'
+    && typeof item.attempts === 'number';
 }
