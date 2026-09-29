@@ -68,7 +68,7 @@ export class AdminConversationService {
                 created_at AS "createdAt"
          FROM conversation_runs WHERE conversation_id = $1 ORDER BY created_at ASC`, [id]),
       this.database.query(
-        `SELECT id, kind, user_message_id AS "userMessageId", question, final_answer AS "finalAnswer",
+        `SELECT id, kind, user_message_id::int AS "userMessageId", question, final_answer AS "finalAnswer",
                 refused, status, error_code AS "errorCode", input_tokens AS "inputTokens",
                 output_tokens AS "outputTokens", total_tokens AS "totalTokens", duration_ms AS "durationMs",
                 created_at AS "createdAt"
