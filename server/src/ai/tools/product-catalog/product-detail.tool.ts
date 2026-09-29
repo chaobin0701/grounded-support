@@ -12,6 +12,7 @@ export class ProductDetailTool implements AgentTool<z.infer<typeof inputSchema>>
   readonly name = 'get_product_detail';
   readonly description = '按产品 ID 读取虚构产品的完整规格。只读、mock 数据。';
   readonly inputSchema = inputSchema;
+  readonly planning = { canBatch: false, dependency: '需要已知且已验证的 productId' } as const;
 
   constructor(private readonly catalog: ProductCatalogService) {}
 

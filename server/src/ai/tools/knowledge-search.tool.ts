@@ -15,6 +15,7 @@ export class KnowledgeSearchTool implements AgentTool<z.infer<typeof inputSchema
   readonly name = 'search_knowledge';
   readonly description = '查询已上传的商家资料，只返回资料中可以验证的内容。';
   readonly inputSchema = inputSchema;
+  readonly planning = { canBatch: true } as const;
 
   constructor(private readonly search: SearchService) {}
 

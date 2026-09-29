@@ -8,6 +8,7 @@ import type { SkillDefinition } from '../skills/skill.types';
 export type AgentModelCall = {
   id: string;
   purpose: 'planner' | 'answer' | 'summary';
+  plannerRound?: number;
   model: string;
   request: {
     messages: Array<{ role: string; content: string }>;
@@ -46,6 +47,9 @@ export type AgentExecutionStep = {
   result?: unknown;
   errorCode?: string;
   detail?: string;
+  plannerRound?: number;
+  toolBatchId?: string;
+  toolIndex?: number;
 };
 
 export type AgentState = {
@@ -64,4 +68,5 @@ export type AgentState = {
   usageSeen: boolean;
   finalRaw: string;
   skill: SkillDefinition;
+  plannerRound: number;
 };

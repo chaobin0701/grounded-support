@@ -87,10 +87,11 @@ async function chooseTrace(id: string | null) {
 }
 function nextPage(direction: number) { offset.value = Math.max(0, offset.value + direction * 30); void loadSessions(); }
 function stepTitle(step: NonNullable<ChatTraceDetail['contextSnapshot']['executionSteps']>[number]) {
+  const round = step.plannerRound ? `第 ${step.plannerRound} 次规划 · ` : '';
   if (step.type === 'skill_selection') return `选择 Skill · ${step.skillId || '默认'}`;
   if (step.type === 'preflight') return '知识库预检索';
-  if (step.type === 'tool_call') return `调用工具 · ${step.name || '未知工具'}`;
-  if (step.type === 'llm_call') return step.stage === 'final_answer' ? '生成最终回答' : '模型规划';
+  if (step.type === 'tool_call') return `${round}调用工具 · ${step.name || '未知工具'}`;
+  if (step.type === 'llm_call') return step.stage === 'final_answer' ? '生成最终回答' : `${round}模型规划`;
   return '引用与答案校验';
 }
 onMounted(loadSessions);
@@ -123,7 +124,7 @@ onMounted(loadSessions);
         <nav><button :class="{ active: inspectorTab === 'overview' }" @click="inspectorTab = 'overview'">概览</button><button :class="{ active: inspectorTab === 'process' }" @click="inspectorTab = 'process'">执行过程</button><button :class="{ active: inspectorTab === 'context' }" @click="inspectorTab = 'context'">上下文</button><button :class="{ active: inspectorTab === 'raw' }" @click="inspectorTab = 'raw'">原始数据</button></nav>
         <div class="inspector-ids"><span>轨迹 ID</span><code>{{ selectedTrace.id }}</code><button title="复制轨迹 ID" @click="copy(selectedTrace.id, '轨迹 ID')"><Copy :size="13" /></button><span>会话 ID</span><code>{{ selectedTrace.conversationId || '—' }}</code><button title="复制轨迹和会话 ID" @click="copyIds(selectedTrace.id, selectedTrace.conversationId)"><Copy :size="13" /></button><button class="copy-both" @click="copyIds(selectedTrace.id, selectedTrace.conversationId)">复制两项</button></div>
         <section v-if="inspectorTab === 'overview'"><h3>本轮回答</h3><p class="inspector-answer">{{ selectedTrace.finalAnswer || '没有生成最终回答。' }}</p><dl><dt>模型</dt><dd>{{ selectedTrace.model || '—' }}</dd><dt>状态</dt><dd>{{ statusInfo(selectedTrace).text }}</dd><dt>总耗时</dt><dd>{{ selectedTrace.durationMs }} ms</dd><dt>Token</dt><dd>{{ selectedTrace.totalTokens ?? '—' }}</dd></dl></section>
-        <section v-else-if="inspectorTab === 'process'"><h3>执行时间线</h3><ol class="inspector-timeline"><li v-for="(step, index) in selectedTrace.contextSnapshot.executionSteps || []" :key="`${step.type}-${index}`"><strong>{{ stepTitle(step) }}</strong><small>{{ step.detail || (step.ok ? '执行完成' : '执行失败') }} · {{ step.durationMs }} ms</small></li></ol></section>
+        <section v-else-if="inspectorTab === 'process'"><h3>执行时间线</h3><ol class="inspector-timeline"><li v-for="(step, index) in selectedTrace.contextSnapshot.executionSteps || []" :key="`${step.type}-${index}`"><strong>{{ stepTitle(step) }}</strong><small>{{ step.detail || (step.ok ? '执行完成' : '执行失败') }} · {{ step.durationMs }} ms<span v-if="step.toolBatchId && step.toolIndex !== undefined"> · 批次第 {{ step.toolIndex + 1 }} 个工具</span></small></li></ol></section>
         <section v-else-if="inspectorTab === 'context'"><h3>检索资料</h3><article v-for="source in selectedTrace.contextSnapshot.sources || []" :key="source.chunkId" class="source-item"><strong>#{{ source.chunkId }} · {{ source.title }}</strong><p>{{ source.content }}</p></article><p v-if="!selectedTrace.contextSnapshot.sources?.length" class="empty-copy">本轮没有知识库命中。</p><h3>模型调用</h3><pre>{{ JSON.stringify(selectedTrace.contextSnapshot.modelCalls || selectedTrace.contextSnapshot.executionSteps || [], null, 2) }}</pre></section>
         <section v-else><h3>原始模型输出</h3><pre>{{ selectedTrace.rawModelOutput || '没有保存原始模型输出。' }}</pre><h3>上下文快照</h3><pre>{{ JSON.stringify(selectedTrace.contextSnapshot, null, 2) }}</pre></section>
         </template>

@@ -30,6 +30,23 @@ export class ToolExecutionService {
     return this.policy.maxToolCalls;
   }
 
+  plannerHints(): string {
+    const registryWithList = this.registry as ToolRegistry & { list?: () => AgentTool[] };
+    const tools = typeof registryWithList.list === 'function' ? registryWithList.list() : [];
+    return tools
+      .filter((tool) => tool.planning)
+      .map((tool) => `${tool.name}: ${tool.planning!.canBatch ? '可与当前轮其他独立只读工具一起返回' : '单独返回'}${tool.planning!.dependency ? `；${tool.planning!.dependency}` : ''}`)
+      .join('\n');
+  }
+
+  canBatch(name: string): boolean {
+    try {
+      return this.registry.get(name).planning?.canBatch ?? true;
+    } catch {
+      return true;
+    }
+  }
+
   createState(): ToolExecutionState {
     return this.policy.createState();
   }
