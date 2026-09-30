@@ -4,6 +4,8 @@ import type { ToolContext } from '../tools/tool-context';
 import type { ToolExecutionTrace } from '../tools/tool-execution';
 import type { ToolExecutionState } from '../tools/tool-policy';
 import type { SkillDefinition } from '../skills/skill.types';
+import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
+import type { ContextBudget } from '../../chat/context-governor';
 
 export type AgentModelCall = {
   id: string;
@@ -24,6 +26,7 @@ export type AgentModelCall = {
   };
   durationMs: number;
   attempts: number;
+  contextBudget?: ContextBudget;
 };
 
 export type AgentExecutionStep = {
@@ -69,4 +72,6 @@ export type AgentState = {
   finalRaw: string;
   skill: SkillDefinition;
   plannerRound: number;
+  transcript: AgentTranscriptMessage[];
+  traceTranscript: AgentTranscriptMessage[];
 };

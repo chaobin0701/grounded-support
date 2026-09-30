@@ -80,6 +80,11 @@ test('agent executes a batch of JSON tool calls before asking the planner again'
   assert.equal(toolSteps[1].toolBatchId, 'planner-1-tools');
   assert.deepEqual(toolSteps.map((step) => step.toolIndex), [0, 1]);
   assert.equal(steps.filter((step) => step.type === 'llm_call').at(-1).plannerRound, 2);
+  const transcript = result.contextSnapshot.agentTranscript;
+  assert.deepEqual(transcript.map((message) => message.role), ['user', 'assistant', 'tool', 'tool', 'assistant']);
+  assert.deepEqual(transcript[1].toolCalls.map((call) => call.name), ['search_knowledge', 'list_products']);
+  assert.equal(transcript[2].toolName, 'search_knowledge');
+  assert.equal(transcript[3].toolName, 'list_products');
 });
 
 test('agent defers a dependent tool to the next planner round', async () => {

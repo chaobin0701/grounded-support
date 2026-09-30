@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PreviousTurnDto } from './chat.dto';
 import type { SearchHit } from '../documents/fuse-search-results';
 import type { SkillDefinition } from '../ai/skills/skill.types';
+import type { AgentTranscriptMessage } from './agent-transcript';
 
 export interface ContextBuildInput {
   question: string;
@@ -10,6 +11,7 @@ export interface ContextBuildInput {
   toolResults: Array<Record<string, unknown>>;
   initialEvidence?: SearchHit[];
   skill?: SkillDefinition;
+  transcript?: AgentTranscriptMessage[];
 }
 
 export interface BuiltContext {
@@ -23,6 +25,8 @@ export interface BuiltContext {
     toolResultCount: number;
     truncated: boolean;
     initialEvidenceCount: number;
+    transcriptCount: number;
+    transcriptVersion: number;
   };
 }
 
@@ -48,6 +52,8 @@ export class ContextBuilder {
         content: hit.content.slice(0, 1800),
         score: hit.score,
       })),
+      agentTranscript: input.transcript ?? [],
+      transcriptVersion: 1,
     };
     const userPrompt = JSON.stringify(payload);
     return {
@@ -63,6 +69,8 @@ export class ContextBuilder {
           || summary !== input.summary
           || history.length !== input.recentHistory.length,
         initialEvidenceCount: input.initialEvidence?.length ?? 0,
+        transcriptCount: input.transcript?.length ?? 0,
+        transcriptVersion: 1,
       },
     };
   }

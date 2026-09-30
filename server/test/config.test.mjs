@@ -17,6 +17,8 @@ test('configuration applies safe defaults without requiring an LLM key', () => {
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     model: 'deepseek-v4-1-flash-260910',
     timeoutMs: 20000,
+    contextWindowTokens: 32000,
+    maxOutputTokens: 1200,
   });
 });
 
@@ -38,6 +40,7 @@ test('configuration parses explicit security boundaries', () => {
   assert.equal(config.security.adminLoginLimit, 3);
   assert.equal(config.security.documentUploadConcurrency, 1);
   assert.equal(config.embedding.model, 'test-embedding');
+  assert.equal(config.llm.contextWindowTokens, 32000);
 });
 
 test('configuration rejects invalid provider URL and timeout without exposing secrets', () => {

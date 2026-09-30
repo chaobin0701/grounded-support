@@ -91,6 +91,29 @@ export interface ChatTraceItem {
 
 export interface ChatTraceDetail extends ChatTraceItem {
   contextSnapshot: {
+    contextBudget?: {
+      contextWindowTokens: number;
+      inputBudgetTokens: number;
+      maxOutputTokens: number;
+      safetyBufferTokens: number;
+      estimatedInputTokens: number;
+      rawMessageCount: number;
+      includedMessageCount: number;
+      measurementSource: 'heuristic' | string;
+      pressure: 'normal' | 'elevated' | 'high' | 'overflow' | string;
+      compacted: boolean;
+      summaryCheckpointId: string | null;
+      summarizedThroughSequence: number | null;
+    };
+    contextBudgets?: Array<{
+      purpose: 'planner' | 'answer' | 'summary' | string;
+      plannerRound?: number;
+      contextWindowTokens: number;
+      inputBudgetTokens: number;
+      estimatedInputTokens: number;
+      pressure: string;
+      compacted: boolean;
+    }>;
     promptVersion?: string;
     systemPrompt?: string;
     previousSummary?: string;

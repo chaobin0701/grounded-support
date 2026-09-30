@@ -7,6 +7,8 @@ import { SkillSelector } from '../ai/skills/skill-selector';
 import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
 import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
 import type { AgentModelCall } from '../ai/agent/agent-state';
+import type { AgentTranscriptMessage } from './agent-transcript';
+import { ContextGovernor } from './context-governor';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -17,6 +19,7 @@ export class ChatOrchestratorService {
     private readonly llm: LlmService,
     private readonly skillSelector?: SkillSelector,
     @Optional() private readonly skillPreflight?: SkillPreflightService,
+    @Optional() private readonly contextGovernor?: ContextGovernor,
   ) {}
 
   async askDetailed(
@@ -28,6 +31,7 @@ export class ChatOrchestratorService {
     _onCommentary?: (event: CommentaryEvent) => void,
     requestedSkillId?: string,
     callbacks?: ChatStreamCallbacks,
+    agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[] },
   ): Promise<ChatRun> {
     const progressEvents: PublicProgressEvent[] = [];
     const emitProgress = (event: PublicProgressEvent) => {
@@ -55,6 +59,9 @@ export class ChatOrchestratorService {
           ...(preflight.errorCode ? { errorCode: preflight.errorCode } : {}),
         },
         selectedBy: selected.selectedBy,
+        conversationId: agentContext?.conversationId,
+        traceId: agentContext?.traceId,
+        priorTranscript: agentContext?.priorTranscript,
       },
       { onContext, onProgress: emitProgress },
     );
@@ -65,6 +72,19 @@ export class ChatOrchestratorService {
       callbacks.onAnswerStarted?.({ citations: result.result.citations });
       const answerSystemPrompt = '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。';
       const answerUserPrompt = JSON.stringify({ question, draftAnswer: result.result.answer, citations: result.result.citations, context: { sources: result.contextSnapshot.sources ?? [], products: result.contextSnapshot.products ?? [] } });
+      const answerBudget = this.contextGovernor?.inspect({
+        systemPrompt: answerSystemPrompt,
+        userPrompt: answerUserPrompt,
+        purpose: 'answer',
+        rawMessageCount: 2,
+        includedMessageCount: 2,
+      });
+      if (answerBudget) {
+        const budgets = Array.isArray(result.contextSnapshot.contextBudgets) ? result.contextSnapshot.contextBudgets : [];
+        budgets.push({ purpose: 'answer', ...answerBudget });
+        result.contextSnapshot.contextBudgets = budgets;
+        result.contextSnapshot.contextBudget = answerBudget;
+      }
       const streamed = await this.llm.streamText(
         answerSystemPrompt,
         answerUserPrompt,
@@ -91,6 +111,7 @@ export class ChatOrchestratorService {
     }
     result.result = { ...result.result, progressEvents: [...(result.result.progressEvents ?? []), ...progressEvents] };
     return {
+      traceId: agentContext?.traceId,
       result: result.result,
       contextSnapshot: result.contextSnapshot,
       rawModelOutput: result.rawModelOutput,

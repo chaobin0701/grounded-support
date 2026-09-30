@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { DatabaseService } from '../database.service';
@@ -6,6 +6,8 @@ import { ChatService, ChatAnswer, ChatRun, ChatStreamCallbacks, CommentaryEvent,
 import { LlmService, ModelFailure } from './llm.service';
 import { ConversationSnapshot } from './conversation-snapshot';
 import type { AgentModelCall } from '../ai/agent/agent-state';
+import { flattenTranscript } from './agent-transcript';
+import { ContextGovernor } from './context-governor';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -39,7 +41,7 @@ function clientType(request: Request): string {
 export class ConversationService {
   private readonly logger = new Logger(ConversationService.name);
 
-  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService) {}
+  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService, @Optional() private readonly contextGovernor?: ContextGovernor) {}
 
   async session(request: Request, response: Response): Promise<string> {
     const raw = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1);
@@ -94,6 +96,13 @@ export class ConversationService {
        FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 12`, [id],
     );
     const recentMessages = recent.rows.reverse();
+    const transcriptRows = await this.database.query<{ agentTranscript: unknown }>(
+      `SELECT context_snapshot->'agentTranscript' AS "agentTranscript"
+       FROM chat_traces
+       WHERE conversation_id = $1 AND kind = 'answer' AND context_snapshot ? 'agentTranscript'
+       ORDER BY created_at ASC LIMIT 50`, [id],
+    );
+    const agentTranscript = flattenTranscript(transcriptRows.rows.map((row) => row.agentTranscript)).slice(-120);
     const history: { question: string; answer: string }[] = [];
     for (let index = 0; index + 1 < recentMessages.length; index += 2) {
       const user = recentMessages[index];
@@ -110,6 +119,7 @@ export class ConversationService {
         id: messageId, role, content, refused,
       })),
       history,
+      agentTranscript,
     };
   }
 
@@ -219,11 +229,16 @@ export class ConversationService {
       throw error;
     }
     const started = Date.now();
+    const traceId = randomUUID();
     let snapshot: ConversationSnapshot | null = null;
     let contextSnapshot: Record<string, unknown> | null = null;
     try {
       snapshot = await this.snapshot(ownerId, id);
-      const run = await this.chat.askDetailed(question, snapshot.history, snapshot.summary, (context) => { contextSnapshot = context; }, onStep, onCommentary, requestedSkillId, callbacks);
+      const run = await this.chat.askDetailed(question, snapshot.history, snapshot.summary, (context) => { contextSnapshot = context; }, onStep, onCommentary, requestedSkillId, callbacks, {
+        conversationId: id,
+        traceId,
+        priorTranscript: snapshot.agentTranscript,
+      });
       await this.saveResult(id, question, run, Date.now() - started, runId);
       void this.updateSummary(id, snapshot.summary).catch(() => this.logger.warn('Conversation summary update failed'));
       return run.result;
@@ -235,7 +250,7 @@ export class ConversationService {
         ).catch(() => this.logger.warn('Failed to persist conversation run failure'));
       }
       await this.recordTrace({
-        id: randomUUID(), conversationId: id, userMessageId: null, question,
+        id: traceId, conversationId: id, userMessageId: null, question,
         contextSnapshot: contextSnapshot ?? {
           summary: snapshot?.summary ?? '',
           recentMessages: snapshot?.recentMessages.map(({ role, content }) => ({ role, content })) ?? [],
@@ -283,7 +298,7 @@ export class ConversationService {
           (id, conversation_id, user_message_id, question, context_snapshot, model, raw_model_output,
            final_answer, refused, status, input_tokens, output_tokens, total_tokens, duration_ms)
          VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, 'completed', $10, $11, $12, $13)`,
-        [randomUUID(), conversationId, user.rows[0].id, question, JSON.stringify(run.contextSnapshot),
+        [run.traceId ?? randomUUID(), conversationId, user.rows[0].id, question, JSON.stringify(run.contextSnapshot),
           run.rawModelOutput ? this.llm.model : null, run.rawModelOutput, run.result.answer,
           run.result.refused, run.inputTokens, run.outputTokens, run.totalTokens, durationMs],
       );
@@ -380,11 +395,20 @@ export class ConversationService {
     if (messages.rows.length < 12) return;
     const toSummarize = messages.rows.slice(0, -4);
     const contextSnapshot = { previousSummary: oldSummary, messages: toSummarize.map(({ role, content }) => ({ role, content })) };
+    const summaryUserPrompt = JSON.stringify(contextSnapshot);
+    const contextBudget = this.contextGovernor?.inspect({
+      systemPrompt: SUMMARY_PROMPT,
+      userPrompt: summaryUserPrompt,
+      purpose: 'summary',
+      rawMessageCount: toSummarize.length + 1,
+      includedMessageCount: toSummarize.length + 1,
+    });
     const started = Date.now();
     try {
-      const result = await this.llm.completeDetailed(SUMMARY_PROMPT, JSON.stringify(contextSnapshot), this.llm.model, 'summary');
+      const result = await this.llm.completeDetailed(SUMMARY_PROMPT, summaryUserPrompt, this.llm.model, 'summary');
       const traceContext = {
         ...contextSnapshot,
+        ...(contextBudget ? { contextBudget } : {}),
         modelCalls: [{
           id: 'summary-1',
           purpose: 'summary' as const,

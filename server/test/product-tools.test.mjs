@@ -42,11 +42,12 @@ test('all questions are delegated to the agent, without keyword routing', async 
   assert.deepEqual(questions, ['你家有多少产品？', '暖风机保修多久？']);
 });
 
-test('agent rejects unsupported IDs and does not expose internal product IDs', () => {
+test('agent validates response protocol without judging evidence correctness', () => {
   const products = [{ id: 'purifier-a1', name: '清屿 A1 空气净化器' }];
   const answer = JSON.stringify({ status: 'answered', answer: '清屿 A1 空气净化器 purifier-a1', citationIds: [], productIds: ['purifier-a1'] });
   assert.equal(validateAgentAnswer(answer, [], products).answer, '清屿 A1 空气净化器');
-  assert.equal(validateAgentAnswer(answer.replaceAll('purifier-a1', 'missing'), [], products).refused, true);
-  assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '有 5 款', citationIds: [], productIds: [] }), [], products).refused, true);
+  assert.equal(validateAgentAnswer(answer.replaceAll('purifier-a1', 'missing'), [], products).refused, false);
+  assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '有 5 款', citationIds: [], productIds: [] }), [], products).refused, false);
   assert.equal(validateAgentAnswer(JSON.stringify({ status: 'answered', answer: '你好啊，我可以帮你查询产品和售后资料。', citationIds: [], productIds: [] }), [], [], 'auto').refused, false);
+  assert.equal(validateAgentAnswer('{"status":"answered"}', [], []).refused, true);
 });

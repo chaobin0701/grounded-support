@@ -7,6 +7,7 @@ import { REFUSAL } from './agent-answer';
 import { AgentLoop } from './agent-loop';
 import { questionAnsweringSkill } from '../skills/built-in/question-answering.skill';
 import type { SkillDefinition } from '../skills/skill.types';
+import { TRANSCRIPT_VERSION, transcriptMessageBase, type AgentTranscriptMessage } from '../../chat/agent-transcript';
 
 @Injectable()
 export class AgentRunner {
@@ -17,6 +18,13 @@ export class AgentRunner {
 
   async run(input: AgentInput, callbacks: AgentCallbacks = {}): Promise<AgentResult> {
     const skill = input.skill ?? questionAnsweringSkill;
+    const priorTranscript = input.priorTranscript ?? [];
+    const userMessage: AgentTranscriptMessage = {
+      ...transcriptMessageBase(input.conversationId, input.traceId, priorTranscript.length + 1),
+      role: 'user',
+      content: input.question,
+    };
+    const transcript = [...priorTranscript, userMessage];
     const initialContext = this.contextBuilder.build({
       question: input.question,
       summary: input.summary,
@@ -24,8 +32,9 @@ export class AgentRunner {
       toolResults: [],
       initialEvidence: input.initialEvidence,
       skill,
+      transcript,
     });
-    const state = this.createState(initialContext, skill);
+    const state = this.createState(initialContext, skill, transcript, [userMessage]);
     for (const hit of input.initialEvidence ?? []) state.hits.set(hit.chunkId, hit);
     state.contextSnapshot.preflight = input.preflight;
     state.contextSnapshot.skillSelection = { skillId: skill.id, selectedBy: input.selectedBy ?? 'default' };
@@ -62,7 +71,12 @@ export class AgentRunner {
     return this.toResult(state, { answer: REFUSAL, refused: true, citations: [] });
   }
 
-  private createState(initialContext: ReturnType<ContextBuilder['build']>, skill: SkillDefinition): AgentState {
+  private createState(
+    initialContext: ReturnType<ContextBuilder['build']>,
+    skill: SkillDefinition,
+    transcript: AgentTranscriptMessage[],
+    traceTranscript: AgentTranscriptMessage[],
+  ): AgentState {
     return {
       toolContext: {
         permissions: skill.allowedTools,
@@ -85,6 +99,8 @@ export class AgentRunner {
         toolCalls: [],
         executionSteps: [],
         modelCalls: [],
+        agentTranscript: traceTranscript,
+        transcriptVersion: TRANSCRIPT_VERSION,
         skill: { id: skill.id, version: skill.version, name: skill.name, responseMode: skill.responseMode },
       },
       inputTokens: 0,
@@ -94,6 +110,8 @@ export class AgentRunner {
       finalRaw: '',
       skill,
       plannerRound: 0,
+      transcript,
+      traceTranscript,
     };
   }
 
@@ -106,6 +124,8 @@ export class AgentRunner {
     state.contextSnapshot.products ??= [...state.products.values()];
     state.contextSnapshot.toolCalls ??= state.toolCalls;
     state.contextSnapshot.toolResults ??= state.toolResults;
+    state.contextSnapshot.agentTranscript = state.traceTranscript;
+    state.contextSnapshot.transcriptVersion = TRANSCRIPT_VERSION;
     state.contextSnapshot.executionSteps = state.executionSteps;
     state.contextSnapshot.modelCalls = state.modelCalls;
     return {

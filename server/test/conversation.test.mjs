@@ -46,6 +46,7 @@ test('conversation snapshot keeps summary and recent history inside one conversa
           { id: 3, role: 'user', content: 'H2 有多大功率？', refused: null },
         ] };
       }
+      if (sql.includes("context_snapshot->'agentTranscript'")) return { rows: [{ agentTranscript: [{ conversationId: 'conversation-a', traceId: 'trace-1', sequence: 1, createdAt: '2026-09-29T00:00:00.000Z', role: 'assistant', content: '上一轮回答' }] }] };
       throw new Error(`Unexpected query: ${sql}`);
     },
   };
@@ -54,6 +55,7 @@ test('conversation snapshot keeps summary and recent history inside one conversa
   assert.equal(snapshot.conversationId, 'conversation-a');
   assert.equal(snapshot.summary, '用户正在比较 H1 和 H2。');
   assert.deepEqual(snapshot.history, [{ question: 'H2 有多大功率？', answer: 'H2 的额定功率是 1500 W。' }]);
+  assert.equal(snapshot.agentTranscript[0].traceId, 'trace-1');
   await assert.rejects(() => service.snapshot('browser-b', 'conversation-a'), (error) => error.getStatus() === 404);
 });
 
@@ -93,6 +95,7 @@ test('conversation releases the exact database busy lock after a completed answe
         return { rows: [{ id: 'conversation-a', title: '新对话', summary: '', summaryThroughMessageId: null, createdAt: 'now', updatedAt: 'now' }] };
       }
       if (sql.startsWith('SELECT id::int, role, content')) return { rows: [] };
+      if (sql.includes("context_snapshot->'agentTranscript'")) return { rows: [] };
       if (sql.startsWith('UPDATE conversations SET busy_until = NULL')) {
         releasedBusyUntil = values[2];
         return { rows: [], rowCount: 1 };

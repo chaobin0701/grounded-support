@@ -1,7 +1,8 @@
-import { Inject, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
 import { ProviderError } from '../ai/providers/provider-errors';
 import { LlmMessage } from '../ai/providers/provider.types';
+import { AppConfigService } from '../config/config.service';
 
 export type ModelResult = {
   content: string;
@@ -24,7 +25,7 @@ export class ModelFailure extends ServiceUnavailableException {
 export class LlmService {
   readonly logger = new Logger(LlmService.name);
 
-  constructor(@Inject(LLM_PROVIDER) private readonly provider: LlmProvider) {}
+  constructor(@Inject(LLM_PROVIDER) private readonly provider: LlmProvider, @Optional() private readonly config?: AppConfigService) {}
 
   get model(): string {
     return this.provider.model;
@@ -46,7 +47,7 @@ export class LlmService {
           model,
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
           temperature: 0.1,
-          maxTokens: purpose === 'summary' ? 800 : 1200,
+          maxTokens: purpose === 'summary' ? 800 : this.config?.llm.maxOutputTokens ?? 1200,
         });
         if (response.usage.inputTokens !== null || response.usage.outputTokens !== null || response.usage.totalTokens !== null) usage.seen = true;
         usage.inputTokens += response.usage.inputTokens ?? 0;
@@ -91,7 +92,7 @@ export class LlmService {
       model,
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
       temperature: 0.1,
-      maxTokens: 1200,
+      maxTokens: this.config?.llm.maxOutputTokens ?? 1200,
     })) {
       if (event.type === 'text_delta') {
         content += event.delta;
