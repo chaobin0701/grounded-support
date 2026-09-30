@@ -214,3 +214,52 @@ button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-vis
   .composer-area { padding: 10px 14px 12px; }
   .composer { min-height: 62px; }
 }
+
+/* The full assistant is a section of the website, not another framed application. */
+.assistant-site-main { padding-top: 28px; padding-bottom: 36px; }
+.assistant-site-heading { min-height: 74px; padding-bottom: 22px; }
+.embedded-mobile-nav { display: none; }
+.chat-page-embedded {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  width: 100%;
+  height: clamp(520px, calc(100svh - 265px), 760px);
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid #dfe6df;
+  background: transparent;
+}
+.chat-page-embedded .sidebar {
+  height: 100%;
+  min-height: 0;
+  padding: 22px 14px 0 0;
+  overflow: hidden;
+  border-color: #dfe6df;
+  background: transparent;
+}
+.chat-page-embedded .sidebar-conversations { margin: 0; }
+.chat-page-embedded .conversation-list-head { margin-top: 25px; }
+.chat-page-embedded .conversation-list-item.active { background: #eaf0ff; }
+.chat-page-embedded .conversation-list-item.active .conversation-open { color: #2457e6; }
+.chat-page-embedded .new-conversation { border-color: #2457e6; background: #2457e6; }
+.chat-page-embedded .new-conversation:hover:not(:disabled) { background: #1d48c5; }
+.chat-page-embedded .workspace { height: 100%; min-height: 0; background: transparent; }
+.chat-page-embedded .conversation { padding-top: 28px; }
+.chat-page-embedded .composer-area { background: #fbfcfa; }
+.chat-page-embedded .composer:focus-within { border-color: #2457e6; }
+.chat-page-embedded .composer button { background: #2457e6; }
+.chat-page-embedded .composer button:hover:not(:disabled) { background: #1d48c5; }
+.chat-page-embedded .composer button:disabled { background: #cbd8ce; }
+@media (max-width: 680px) {
+  .assistant-site-main { padding-top: 20px; padding-bottom: 24px; }
+  .assistant-site-heading { min-height: 66px; padding-bottom: 15px; }
+  .chat-page-embedded { display: block; height: clamp(500px, calc(100svh - 230px), 720px); }
+  .chat-page-embedded .sidebar { display: none; }
+  .chat-page-embedded .workspace { height: 100%; }
+  .embedded-mobile-nav { display: flex; align-items: center; gap: 9px; padding: 10px 0; border-bottom: 1px solid #e4e9e4; }
+  .embedded-mobile-nav select { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid #dfe6df; border-radius: 8px; background: #fff; color: #40504a; font: inherit; font-size: 12px; }
+  .embedded-mobile-nav button { flex: none; height: 36px; padding: 0 12px; border: 1px solid #2457e6; border-radius: 8px; background: #2457e6; color: #fff; font-size: 12px; font-weight: 600; }
+  .embedded-mobile-nav button:disabled { opacity: .5; }
+  .chat-page-embedded .conversation { padding: 22px 4px; }
+  .chat-page-embedded .composer-area { padding: 10px 0 0; }
+}

@@ -131,12 +131,17 @@ async function send(value = question.value) {
 }
 function handleKeydown(event: KeyboardEvent) { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); void send(); } }
 function chooseSuggestion(value: string) { void send(value); }
+function selectMobileConversation(event: Event) {
+  const id = (event.target as HTMLSelectElement).value;
+  if (id) void openConversation(id);
+  else void newConversation();
+}
 </script>
 
 <template>
   <div class="app-shell" :class="{ 'app-shell-embedded': isWidget, 'chat-page-embedded': embedded }">
     <aside v-if="showSidebar" class="sidebar" aria-label="对话导航">
-      <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服</span></div>
+      <div v-if="!embedded" class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服</span></div>
       <div class="sidebar-body sidebar-conversations">
         <button class="new-conversation" type="button" :disabled="isSending || isLoadingConversations" @click="newConversation"><span aria-hidden="true">＋</span> 新建对话</button>
         <div class="conversation-list-head"><p class="section-label">最近对话</p><span>{{ conversations.length }}</span></div>
@@ -144,10 +149,11 @@ function chooseSuggestion(value: string) { void send(value); }
         <p v-else-if="!conversations.length" class="sidebar-copy">还没有对话。发送问题即可开始。</p>
         <div v-else class="conversation-list" aria-label="对话列表"><div v-for="item in conversations" :key="item.id" class="conversation-list-item" :class="{ active: activeConversationId === item.id }"><button type="button" class="conversation-open" :disabled="isSending" @click="openConversation(item.id)">{{ item.title }}</button><div class="conversation-actions"><button type="button" class="conversation-menu-trigger" :aria-label="`打开对话操作：${item.title}`" :aria-expanded="openConversationMenuId === item.id" aria-haspopup="menu" @click="toggleConversationMenu(item.id, $event)"><MoreHorizontal :size="17" /></button><div v-if="openConversationMenuId === item.id" class="conversation-menu" role="menu"><button type="button" role="menuitem" class="conversation-menu-item conversation-menu-danger" @click="removeConversation(item)">删除对话</button></div></div></div></div>
       </div>
-      <div class="sidebar-footer"><span class="health-dot" :class="health" aria-hidden="true"></span><span>{{ health === 'online' ? '服务运行中' : health === 'checking' ? '正在连接服务' : '服务暂时不可用' }}</span><div class="sidebar-product-links"><RouterLink to="/product">产品官网</RouterLink><RouterLink to="/help">帮助中心</RouterLink></div></div>
+      <div v-if="!embedded" class="sidebar-footer"><span class="health-dot" :class="health" aria-hidden="true"></span><span>{{ health === 'online' ? '服务运行中' : health === 'checking' ? '正在连接服务' : '服务暂时不可用' }}</span><div class="sidebar-product-links"><RouterLink to="/product">产品官网</RouterLink><RouterLink to="/help">帮助中心</RouterLink></div></div>
     </aside>
     <main class="workspace">
       <header v-if="showHeader" class="workspace-header"><div><p class="section-label">当前对话</p><h2>{{ activeConversationId ? (conversations.find((item) => item.id === activeConversationId)?.title || '对话') : '新对话' }}</h2></div></header>
+      <div v-if="embedded && !isWidget" class="embedded-mobile-nav"><label for="embedded-conversation" class="sr-only">选择对话</label><select id="embedded-conversation" :value="activeConversationId || ''" :disabled="isSending || isLoadingConversations" @change="selectMobileConversation"><option value="">新对话</option><option v-for="item in conversations" :key="item.id" :value="item.id">{{ item.title }}</option></select><button type="button" :disabled="isSending || isLoadingConversations" @click="newConversation">＋ 新对话</button></div>
       <section ref="conversation" class="conversation" aria-label="问答记录" aria-live="polite">
         <div v-if="messages.length === 0" class="welcome"><div class="welcome-symbol" aria-hidden="true"><span>暖</span></div><p class="section-label">暖巢 · AI 助手</p><h3>你好，有什么可以帮你？</h3><p>我会查询已收录的资料和演示产品目录，再根据结果回答。</p><div class="suggestions" aria-label="示例问题"><button v-for="item in suggestions" :key="item" type="button" :disabled="isSending" @click="chooseSuggestion(item)">{{ item }}<span aria-hidden="true">↗</span></button></div></div>
         <div v-for="message in messages" :key="message.id" class="message" :class="message.role">
