@@ -75,6 +75,12 @@
 .pending-process .process-collapsible { padding:8px 11px 9px; border:1px solid #e4ebf2; border-radius:12px; background:#fbfcfe; }
 .pending-process .process-collapsible summary { color:#536476; }
 .pending-process .process-content { border-top-color:#e7edf3; }
+
+/* Pending answers use one continuous surface instead of nested cards. */
+.message.pending .message-bubble.assistant-bubble { background:#fff; border:1px solid #dfe8e0; border-bottom:0; border-radius:12px 12px 0 0; padding-bottom:12px; }
+.message.pending .pending-process { margin:0; padding:0; border:1px solid #dfe8e0; border-top:0; border-radius:0 0 12px 12px; background:#fff; }
+.message.pending .pending-process .process-collapsible { padding:0 14px 12px; border:0; border-radius:0 0 12px 12px; background:transparent; }
+.message.pending .pending-process .process-content { margin-top:8px; padding:10px 0 0; border:0; border-top:1px solid #e7edf3; border-radius:0; background:transparent; }
 .spinning { animation:process-spin 1s linear infinite; }
 @keyframes process-spin { to { transform:rotate(360deg); } }
 
