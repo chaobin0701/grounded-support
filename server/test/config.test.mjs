@@ -20,6 +20,7 @@ test('configuration applies safe defaults without requiring an LLM key', () => {
     contextWindowTokens: 32000,
     maxOutputTokens: 1200,
     structuredOutput: 'auto',
+    allowedBaseUrls: ['https://ark.cn-beijing.volces.com/api/v3'],
   });
 });
 

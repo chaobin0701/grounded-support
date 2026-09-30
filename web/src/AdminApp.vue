@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Boxes, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import { Boxes, Cpu, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
 import type { Component } from 'vue';
 import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
@@ -13,8 +13,9 @@ import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
+import ModelServiceAdmin from './ModelServiceAdmin.vue';
 
-type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'model-services' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
@@ -51,7 +52,7 @@ const roleForm = ref({ id: null as number | null, code: '', name: '', permission
 const selectedAdmin = computed(() => admins.value.find((item) => item.id === selectedAdminId.value) ?? null);
 const selectedRole = computed(() => roles.value.find((item) => item.id === selectedRoleId.value) ?? null);
 const permissionGroups = computed(() => {
-  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', audit: '操作记录' };
+  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', model_profiles: '模型服务', audit: '操作记录' };
   const grouped = new Map<string, PermissionItem[]>();
   for (const permission of permissions.value) {
     const key = permission.code.split('.')[0] ?? 'other';
@@ -65,6 +66,7 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
   { id: 'products', label: '产品管理', icon: Boxes, permissions: ['knowledge_bases.manage'] },
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
+  { id: 'model-services', label: '模型服务', icon: Cpu, permissions: ['model_profiles.read', 'model_profiles.manage'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
@@ -468,6 +470,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
         </section>
 
         <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
+        <ModelServiceAdmin v-else-if="view === 'model-services'" :token="session.token" :can-manage="can('model_profiles.manage')" @notice="notice = $event" @error="error = $event" />
 
         <section v-else-if="view === 'admins'">
           <AdminPageHeader eyebrow="账号管理" title="管理员" description="创建账号、分配角色和停用账号；实际授权始终由后端校验。">

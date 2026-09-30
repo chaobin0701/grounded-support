@@ -88,6 +88,24 @@ export interface AuditItem {
   createdAt: string;
 }
 
+export interface LlmProfileItem {
+  id: number;
+  name: string;
+  providerKey: 'openai-compatible';
+  adapterType: 'openai-compatible';
+  baseUrl: string;
+  model: string;
+  timeoutMs: number;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  structuredOutput: 'auto' | 'required' | 'disabled';
+  supportsToolCalls: boolean;
+  supportsStreaming: boolean;
+  enabled: boolean;
+  isDefault: boolean;
+  hasApiKey: boolean;
+}
+
 export interface ChatTraceItem {
   id: string;
   kind: 'answer' | 'summary';
@@ -349,4 +367,10 @@ export const adminApi = {
   debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
   conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}`, {}, token),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
+  llmProfiles: (token: string) => request<LlmProfileItem[]>('/model-profiles/llm', {}, token),
+  createLlmProfile: (token: string, input: Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey'>) => request<LlmProfileItem>('/model-profiles/llm', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateLlmProfile: (token: string, id: number, input: Partial<Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey'>>) => request<LlmProfileItem>(`/model-profiles/llm/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  activateLlmProfile: (token: string, id: number) => request<LlmProfileItem>(`/model-profiles/llm/${id}/activate`, { method: 'POST' }, token),
+  setLlmProfileStatus: (token: string, id: number, enabled: boolean) => request<LlmProfileItem>(`/model-profiles/llm/${id}/status`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
+  testLlmProfile: (token: string, id: number) => request<{ ok: true; model: string; durationMs: number }>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
 };

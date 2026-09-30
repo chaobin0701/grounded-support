@@ -164,6 +164,26 @@ export const embeddingProfiles = pgTable('embedding_profiles', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const llmProfiles = pgTable('llm_profiles', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  name: text('name').notNull(),
+  providerKey: varchar('provider_key', { length: 80 }).notNull(),
+  adapterType: varchar('adapter_type', { length: 80 }).notNull(),
+  baseUrl: text('base_url').notNull(),
+  model: varchar('model', { length: 200 }).notNull(),
+  apiKeyCiphertext: text('api_key_ciphertext'),
+  timeoutMs: integer('timeout_ms').notNull(),
+  contextWindowTokens: integer('context_window_tokens').notNull(),
+  maxOutputTokens: integer('max_output_tokens').notNull(),
+  structuredOutput: varchar('structured_output', { length: 20 }).notNull(),
+  supportsToolCalls: boolean('supports_tool_calls').notNull(),
+  supportsStreaming: boolean('supports_streaming').notNull(),
+  enabled: boolean('enabled').notNull(),
+  isDefault: boolean('is_default').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const knowledgeIndexVersions = pgTable('knowledge_index_versions', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   knowledgeBaseId: bigint('knowledge_base_id', { mode: 'number' }).notNull().references(() => knowledgeBases.id),

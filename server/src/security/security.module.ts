@@ -6,6 +6,7 @@ import { OriginCheckGuard } from './origin-check.guard';
 import { RequestContextMiddleware } from './request-context.middleware';
 import { RequestLoggerMiddleware } from './request-logger.middleware';
 import { SecurityRateLimitService } from './security-rate-limit.service';
+import { SecretBox } from './secret-box';
 
 @Global()
 @Module({
@@ -13,10 +14,11 @@ import { SecurityRateLimitService } from './security-rate-limit.service';
   providers: [
     InMemoryRateLimitStore,
     SecurityRateLimitService,
+    SecretBox,
     RequestContextMiddleware,
     RequestLoggerMiddleware,
     { provide: APP_GUARD, useClass: OriginCheckGuard },
   ],
-  exports: [InMemoryRateLimitStore, SecurityRateLimitService, RequestContextMiddleware, RequestLoggerMiddleware],
+  exports: [InMemoryRateLimitStore, SecurityRateLimitService, RequestContextMiddleware, RequestLoggerMiddleware, SecretBox],
 })
 export class SecurityModule {}

@@ -58,13 +58,13 @@ Provider 不负责：
 - 计算请求耗时；
 - 处理超时、限流、认证失败和无效响应。
 
-当前支持的模型由 `SUPPORTED_LLM_MODELS` 限制。增加模型前，应先确认接口协议、响应结构和安全限制。
+模型 ID 由后台模型服务配置传入，不在 Provider 内硬编码厂商名单；如部署环境需要限制可用模型，应在配置或管理层增加显式白名单。
 
 Provider 不直接读取 `process.env`。环境变量由 `config/` 中的 `AppConfigService` 校验，Provider 实例由 `provider-registry.ts` 创建。
 
 ### `provider-registry.ts`
 
-根据 `LLM_PROVIDER` 创建统一的 `LlmProvider`。当前只注册 `openai-compatible`，未来增加 Provider 时应在 Registry 中增加清晰的工厂映射，不把选择逻辑散落到业务服务中。
+根据环境配置或后台启用的默认模型服务创建统一的 `LlmProvider`。当前只注册 `openai-compatible`，未来增加 Provider 时应在 Registry 中增加清晰的工厂映射，不把选择逻辑散落到业务服务中。
 
 ### `provider-errors.ts`
 
