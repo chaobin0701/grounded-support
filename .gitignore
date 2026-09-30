@@ -13,5 +13,6 @@
 
 data/
 uploads/
+.data/
 .playwright-cli/
 output/playwright/
