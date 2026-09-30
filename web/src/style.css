@@ -91,14 +91,14 @@ button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-vis
 .sidebar { padding: 28px 16px 20px; background: #fff; border-color: var(--line); }
 .brand { gap: 11px; padding: 0 12px; color: var(--ink); font-size: 16px; letter-spacing: -.025em; }
 .brand-mark { width: 38px; height: 38px; border-radius: 10px; background: var(--pine); font-size: 17px; }
-.sidebar-conversations { margin-top: 38px; }
+.sidebar-conversations { display: flex; flex: 1 1 auto; min-height: 0; flex-direction: column; margin: 38px 0 18px; overflow: hidden; }
 .new-conversation { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 42px; border: 1px solid var(--pine); border-radius: 9px; background: var(--pine); color: #fff; font-size: 13px; font-weight: 650; transition: background .18s, transform .18s; }
 .new-conversation:hover:not(:disabled) { background: #17392d; transform: translateY(-1px); }
 .new-conversation span { font-size: 20px; font-weight: 400; line-height: 1; }
 .conversation-list-head { margin: 27px 8px 10px; align-items: center; }
 .conversation-list-head .section-label { color: #7b8980; font-size: 11px; letter-spacing: .08em; }
 .conversation-list-head > span { color: #a1aaa3; font-size: 11px; }
-.conversation-list { gap: 4px; }
+.conversation-list { min-height: 0; gap: 4px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding-right: 4px; }
 .conversation-list-item { min-height: 44px; border-radius: 8px; }
 .conversation-list-item:hover, .conversation-list-item.active { background: #edf3ee; }
 .conversation-open { padding: 12px 10px; color: #4c5b52; font-size: 13px; }
@@ -167,10 +167,10 @@ button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-vis
   .app-shell { display: block; height: 100svh; }
   .sidebar { min-height: 0; padding: 13px 16px; }
   .brand { padding: 0; }
-  .sidebar-conversations { display: flex; gap: 10px; margin: 12px 0 0; align-items: center; }
+  .sidebar-conversations { display: flex; flex: 0 0 auto; gap: 10px; margin: 12px 0 0; align-items: center; overflow: visible; }
   .new-conversation { flex: 0 0 auto; width: auto; min-height: 36px; padding: 0 11px; font-size: 12px; }
   .conversation-list-head, .sidebar-conversations .sidebar-copy { display: none; }
-  .conversation-list { max-width: calc(100vw - 145px); padding: 0; }
+  .conversation-list { max-width: calc(100vw - 145px); padding: 0; overflow-y: visible; overflow-x: auto; }
   .conversation-list-item { min-height: 36px; border: 1px solid var(--line); }
   .conversation-open { max-width: 120px; padding: 8px; }
   .workspace { height: calc(100svh - 109px); min-height: 420px; }
