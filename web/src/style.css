@@ -89,6 +89,23 @@ button:disabled { cursor: not-allowed; }
   .workspace { height: calc(100svh - 150px); }
 }
 
+/* The website chatbot uses the same chat surface in a compact embedded mode. */
+.app-shell-embedded { display: flex; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.app-shell-embedded .workspace { width: 100%; height: 100%; min-height: 0; }
+.app-shell-embedded .embedded-workspace-header { justify-content: flex-end; min-height: 53px; padding: 8px 15px; }
+.embedded-conversation-select { max-width: 270px; min-width: 0; padding: 7px 30px 7px 10px; border: 1px solid var(--line); border-radius: 8px; outline: none; background: #fff; color: var(--ink); font-size: 12px; text-overflow: ellipsis; }
+.embedded-conversation-select:focus { border-color: #9dbba7; box-shadow: 0 0 0 3px #9dbba733; }
+.app-shell-embedded .conversation { padding: 25px 18px 16px; }
+.app-shell-embedded .welcome { margin-top: clamp(25px, 7vh, 74px); }
+.app-shell-embedded .composer-area { padding: 12px 14px 14px; }
+.app-shell-embedded .message { margin-bottom: 22px; }
+@media (max-width: 680px) {
+  .app-shell-embedded .workspace { height: 100svh; }
+  .app-shell-embedded .embedded-workspace-header { min-height: 49px; }
+  .app-shell-embedded .conversation { padding: 20px 14px 13px; }
+  .embedded-conversation-select { max-width: 230px; }
+}
+
 /* Shared product language: quiet surfaces, compact navigation, clear evidence. */
 :root { --ink: #1d2925; --muted: #68766f; --line: #e4e9e4; --pine: #244c3e; --canvas: #f7f8f5; color: var(--ink); background: var(--canvas); }
 button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #9ac0a8; outline-offset: 2px; }

@@ -11,6 +11,7 @@ const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
 const isProductRoute = computed(() => route.path === '/product' || route.path.startsWith('/product/'));
 const isHelpRoute = computed(() => route.path === '/help');
+const isEmbeddedChat = computed(() => route.query.embed === '1');
 watch(() => route.path, (path) => {
   document.title = path === '/product' || path.startsWith('/product/') ? '暖巢智能客服 · 产品介绍'
     : path === '/help' ? '暖巢智能客服 · 帮助中心'
@@ -198,6 +199,12 @@ async function openConversation(id: string) {
   }
 }
 
+function switchEmbeddedConversation(event: Event) {
+  const id = (event.target as HTMLSelectElement).value;
+  if (id) void openConversation(id);
+  else void newConversation();
+}
+
 async function newConversation() {
   if (isSending.value) return;
   activeConversationId.value = null;
@@ -354,8 +361,8 @@ function chooseSuggestion(value: string) {
   <ProductSite v-if="isProductRoute" />
   <HelpCenter v-else-if="isHelpRoute" />
   <AdminApp v-else-if="isAdminRoute" />
-  <div v-else class="app-shell">
-    <aside class="sidebar" aria-label="对话导航">
+  <div v-else class="app-shell" :class="{ 'app-shell-embedded': isEmbeddedChat }">
+    <aside v-if="!isEmbeddedChat" class="sidebar" aria-label="对话导航">
       <div class="brand"><span class="brand-mark" aria-hidden="true">暖</span><span>暖巢智能客服</span></div>
       <div class="sidebar-body sidebar-conversations">
         <button class="new-conversation" type="button" :disabled="isSending || isLoadingConversations" @click="newConversation"><span aria-hidden="true">＋</span> 新建对话</button>
@@ -382,8 +389,15 @@ function chooseSuggestion(value: string) {
     </aside>
 
     <main class="workspace">
-      <header class="workspace-header">
+      <header v-if="!isEmbeddedChat" class="workspace-header">
         <div><p class="section-label">客户咨询 <span aria-hidden="true">/</span> {{ conversations.find((item) => item.id === activeConversationId)?.title || '新对话' }}</p><h2>{{ activeConversationId ? '对话' : '新对话' }}</h2></div>
+      </header>
+      <header v-else class="workspace-header embedded-workspace-header">
+        <label class="sr-only" for="embedded-conversation-select">切换对话</label>
+        <select id="embedded-conversation-select" class="embedded-conversation-select" :value="activeConversationId || ''" :disabled="isSending || isLoadingConversations" @change="switchEmbeddedConversation">
+          <option value="">新建对话</option>
+          <option v-for="item in conversations" :key="item.id" :value="item.id">{{ item.title }}</option>
+        </select>
       </header>
 
       <section ref="conversation" class="conversation" aria-label="问答记录" aria-live="polite">
