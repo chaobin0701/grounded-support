@@ -12,6 +12,7 @@ export const PLANNER_TOOL_NAMES = [
 
 export const plannerToolSchema = z.object({
   type: z.literal('tool').optional(),
+  id: z.string().optional(),
   name: z.enum(PLANNER_TOOL_NAMES),
   arguments: z.record(z.string(), z.unknown()),
 });
@@ -21,7 +22,7 @@ export type PlannerToolCall = z.infer<typeof plannerToolSchema>;
 export type ParsedPlannerOutput = {
   final: Record<string, unknown> | null;
   toolCalls: PlannerToolCall[];
-  parseMode: 'json' | 'json_batch' | 'json_with_dsml' | 'dsml' | 'invalid';
+  parseMode: 'json' | 'json_batch' | 'json_with_dsml' | 'dsml' | 'native' | 'invalid';
   error?: string;
 };
 

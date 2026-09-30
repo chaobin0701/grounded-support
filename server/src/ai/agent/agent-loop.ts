@@ -8,13 +8,15 @@ import type { AgentState, AgentExecutionStep, AgentModelCall } from './agent-sta
 import { REFUSAL, validateAgentAnswer } from './agent-answer';
 import type { ProductDetail, ProductSummary } from '../tools/product-catalog/product-catalog.service';
 import { ToolExecutionService } from '../tools/tool-execution';
-import { parsePlannerOutput } from './planner-output';
+import { parsePlannerOutput, plannerToolSchema } from './planner-output';
 import type { PlannerToolCall } from './planner-output';
 import { transcriptMessageBase } from '../../chat/agent-transcript';
 import { ContextGovernor } from '../../chat/context-governor';
+import type { LlmMessage } from '../providers/provider.types';
 
 export const PLANNER_PROMPT = `你是暖巢电器的统一问答 Agent。先理解用户当前问题，再决定直接回复、调用工具或拒答。闲聊、问候和感谢可以自然回复；业务事实必须来自预检索资料或工具结果，不能使用常识补足。
-你可以选择 search_knowledge 查询已上传资料，或使用产品目录工具查询虚构产品。产品目录也可以通过 MCP 工具查询。通常输出一个 JSON 对象；如果多个独立工具的参数已经可以确定，应在同一次响应中批量返回，格式为 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。同一批次中的工具会按顺序执行；不要把依赖前一个结果的工具放进同一批次。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
+优先使用请求中提供的原生 function tools：需要多个独立工具时，在同一次模型响应中返回多个 tool calls；同一批次中的工具会按顺序执行，不要把依赖前一个结果的工具放进同一批次。如果当前模型或服务不支持原生 tools，才使用下方 JSON 格式作为兼容回退。不要输出 Markdown、解释或思考过程。当前 Skill 为 auto 或 conversational 时，问候、感谢和告别可以自然回复，不需要 citationIds 或 productIds；如果本轮使用了知识库或产品工具，最终回答必须提供对应的合法引用或产品事实。
+兼容回退通常输出一个 JSON 对象；如果多个独立工具的参数已经可以确定，格式为 {"type":"tools","calls":[{"name":"工具名","arguments":{}},{"name":"工具名","arguments":{}}]}。
 需要工具时输出：{"type":"tool","name":"工具名","arguments":{}}。
 不需要更多工具时输出：{"type":"final","status":"answered","answer":"简短中文回答","citationIds":[资料片段数字ID],"productIds":[产品ID]}。
 如果资料或产品结果不能支持回答，输出：{"type":"final","status":"refused","answer":"无法确定，建议联系人工。","citationIds":[],"productIds":[]}。
@@ -83,8 +85,13 @@ export class AgentLoop {
     }
     const modelStarted = Date.now();
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
+    const nativeTools = this.toolExecution.toolDefinitions(state.skill.allowedTools);
+    const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, state.transcript);
     try {
-      model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner');
+      model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner', {
+        messages: plannerMessages,
+        tools: nativeTools,
+      });
     } catch (error) {
       state.executionSteps.push({ type: 'llm_call', stage: 'planning', plannerRound, model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
       state.contextSnapshot.executionSteps = state.executionSteps;
@@ -117,14 +124,15 @@ export class AgentLoop {
       model: model.model,
       request: {
         messages: [
-          { role: 'system', content: plannerSystemPrompt },
-          { role: 'user', content: builtContext.userPrompt },
+          ...plannerMessages,
         ],
+        tools: nativeTools,
         temperature: 0.1,
         maxTokens: 1200,
       },
       response: {
         content: model.content,
+        ...((model.toolCalls ?? []).length ? { toolCalls: model.toolCalls } : {}),
         finishReason: model.finishReason,
         inputTokens: model.inputTokens,
         outputTokens: model.outputTokens,
@@ -137,9 +145,13 @@ export class AgentLoop {
     state.modelCalls.push(modelCall);
     state.contextSnapshot.modelCalls = state.modelCalls;
 
-    const parsed = parsePlannerOutput(model.content);
+    const nativeToolCalls = model.toolCalls ?? [];
+    const parsed = nativeToolCalls.length ? normalizeNativeCalls(nativeToolCalls) : parsePlannerOutput(model.content);
     state.contextSnapshot.plannerParseMode = parsed.parseMode;
-    if (parsed.error) state.contextSnapshot.plannerParseError = parsed.error;
+    const plannerParseModes = Array.isArray(state.contextSnapshot.plannerParseModes) ? state.contextSnapshot.plannerParseModes : [];
+    plannerParseModes.push(parsed.parseMode);
+    state.contextSnapshot.plannerParseModes = plannerParseModes;
+    if ('error' in parsed && parsed.error) state.contextSnapshot.plannerParseError = parsed.error;
     const final = parsed.final;
     if (final) {
       modelStep.stage = 'final_answer';
@@ -181,7 +193,7 @@ export class AgentLoop {
     const toolCalls = this.selectToolBatch(parsed.toolCalls);
     const toolBatchId = `planner-${plannerRound}-tools`;
     const transcriptToolCalls = toolCalls.map((call, toolIndex) => ({
-      id: `${toolBatchId}-${toolIndex + 1}`,
+      id: call.id ?? `${toolBatchId}-${toolIndex + 1}`,
       name: call.name,
       arguments: call.arguments,
     }));
@@ -246,6 +258,23 @@ export class AgentLoop {
     return toolCalls.slice(0, Math.max(1, firstNonBatchIndex));
   }
 
+  private buildPlannerMessages(systemPrompt: string, userPrompt: string, transcript: AgentState['transcript']): LlmMessage[] {
+    const messages: LlmMessage[] = [{ role: 'system', content: systemPrompt }];
+    for (const item of transcript) {
+      if (item.role === 'user') {
+        messages.push({ role: 'user', content: item.content ?? '' });
+      } else if (item.role === 'assistant') {
+        messages.push({ role: 'assistant', content: item.content ?? '', ...(item.toolCalls?.length ? { toolCalls: item.toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })) } : {}) });
+      } else {
+        messages.push({ role: 'tool', content: item.content ?? '', ...(item.toolCallId ? { toolCallId: item.toolCallId } : {}) });
+      }
+    }
+    // Keep the governed JSON context as the final user message. It contains
+    // preflight evidence and bounded history in addition to the native transcript.
+    messages.push({ role: 'user', content: userPrompt });
+    return messages;
+  }
+
   private transcriptBase(state: AgentState) {
     const first = state.traceTranscript[0];
     return transcriptMessageBase(first?.conversationId, first?.traceId, state.transcript.length + 1);
@@ -277,6 +306,16 @@ export class AgentLoop {
 
 function refusedAnswer(): ChatAnswer {
   return { answer: REFUSAL, refused: true, citations: [] };
+}
+
+function normalizeNativeCalls(calls: readonly { id: string; name: string; arguments: Record<string, unknown> }[]) {
+  const toolCalls = [] as PlannerToolCall[];
+  for (const call of calls) {
+    const parsed = plannerToolSchema.safeParse({ type: 'tool', id: call.id, name: call.name, arguments: call.arguments });
+    if (!parsed.success) return { final: null, toolCalls: [], parseMode: 'invalid' as const, error: 'native_tool_not_allowed' };
+    toolCalls.push(parsed.data);
+  }
+  return { final: null, toolCalls, parseMode: 'native' as const };
 }
 
 function publicToolLabel(name: PlannerToolCall['name']): string {

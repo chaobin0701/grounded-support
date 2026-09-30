@@ -60,7 +60,13 @@ export class OpenAICompatibleProvider implements LlmProvider {
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages.map((message) => ({ role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}), ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) })),
+          messages: request.messages.map((message) => ({
+            role: message.role,
+            content: message.toolCalls?.length ? (message.content || null) : message.content,
+            ...(message.name ? { name: message.name } : {}),
+            ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+            ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : {}),
+          })),
           ...(request.tools?.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
           temperature: request.temperature ?? 0.1,
           max_tokens: request.maxTokens ?? 1200,
@@ -112,7 +118,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages.map((message) => ({ role: message.role, content: message.content, ...(message.name ? { name: message.name } : {}), ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) })),
+          messages: request.messages.map((message) => ({ role: message.role, content: message.toolCalls?.length ? (message.content || null) : message.content, ...(message.name ? { name: message.name } : {}), ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) })),
           temperature: request.temperature ?? 0.1,
           max_tokens: request.maxTokens ?? 1200,
           stream: true,

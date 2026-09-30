@@ -91,6 +91,35 @@ test('agent runner returns a normalized result after a tool step', async () => {
   assert.equal(result.contextSnapshot.toolCalls.length, 1);
 });
 
+test('agent executes provider-native tool calls and preserves the call id', async () => {
+  const responses = [
+    { content: '', toolCalls: [{ id: 'call-native-1', name: 'search_knowledge', arguments: { query: '退货政策' } }] },
+    { content: JSON.stringify({ type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }), toolCalls: [] },
+  ];
+  const llm = {
+    model: 'test-model',
+    completeDetailed: async (_system, _user, _model, _purpose, options) => {
+      assert.ok(options.tools.some((item) => item.name === 'search_knowledge'));
+      return { ...responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 };
+    },
+  };
+  const tool = {
+    name: 'search_knowledge',
+    description: 'search',
+    inputSchema: { safeParse: (input) => ({ success: true, data: input }) },
+    execute: async () => ({ success: true, content: '退货政策：七天内可申请退货。', data: { hits: [hit] } }),
+  };
+  const registry = { get: () => tool, list: () => [tool] };
+  const execution = new ToolExecutionService(registry, new ToolPolicy());
+  const runner = new AgentRunner(new AgentLoop(llm, new ContextBuilder(), execution), new ContextBuilder());
+  const result = await runner.run({ question: '退货政策是什么？', summary: '', recentHistory: [] });
+
+  assert.equal(result.result.refused, false);
+  assert.equal(result.toolCalls[0].name, 'search_knowledge');
+  assert.equal(result.contextSnapshot.agentTranscript.find((item) => item.role === 'tool').toolCallId, 'call-native-1');
+  assert.deepEqual(result.contextSnapshot.plannerParseModes, ['native', 'json']);
+});
+
 test('unified agent answers a greeting without preflight or citation', async () => {
   const llm = {
     model: 'test-model',

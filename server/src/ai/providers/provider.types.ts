@@ -5,6 +5,7 @@ export interface LlmMessage {
   content: string;
   name?: string;
   toolCallId?: string;
+  toolCalls?: LlmToolCall[];
 }
 
 export interface LlmToolDefinition {
