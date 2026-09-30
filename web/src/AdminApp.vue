@@ -1,19 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import { Boxes, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
 import type { Component } from 'vue';
 import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
 import './admin.css';
 import KnowledgeBaseAdmin from './KnowledgeBaseAdmin.vue';
 import AdminDashboard from './AdminDashboard.vue';
+import ProductCatalogAdmin from './ProductCatalogAdmin.vue';
 import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
 
-type View = 'dashboard' | 'knowledge' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
@@ -62,6 +63,7 @@ const permissionGroups = computed(() => {
 const views: { id: View; label: string; permissions: string[]; icon: Component }[] = [
   { id: 'dashboard', label: '概览', icon: LayoutDashboard, permissions: ['documents.read', 'knowledge_bases.manage', 'conversations.read'] },
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
+  { id: 'products', label: '产品管理', icon: Boxes, permissions: ['knowledge_bases.manage'] },
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
@@ -429,6 +431,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
         <AdminDashboard v-else-if="view === 'dashboard'" :display-name="session.me.displayName" :document-count="documents.length" :conversation-count="chatTraces.length" />
         <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
+        <ProductCatalogAdmin v-else-if="view === 'products'" :token="session.token" />
         <section v-else-if="view === 'documents'">
           <AdminPageHeader eyebrow="知识管理" title="资料库" description="维护客服可引用的资料。仅已就绪且未下架的内容参与回答。">
             <template #actions><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></template>

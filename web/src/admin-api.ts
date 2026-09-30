@@ -62,6 +62,21 @@ export interface AdminItem {
 }
 
 export interface PermissionItem { code: string; description: string }
+export interface AdminProductItem {
+  id: string;
+  brand: string;
+  name: string;
+  category: string;
+  summary: string;
+  description: string;
+  suggestedPrice: string | null;
+  imageUrl: string | null;
+  sourceUrl: string | null;
+  specifications: Record<string, string>;
+  displayOrder: number;
+  enabled: boolean;
+  updatedAt: string;
+}
 export interface AuditItem {
   id: number;
   actorAdminId: number;
@@ -324,6 +339,7 @@ export const adminApi = {
   assignRoles: (token: string, id: number, roleIds: number[]) => request(`/admins/${id}/roles`, { method: 'PATCH', body: JSON.stringify({ roleIds }) }, token),
   setStatus: (token: string, id: number, disabled: boolean) => request(`/admins/${id}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) }, token),
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),
+  products: (token: string) => request<AdminProductItem[]>('/products', {}, token),
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
   debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
