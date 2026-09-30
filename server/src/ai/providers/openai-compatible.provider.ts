@@ -7,9 +7,11 @@ import {
   ProviderRateLimitError,
   ProviderTimeoutError,
   ProviderUnavailableError,
+  ProviderError,
+  ProviderUnsupportedResponseFormatError,
 } from './provider-errors';
 import { LlmProvider } from './llm-provider';
-import { LlmRequest, LlmResponse, LlmStreamEvent } from './provider.types';
+import { LlmRequest, LlmResponse, LlmStreamEvent, LlmResponseFormat } from './provider.types';
 
 export const SUPPORTED_LLM_MODELS = ['deepseek-v4-1-flash-260910', 'glm-5-3-flash-260828'] as const;
 
@@ -19,6 +21,8 @@ export interface OpenAICompatibleProviderOptions {
   model: string;
   timeoutMs: number;
   supportedModels?: readonly string[];
+  /** `auto` retries without response_format only when the endpoint rejects it. */
+  structuredOutput?: 'auto' | 'required' | 'disabled';
 }
 
 type RawResponse = {
@@ -39,6 +43,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly supportedModels: readonly string[];
+  private readonly structuredOutput: NonNullable<OpenAICompatibleProviderOptions['structuredOutput']>;
   private readonly logger = new Logger(OpenAICompatibleProvider.name);
 
   constructor(options: OpenAICompatibleProviderOptions) {
@@ -47,6 +52,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     this.model = options.model;
     this.timeoutMs = options.timeoutMs;
     this.supportedModels = options.supportedModels ?? SUPPORTED_LLM_MODELS;
+    this.structuredOutput = options.structuredOutput ?? 'auto';
   }
 
   async chat(request: LlmRequest): Promise<LlmResponse> {
@@ -54,46 +60,44 @@ export class OpenAICompatibleProvider implements LlmProvider {
     if (!this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
     const started = Date.now();
     let response: Response;
+    let payload: RawResponse;
+    let omittedResponseFormat = false;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: request.model,
-          messages: request.messages.map((message) => ({
-            role: message.role,
-            content: message.toolCalls?.length ? (message.content || null) : message.content,
-            ...(message.name ? { name: message.name } : {}),
-            ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
-            ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : {}),
-          })),
-          ...(request.tools?.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
-          temperature: request.temperature ?? 0.1,
-          max_tokens: request.maxTokens ?? 1200,
-        }),
-        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
-      });
+      ({ response, payload } = await this.fetchChatResponse(request));
+      if (!response.ok && this.shouldRetryWithoutStructuredOutput(response.status, request, payload)) {
+        omittedResponseFormat = true;
+        ({ response, payload } = await this.fetchChatResponse(request, true));
+      }
     } catch (error) {
+      if (error instanceof ProviderError) throw error;
       if (error instanceof DOMException && error.name === 'TimeoutError') throw new ProviderTimeoutError();
       this.logger.warn('Model provider request failed before receiving a response');
       throw new ProviderUnavailableError();
     }
-
-    let payload: RawResponse;
-    try { payload = await response.json() as RawResponse; } catch { throw new ProviderInvalidResponseError(); }
-    if (!response.ok) throw this.mapHttpError(response.status, payload);
+    if (!response.ok) {
+      if (!omittedResponseFormat && this.structuredOutput !== 'disabled' && request.responseFormat && this.isUnsupportedResponseFormat(response.status, payload)) {
+        throw new ProviderUnsupportedResponseFormatError(response.status);
+      }
+      throw this.mapHttpError(response.status, payload);
+    }
     const choice = payload.choices?.[0];
     if (!choice?.message) throw new ProviderInvalidResponseError();
-    const toolCalls = (choice.message.tool_calls ?? []).map((call) => {
+    const rawToolCalls = choice.message.tool_calls;
+    if (rawToolCalls !== undefined && !Array.isArray(rawToolCalls)) throw new ProviderInvalidResponseError();
+    const toolCalls = (rawToolCalls ?? []).map((call) => {
       const id = typeof call.id === 'string' ? call.id : '';
       const name = typeof call.function?.name === 'string' ? call.function.name : '';
-      if (!id || !name || typeof call.function?.arguments !== 'string') throw new ProviderInvalidResponseError();
+      if (!id || !name) throw new ProviderInvalidResponseError();
       let args: unknown;
-      try { args = JSON.parse(call.function.arguments); } catch { throw new ProviderInvalidResponseError(); }
+      if (typeof call.function?.arguments === 'string') {
+        try { args = JSON.parse(call.function.arguments); } catch { throw new ProviderInvalidResponseError(); }
+      } else {
+        args = call.function?.arguments;
+      }
       if (!args || typeof args !== 'object' || Array.isArray(args)) throw new ProviderInvalidResponseError();
       return { id, name, arguments: args as Record<string, unknown> };
     });
-    const content = typeof choice.message.content === 'string' ? choice.message.content.trim() : '';
+    const content = normalizeContent(choice.message.content);
     return {
       content,
       toolCalls,
@@ -106,6 +110,58 @@ export class OpenAICompatibleProvider implements LlmProvider {
       model: request.model,
       durationMs: Date.now() - started,
     };
+  }
+
+  private async fetchChatResponse(request: LlmRequest, omitResponseFormat = false): Promise<{ response: Response; payload: RawResponse }> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(this.buildChatBody(request, omitResponseFormat)),
+        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'TimeoutError') throw new ProviderTimeoutError();
+      throw new ProviderUnavailableError();
+    }
+    let payload: RawResponse;
+    try { payload = await response.json() as RawResponse; } catch { throw new ProviderInvalidResponseError(); }
+    return { response, payload };
+  }
+
+  private buildChatBody(request: LlmRequest, omitResponseFormat: boolean): Record<string, unknown> {
+    const responseFormat = this.responseFormatFor(request.responseFormat, omitResponseFormat);
+    return {
+      model: request.model,
+      messages: request.messages.map((message) => ({
+        role: message.role,
+        content: message.toolCalls?.length ? (message.content || null) : message.content,
+        ...(message.name ? { name: message.name } : {}),
+        ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}),
+        ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : {}),
+      })),
+      ...(request.tools?.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
+      ...(responseFormat ? { response_format: responseFormat } : {}),
+      temperature: request.temperature ?? 0.1,
+      max_tokens: request.maxTokens ?? 1200,
+    };
+  }
+
+  private responseFormatFor(format: LlmResponseFormat | undefined, omit: boolean): LlmResponseFormat | undefined {
+    if (omit || !format || this.structuredOutput === 'disabled') return undefined;
+    return format;
+  }
+
+  private shouldRetryWithoutStructuredOutput(status: number, request: LlmRequest, payload: RawResponse): boolean {
+    if (this.structuredOutput !== 'auto' || !request.responseFormat) return false;
+    return this.isUnsupportedResponseFormat(status, payload);
+  }
+
+  private isUnsupportedResponseFormat(status: number, payload: RawResponse): boolean {
+    if (status !== 400 && status !== 422) return false;
+    const text = JSON.stringify(payload).toLowerCase();
+    return /response[_ -]?format|json[_ -]?object|structured output/.test(text);
   }
 
   async *stream(request: LlmRequest): AsyncIterable<LlmStreamEvent> {
@@ -185,4 +241,18 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeContent(value: unknown): string {
+  if (typeof value === 'string') return value.trim();
+  if (!Array.isArray(value)) return '';
+  return value
+    .map((part) => {
+      if (typeof part === 'string') return part;
+      if (!part || typeof part !== 'object') return '';
+      const text = (part as { text?: unknown }).text;
+      return typeof text === 'string' ? text : '';
+    })
+    .join('')
+    .trim();
 }

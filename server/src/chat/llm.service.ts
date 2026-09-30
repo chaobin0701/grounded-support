@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
 import { ProviderError } from '../ai/providers/provider-errors';
-import { LlmMessage, LlmToolCall, LlmToolDefinition } from '../ai/providers/provider.types';
+import { LlmMessage, LlmResponseFormat, LlmToolCall, LlmToolDefinition } from '../ai/providers/provider.types';
 import { AppConfigService } from '../config/config.service';
 
 export type ModelResult = {
@@ -19,6 +19,7 @@ export type ModelResult = {
 export type LlmCompletionOptions = {
   messages?: LlmMessage[];
   tools?: LlmToolDefinition[];
+  responseFormat?: LlmResponseFormat;
 };
 
 export class ModelFailure extends ServiceUnavailableException {
@@ -35,6 +36,10 @@ export class LlmService {
 
   get model(): string {
     return this.provider.model;
+  }
+
+  get structuredOutputMode(): 'auto' | 'required' | 'disabled' {
+    return this.config?.llm.structuredOutput ?? 'auto';
   }
 
   async complete(system: string, user: string, model = this.model): Promise<string> {
@@ -54,6 +59,7 @@ export class LlmService {
           model,
           messages,
           ...(options.tools?.length ? { tools: options.tools } : {}),
+          ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
           temperature: 0.1,
           maxTokens: purpose === 'summary' ? 800 : this.config?.llm.maxOutputTokens ?? 1200,
         });

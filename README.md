@@ -124,7 +124,7 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 
 ## 访客问答 API
 
-在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。配置先由 `AppConfigService` 校验，再由 `ProviderRegistry` 创建 `OpenAICompatibleProvider`；Provider 本身不读取环境变量。可配置 `LLM_PROVIDER`（当前仅支持 `openai-compatible`）、`LLM_BASE_URL`、`LLM_MODEL`、`LLM_TIMEOUT_MS`、`LLM_CONTEXT_WINDOW_TOKENS` 和 `LLM_MAX_OUTPUT_TOKENS`。默认上下文窗口为 32,000 tokens，最大输出为 1,200 tokens；模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
+在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。配置先由 `AppConfigService` 校验，再由 `ProviderRegistry` 创建 `OpenAICompatibleProvider`；Provider 本身不读取环境变量。可配置 `LLM_PROVIDER`（当前仅支持 `openai-compatible`）、`LLM_BASE_URL`、`LLM_MODEL`、`LLM_TIMEOUT_MS`、`LLM_CONTEXT_WINDOW_TOKENS`、`LLM_MAX_OUTPUT_TOKENS` 和 `LLM_STRUCTURED_OUTPUT`。默认上下文窗口为 32,000 tokens，最大输出为 1,200 tokens；结构化输出默认为 `auto`，规划阶段发送 `response_format: { type: "json_object" }`，兼容端点拒绝该参数时自动回退一次；不兼容端点可设置为 `disabled`，严格要求支持时可设置为 `required`。模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
 
 访客可直接打开 `http://localhost:8081` 使用 Vue 页面。页面可新建、切换和删除多段对话；同一浏览器刷新后可恢复。后端用 180 天有效的 `HttpOnly` 匿名 Cookie 将会话归属到当前浏览器，不提供登录或跨设备找回；清除 Cookie 后旧记录无法找回。删除对话会级联删除消息与调用轨迹。每段对话的摘要和历史严格独立，新会话从空上下文开始。
 

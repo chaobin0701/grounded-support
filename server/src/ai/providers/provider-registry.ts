@@ -22,6 +22,7 @@ export class ProviderRegistry {
       baseUrl: llm.baseUrl,
       model: llm.model,
       timeoutMs: llm.timeoutMs,
+      structuredOutput: llm.structuredOutput,
     }));
   }
 

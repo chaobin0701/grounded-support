@@ -87,10 +87,12 @@ export class AgentLoop {
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     const nativeTools = this.toolExecution.toolDefinitions(state.skill.allowedTools);
     const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, state.transcript);
+    const responseFormat = this.llm.structuredOutputMode === 'disabled' ? undefined : { type: 'json_object' as const };
     try {
       model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner', {
         messages: plannerMessages,
         tools: nativeTools,
+        ...(responseFormat ? { responseFormat } : {}),
       });
     } catch (error) {
       state.executionSteps.push({ type: 'llm_call', stage: 'planning', plannerRound, model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
@@ -127,6 +129,7 @@ export class AgentLoop {
           ...plannerMessages,
         ],
         tools: nativeTools,
+        ...(responseFormat ? { responseFormat } : {}),
         temperature: 0.1,
         maxTokens: 1200,
       },

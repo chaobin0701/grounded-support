@@ -6,7 +6,7 @@ import type { ToolExecutionState } from '../tools/tool-policy';
 import type { SkillDefinition } from '../skills/skill.types';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 import type { ContextBudget } from '../../chat/context-governor';
-import type { LlmToolCall, LlmToolDefinition } from '../providers/provider.types';
+import type { LlmResponseFormat, LlmToolCall, LlmToolDefinition } from '../providers/provider.types';
 
 export type AgentModelCall = {
   id: string;
@@ -16,6 +16,7 @@ export type AgentModelCall = {
   request: {
     messages: Array<{ role: string; content: string; name?: string; toolCallId?: string; toolCalls?: LlmToolCall[] }>;
     tools?: LlmToolDefinition[];
+    responseFormat?: LlmResponseFormat;
     temperature: number;
     maxTokens: number;
   };

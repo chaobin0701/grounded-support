@@ -19,6 +19,7 @@ test('configuration applies safe defaults without requiring an LLM key', () => {
     timeoutMs: 20000,
     contextWindowTokens: 32000,
     maxOutputTokens: 1200,
+    structuredOutput: 'auto',
   });
 });
 
@@ -41,6 +42,12 @@ test('configuration parses explicit security boundaries', () => {
   assert.equal(config.security.documentUploadConcurrency, 1);
   assert.equal(config.embedding.model, 'test-embedding');
   assert.equal(config.llm.contextWindowTokens, 32000);
+});
+
+test('configuration controls structured planner output compatibility', () => {
+  assert.equal(readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'disabled' }).llm.structuredOutput, 'disabled');
+  assert.equal(readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'required' }).llm.structuredOutput, 'required');
+  assert.throws(() => readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'unsupported' }), /LLM_STRUCTURED_OUTPUT/);
 });
 
 test('configuration rejects invalid provider URL and timeout without exposing secrets', () => {

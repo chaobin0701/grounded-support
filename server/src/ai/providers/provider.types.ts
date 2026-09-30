@@ -20,6 +20,17 @@ export interface LlmToolCall {
   arguments: Record<string, unknown>;
 }
 
+/**
+ * A provider-neutral description of the structured response contract.
+ * OpenAI-compatible providers map this to `response_format` at the wire edge.
+ */
+export type LlmResponseFormat =
+  | { type: 'json_object' }
+  | {
+      type: 'json_schema';
+      json_schema: { name: string; schema: Record<string, unknown>; strict?: boolean };
+    };
+
 export interface LlmUsage {
   inputTokens: number | null;
   outputTokens: number | null;
@@ -30,6 +41,7 @@ export interface LlmRequest {
   model: string;
   messages: LlmMessage[];
   tools?: LlmToolDefinition[];
+  responseFormat?: LlmResponseFormat;
   temperature?: number;
   maxTokens?: number;
   signal?: AbortSignal;
