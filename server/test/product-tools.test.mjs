@@ -9,23 +9,36 @@ import { validateAgentAnswer } from '../dist/chat/chat-orchestrator.service.js';
 
 const context = () => ({ permissions: [], state: new Map([['knownProductIds', new Set()]]) });
 
+const catalogRows = [
+  { id: 'midea-hft20zbj', brand: 'Midea', name: '美的塔式暖风机 HFT20ZBJ', category_id: 'heating', category_name: '取暖', summary: '面向小空间的塔式取暖器。', description: '适合小空间。', suggested_price: '参考 ¥343', image_url: null, source_url: null, specifications: { 额定功率: '2000 W', 档位: '3 档' } },
+  { id: 'xiaomi-electric-warmer', brand: 'Xiaomi', name: '米家电暖器', category_id: 'heating', category_name: '取暖', summary: '对流式电暖器。', description: '适合卧室。', suggested_price: null, image_url: null, source_url: null, specifications: { 额定功率: '1500 W' } },
+  { id: 'xiaomi-air-purifier-pro', brand: 'Xiaomi', name: '米家空气净化器 Pro', category_id: 'air', category_name: '空气', summary: '家用空气净化设备。', description: '改善室内空气。', suggested_price: null, image_url: null, source_url: null, specifications: { 颗粒物CADR: '500 m³/h' } },
+  { id: 'xiaomi-fresh-air-ventilator', brand: 'Xiaomi', name: '米家新风机', category_id: 'air', category_name: '空气', summary: '壁挂式新风设备。', description: '持续通风。', suggested_price: null, image_url: null, source_url: null, specifications: { 额定风量: '300 m³/h' } },
+];
+
+const fakeDatabase = { query: async (statement, values = []) => {
+  if (statement.includes('GROUP BY')) return { rows: [{ id: 'heating', name: '取暖' }, { id: 'air', name: '空气' }] };
+  if (statement.includes('WHERE id = $1')) return { rows: catalogRows.filter((row) => row.id === values[0]) };
+  return { rows: catalogRows };
+} };
+
 test('local product tools expose the three read-only catalogue capabilities', async () => {
-  const catalog = new ProductCatalogService();
+  const catalog = new ProductCatalogService(fakeDatabase);
   const categories = await new ProductCategoryTool(catalog).execute({}, context());
-  assert.equal(categories.data.categories.length, 3);
+  assert.equal(categories.data.categories.length, 2);
 
   const list = await new ProductListTool(catalog).execute({}, context());
-  assert.equal(list.data.total, 9);
+  assert.equal(list.data.total, 4);
   assert.equal(list.data.products[0].keySpecifications.length, 2);
 
   const detailTool = new ProductDetailTool(catalog);
-  const blocked = await detailTool.execute({ productId: 'purifier-a1' }, context());
+  const blocked = await detailTool.execute({ productId: 'xiaomi-air-purifier-pro' }, context());
   assert.equal(blocked.success, false);
 
   const allowedContext = context();
-  allowedContext.state.get('knownProductIds').add('purifier-a1');
-  const detail = await detailTool.execute({ productId: 'purifier-a1' }, allowedContext);
-  assert.equal(detail.data.specifications['颗粒物CADR'], '300 m³/h');
+  allowedContext.state.get('knownProductIds').add('xiaomi-air-purifier-pro');
+  const detail = await detailTool.execute({ productId: 'xiaomi-air-purifier-pro' }, allowedContext);
+  assert.equal(detail.data.specifications['颗粒物CADR'], '500 m³/h');
   allowedContext.state.get('knownProductIds').add('missing');
   const missing = await detailTool.execute({ productId: 'missing' }, allowedContext);
   assert.equal(missing.errorCode, 'product_not_found');

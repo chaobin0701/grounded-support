@@ -1,4 +1,5 @@
 import { Module, OnModuleInit } from '@nestjs/common';
+import { AdminModule } from '../../admin/admin.module';
 import { DocumentModule } from '../../documents/document.module';
 import { AgentTool } from './agent-tool';
 import { KnowledgeSearchTool } from './knowledge-search.tool';
@@ -11,7 +12,7 @@ import { ToolPolicy } from './tool-policy';
 import { ToolRegistry } from './tool-registry';
 
 @Module({
-  imports: [DocumentModule],
+  imports: [DocumentModule, AdminModule],
   providers: [
     ProductCatalogService,
     ProductCategoryTool,

@@ -13,7 +13,7 @@
 - `tool-execution.ts`：提供统一工具执行入口，负责调用 Registry、执行策略、异常转换和执行轨迹。
 - `tools.module.ts`：注册当前应用内置工具。
 - `knowledge-search.tool.ts`：把知识库检索封装为 `search_knowledge` 工具。
-- `product-catalog/`：包含虚构产品目录数据、查询服务和三个只读产品工具。
+- `product-catalog/`：从 `catalog_products` 数据表读取官网与 Agent 共用的产品目录，并提供三个只读产品工具。
 
 ## 设计边界
 

@@ -6,9 +6,10 @@ import { DocumentModule } from './documents/document.module';
 import { HealthController } from './health.controller';
 import { SecurityModule } from './security/security.module';
 import { MessageBusModule } from './message-bus/message-bus.module';
+import { ProductsModule } from './products/products.module';
 
 @Module({
-  imports: [ConfigModule, SecurityModule, MessageBusModule, AdminModule, DocumentModule, ChatModule],
+  imports: [ConfigModule, SecurityModule, MessageBusModule, AdminModule, DocumentModule, ChatModule, ProductsModule],
   controllers: [HealthController],
 })
 export class AppModule {}

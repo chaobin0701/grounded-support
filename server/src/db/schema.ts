@@ -35,6 +35,24 @@ export const roles = pgTable('roles', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const catalogProducts = pgTable('catalog_products', {
+  id: varchar('id', { length: 120 }).primaryKey(),
+  brand: varchar('brand', { length: 120 }).notNull(),
+  name: varchar('name', { length: 200 }).notNull(),
+  categoryId: varchar('category_id', { length: 80 }).notNull(),
+  categoryName: varchar('category_name', { length: 120 }).notNull(),
+  summary: text('summary').notNull().default(''),
+  description: text('description').notNull().default(''),
+  suggestedPrice: varchar('suggested_price', { length: 120 }),
+  imageUrl: text('image_url'),
+  sourceUrl: text('source_url'),
+  specifications: jsonb('specifications').$type<Record<string, string>>().notNull().default({}),
+  displayOrder: integer('display_order').notNull().default(0),
+  enabled: boolean('enabled').notNull().default(true),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [index('catalog_products_enabled_order_idx').on(table.enabled, table.displayOrder, table.id)]);
+
 export const permissions = pgTable('permissions', {
   code: varchar('code', { length: 120 }).primaryKey(),
   description: text('description').notNull(),
