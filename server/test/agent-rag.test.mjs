@@ -121,6 +121,31 @@ test('agent executes provider-native tool calls and preserves the call id', asyn
   assert.deepEqual(result.contextSnapshot.plannerParseModes, ['native', 'json']);
 });
 
+test('agent can recover from a tool failure on the next planner round', async () => {
+  const responses = [
+    JSON.stringify({ type: 'tool', name: 'get_product_detail', arguments: { productId: 'known-product' } }),
+    JSON.stringify({ type: 'final', status: 'answered', answer: '我已经找到产品目录中的基础信息。', citationIds: [], productIds: [] }),
+  ];
+  const llm = {
+    model: 'test-model',
+    completeDetailed: async () => ({ content: responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+  };
+  const tool = {
+    name: 'get_product_detail',
+    description: 'detail',
+    inputSchema: { safeParse: (input) => ({ success: true, data: input }) },
+    execute: async () => ({ success: false, content: 'PRODUCT_NOT_FOUND', errorCode: 'product_not_found' }),
+  };
+  const registry = { get: () => tool, list: () => [tool] };
+  const execution = new ToolExecutionService(registry, new ToolPolicy());
+  const runner = new AgentRunner(new AgentLoop(llm, new ContextBuilder(), execution), new ContextBuilder());
+  const result = await runner.run({ question: '介绍这个产品', summary: '', recentHistory: [] });
+
+  assert.equal(result.result.refused, false);
+  assert.equal(result.result.answer, '我已经找到产品目录中的基础信息。');
+  assert.equal(result.contextSnapshot.toolCalls[0].errorCode, 'product_not_found');
+});
+
 test('unified agent answers a greeting without preflight or citation', async () => {
   const llm = {
     model: 'test-model',

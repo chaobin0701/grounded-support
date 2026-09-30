@@ -32,15 +32,9 @@ test('local product tools expose the three read-only catalogue capabilities', as
   assert.equal(list.data.products[0].keySpecifications.length, 2);
 
   const detailTool = new ProductDetailTool(catalog);
-  const blocked = await detailTool.execute({ productId: 'xiaomi-air-purifier-pro' }, context());
-  assert.equal(blocked.success, false);
-
-  const allowedContext = context();
-  allowedContext.state.get('knownProductIds').add('xiaomi-air-purifier-pro');
-  const detail = await detailTool.execute({ productId: 'xiaomi-air-purifier-pro' }, allowedContext);
+  const detail = await detailTool.execute({ productId: 'xiaomi-air-purifier-pro' }, context());
   assert.equal(detail.data.specifications['颗粒物CADR'], '500 m³/h');
-  allowedContext.state.get('knownProductIds').add('missing');
-  const missing = await detailTool.execute({ productId: 'missing' }, allowedContext);
+  const missing = await detailTool.execute({ productId: 'missing' }, context());
   assert.equal(missing.errorCode, 'product_not_found');
 });
 

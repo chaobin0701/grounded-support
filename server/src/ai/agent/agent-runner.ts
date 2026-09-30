@@ -3,7 +3,7 @@ import { ContextBuilder } from '../../chat/context-builder';
 import type { AgentCallbacks, AgentInput } from './agent-input';
 import type { AgentResult } from './agent-result';
 import type { AgentState } from './agent-state';
-import { REFUSAL } from './agent-answer';
+import { RECOVERY_REFUSAL } from './agent-answer';
 import { AgentLoop } from './agent-loop';
 import { questionAnsweringSkill } from '../skills/built-in/question-answering.skill';
 import type { SkillDefinition } from '../skills/skill.types';
@@ -68,7 +68,7 @@ export class AgentRunner {
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
 
-    return this.toResult(state, { answer: REFUSAL, refused: true, citations: [] });
+    return this.toResult(state, { answer: RECOVERY_REFUSAL, refused: true, citations: [] });
   }
 
   private createState(

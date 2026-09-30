@@ -12,15 +12,11 @@ export class ProductDetailTool implements AgentTool<z.infer<typeof inputSchema>>
   readonly name = 'get_product_detail';
   readonly description = '按产品 ID 读取官网产品目录中的完整规格。只读、数据库数据。';
   readonly inputSchema = inputSchema;
-  readonly planning = { canBatch: false, dependency: '需要已知且已验证的 productId' } as const;
+  readonly planning = { canBatch: false, dependency: '需要有效的 productId' } as const;
 
   constructor(private readonly catalog: ProductCatalogService) {}
 
-  async execute(input: z.infer<typeof inputSchema>, context: ToolContext): Promise<ToolResult> {
-    const knownProductIds = context.state.get('knownProductIds');
-    if (knownProductIds instanceof Set && !knownProductIds.has(input.productId)) {
-      return { success: false, content: 'PRODUCT_ID_NOT_AVAILABLE', errorCode: 'product_id_not_available' };
-    }
+  async execute(input: z.infer<typeof inputSchema>, _context: ToolContext): Promise<ToolResult> {
     const data = await this.catalog.getProductDetail(input.productId);
     if (!data) return { success: false, content: 'PRODUCT_NOT_FOUND', errorCode: 'product_not_found' };
     return { success: true, content: JSON.stringify(data), data };
