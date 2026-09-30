@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage, type ProgressEvent } from './chat-api';
 import AdminApp from './AdminApp.vue';
 import HelpCenter from './HelpCenter.vue';
 import ProductSite from './ProductSite.vue';
-import { Bot, Check, CheckCircle2, Copy, Database, FileText, LoaderCircle, Search, Sparkles, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
+import { Bot, Check, CheckCircle2, Copy, Database, FileText, LoaderCircle, MoreHorizontal, Search, Sparkles, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
 
 const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
@@ -35,6 +35,7 @@ const errorMessage = ref('');
 const copiedMessageId = ref<number | null>(null);
 const feedback = ref<Record<number, 'up' | 'down'>>({});
 const activeProgressEvents = ref<ProgressEvent[]>([]);
+const openConversationMenuId = ref<string | null>(null);
 const health = ref<'checking' | 'online' | 'offline'>('checking');
 const conversation = ref<HTMLElement | null>(null);
 let nextId = -1;
@@ -62,6 +63,7 @@ function newRequestId(): string {
 }
 
 onMounted(async () => {
+  window.addEventListener('click', closeConversationMenu);
   if (isAdminRoute.value || isProductRoute.value || isHelpRoute.value) return;
   isLoadingConversations.value = true;
   try {
@@ -82,6 +84,17 @@ onMounted(async () => {
     isLoadingConversations.value = false;
   }
 });
+
+onBeforeUnmount(() => window.removeEventListener('click', closeConversationMenu));
+
+function closeConversationMenu() {
+  openConversationMenuId.value = null;
+}
+
+function toggleConversationMenu(id: string, event: MouseEvent) {
+  event.stopPropagation();
+  openConversationMenuId.value = openConversationMenuId.value === id ? null : id;
+}
 
 function displayMessages(items: ConversationMessage[]): Message[] {
   return items.map((item) => item.role === 'user'
@@ -182,7 +195,8 @@ async function newConversation() {
 }
 
 async function removeConversation(item: ConversationItem) {
-  if (isSending.value || !window.confirm(`删除「${item.title}」及其全部聊天记录？`)) return;
+  closeConversationMenu();
+  if (!window.confirm(`删除「${item.title}」及其全部聊天记录？`)) return;
   try {
     await conversationApi.remove(item.id);
     conversations.value = conversations.value.filter((entry) => entry.id !== item.id);
@@ -334,7 +348,12 @@ function chooseSuggestion(value: string) {
         <div v-else class="conversation-list" aria-label="对话列表">
           <div v-for="item in conversations" :key="item.id" class="conversation-list-item" :class="{ active: activeConversationId === item.id }">
             <button type="button" class="conversation-open" :disabled="isSending" @click="openConversation(item.id)">{{ item.title }}</button>
-            <button type="button" class="conversation-remove" :disabled="isSending" :aria-label="`删除对话：${item.title}`" @click="removeConversation(item)">×</button>
+            <div class="conversation-actions">
+              <button type="button" class="conversation-menu-trigger" :aria-label="`打开对话操作：${item.title}`" :aria-expanded="openConversationMenuId === item.id" aria-haspopup="menu" @click="toggleConversationMenu(item.id, $event)"><MoreHorizontal :size="17" /></button>
+              <div v-if="openConversationMenuId === item.id" class="conversation-menu" role="menu">
+                <button type="button" role="menuitem" class="conversation-menu-item conversation-menu-danger" @click="removeConversation(item)">删除对话</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
