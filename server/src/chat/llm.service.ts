@@ -38,6 +38,14 @@ export class LlmService {
     return this.provider.model;
   }
 
+  get maxOutputTokens(): number {
+    return this.provider.maxOutputTokens ?? this.config?.llm.maxOutputTokens ?? 1200;
+  }
+
+  get contextWindowTokens(): number {
+    return this.provider.contextWindowTokens ?? this.config?.llm.contextWindowTokens ?? 32000;
+  }
+
   get structuredOutputMode(): 'auto' | 'required' | 'disabled' {
     return this.provider.structuredOutput ?? this.config?.llm.structuredOutput ?? 'auto';
   }
@@ -61,7 +69,7 @@ export class LlmService {
           ...(options.tools?.length ? { tools: options.tools } : {}),
           ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
           temperature: 0.1,
-          maxTokens: purpose === 'summary' ? 800 : this.provider.maxOutputTokens ?? this.config?.llm.maxOutputTokens ?? 1200,
+          maxTokens: purpose === 'summary' ? 800 : this.maxOutputTokens,
         });
         if (response.usage.inputTokens !== null || response.usage.outputTokens !== null || response.usage.totalTokens !== null) usage.seen = true;
         usage.inputTokens += response.usage.inputTokens ?? 0;
@@ -108,7 +116,7 @@ export class LlmService {
       model,
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
       temperature: 0.1,
-      maxTokens: this.provider.maxOutputTokens ?? this.config?.llm.maxOutputTokens ?? 1200,
+      maxTokens: this.maxOutputTokens,
     })) {
       if (event.type === 'text_delta') {
         content += event.delta;

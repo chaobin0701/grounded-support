@@ -167,6 +167,7 @@ export const embeddingProfiles = pgTable('embedding_profiles', {
 export const llmProfiles = pgTable('llm_profiles', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
   name: text('name').notNull(),
+  platformKey: varchar('platform_key', { length: 40 }).notNull(),
   providerKey: varchar('provider_key', { length: 80 }).notNull(),
   adapterType: varchar('adapter_type', { length: 80 }).notNull(),
   baseUrl: text('base_url').notNull(),

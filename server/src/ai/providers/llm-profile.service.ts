@@ -5,16 +5,17 @@ import { AppConfigService } from '../../config/config.service';
 import { SecretBox } from '../../security/secret-box';
 import { ProviderRegistry } from './provider-registry';
 import type { LlmProfileRecord, LlmProfileView } from './llm-profile.types';
+import { getLlmPlatformPreset, isLlmPlatformKey } from './llm-platforms';
 
 const profileInput = z.object({
   name: z.string().trim().min(1).max(120),
+  platformKey: z.enum(['volcengine', 'openai', 'deepseek', 'custom']).default('custom'),
   baseUrl: z.string().url(),
   model: z.string().trim().min(1).max(200),
   apiKey: z.string().trim().min(1).max(500).optional(),
   timeoutMs: z.number().int().min(1000).max(120000).default(20000),
   contextWindowTokens: z.number().int().min(1024).max(1000000).default(32000),
   maxOutputTokens: z.number().int().min(128).max(32000).default(1200),
-  structuredOutput: z.enum(['auto', 'required', 'disabled']).default('auto'),
   supportsToolCalls: z.boolean().default(true),
   supportsStreaming: z.boolean().default(true),
 }).strict();
@@ -38,15 +39,15 @@ export class LlmProfileService {
   async create(actorId: number, input: unknown): Promise<LlmProfileView> {
     const parsed = profileInput.safeParse(input);
     if (!parsed.success) throw new BadRequestException('Invalid OpenAI Compatible model profile');
-    this.validateBaseUrl(parsed.data.baseUrl);
+    this.validateBaseUrl(parsed.data.platformKey, parsed.data.baseUrl);
     const apiKeyCiphertext = parsed.data.apiKey ? this.secrets.encrypt(parsed.data.apiKey) : null;
     if (!apiKeyCiphertext && !this.config.llm.apiKey) throw new BadRequestException('API Key is required');
     try {
       const row = await this.database.transaction(async (client) => {
         const inserted = await client.query<ProfileRow>(`${this.insertSql()} RETURNING ${this.returningColumns()}`, [
-          parsed.data.name, parsed.data.baseUrl, parsed.data.model, apiKeyCiphertext,
+          parsed.data.name, parsed.data.platformKey, parsed.data.baseUrl, parsed.data.model, apiKeyCiphertext,
           parsed.data.timeoutMs, parsed.data.contextWindowTokens, parsed.data.maxOutputTokens,
-          parsed.data.structuredOutput, parsed.data.supportsToolCalls, parsed.data.supportsStreaming,
+          'auto', parsed.data.supportsToolCalls, parsed.data.supportsStreaming,
         ]);
         const created = inserted.rows[0];
         await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
@@ -63,20 +64,20 @@ export class LlmProfileService {
   async update(actorId: number, id: number, input: unknown): Promise<LlmProfileView> {
     const parsed = profileInput.partial().safeParse(input);
     if (!parsed.success || Object.keys(parsed.data).length === 0) throw new BadRequestException('No valid profile fields');
-    if (parsed.data.baseUrl) this.validateBaseUrl(parsed.data.baseUrl);
     const existing = await this.find(id);
     if (!existing) throw new NotFoundException('LLM profile not found');
+    if (parsed.data.baseUrl || parsed.data.platformKey) this.validateBaseUrl(parsed.data.platformKey ?? (isLlmPlatformKey(existing.platform_key) ? existing.platform_key : 'custom'), parsed.data.baseUrl ?? String(existing.base_url ?? ''));
     const values: unknown[] = [id];
     const assignments: string[] = [];
     const add = (column: string, value: unknown) => { values.push(value); assignments.push(`${column} = $${values.length}`); };
     if (parsed.data.name !== undefined) add('name', parsed.data.name);
+    if (parsed.data.platformKey !== undefined) add('platform_key', parsed.data.platformKey);
     if (parsed.data.baseUrl !== undefined) add('base_url', parsed.data.baseUrl);
     if (parsed.data.model !== undefined) add('model', parsed.data.model);
     if (parsed.data.apiKey !== undefined) add('api_key_ciphertext', this.secrets.encrypt(parsed.data.apiKey));
     if (parsed.data.timeoutMs !== undefined) add('timeout_ms', parsed.data.timeoutMs);
     if (parsed.data.contextWindowTokens !== undefined) add('context_window_tokens', parsed.data.contextWindowTokens);
     if (parsed.data.maxOutputTokens !== undefined) add('max_output_tokens', parsed.data.maxOutputTokens);
-    if (parsed.data.structuredOutput !== undefined) add('structured_output', parsed.data.structuredOutput);
     if (parsed.data.supportsToolCalls !== undefined) add('supports_tool_calls', parsed.data.supportsToolCalls);
     if (parsed.data.supportsStreaming !== undefined) add('supports_streaming', parsed.data.supportsStreaming);
     assignments.push('updated_at = now()');
@@ -139,40 +140,45 @@ export class LlmProfileService {
 
   private async activateRuntime(row: ProfileRow): Promise<void> { this.registry.activateProfile(await this.hydrate(row)); }
 
-  private validateBaseUrl(value: string): void {
+  private validateBaseUrl(platformKey: string, value: string): void {
+    if (!isLlmPlatformKey(platformKey)) throw new BadRequestException('Invalid model platform');
     const target = new URL(value);
     const normalized = target.href.replace(/\/+$/, '');
     if (target.protocol !== 'https:' || target.username || target.password || target.search || target.hash
       || !this.config.llm.allowedBaseUrls.some((allowed) => allowed.replace(/\/+$/, '') === normalized)) {
       throw new BadRequestException('Base URL must be an approved HTTPS OpenAI Compatible endpoint');
     }
+    const preset = getLlmPlatformPreset(platformKey);
+    if (platformKey !== 'custom' && preset.baseUrl && preset.baseUrl.replace(/\/+$/, '') !== normalized) {
+      throw new BadRequestException(`${preset.label} must use its preset Base URL`);
+    }
   }
 
   private selectSql(suffix: string): string {
-    return `SELECT id::int, name, provider_key, adapter_type, base_url, model, api_key_ciphertext,
+    return `SELECT id::int, name, platform_key, provider_key, adapter_type, base_url, model, api_key_ciphertext,
       timeout_ms, context_window_tokens, max_output_tokens, structured_output,
       supports_tool_calls, supports_streaming, enabled, is_default FROM llm_profiles ${suffix}`;
   }
 
   private returningColumns(): string {
-    return `id::int, name, provider_key, adapter_type, base_url, model, api_key_ciphertext,
+    return `id::int, name, platform_key, provider_key, adapter_type, base_url, model, api_key_ciphertext,
       timeout_ms, context_window_tokens, max_output_tokens, structured_output,
       supports_tool_calls, supports_streaming, enabled, is_default`;
   }
 
   private insertSql(): string {
     return `INSERT INTO llm_profiles
-      (name, provider_key, adapter_type, base_url, model, api_key_ciphertext,
+      (name, platform_key, provider_key, adapter_type, base_url, model, api_key_ciphertext,
        timeout_ms, context_window_tokens, max_output_tokens, structured_output,
        supports_tool_calls, supports_streaming)
-      VALUES ($1, 'openai-compatible', 'openai-compatible', $2, $3, $4, $5, $6, $7, $8, $9, $10)`;
+      VALUES ($1, $2, 'openai-compatible', 'openai-compatible', $3, $4, $5, $6, $7, $8, $9, $10, $11)`;
   }
 
   private toRecord(row: ProfileRow): LlmProfileRecord {
     return {
-      id: Number(row.id), name: String(row.name), providerKey: 'openai-compatible', adapterType: 'openai-compatible',
+      id: Number(row.id), name: String(row.name), platformKey: isLlmPlatformKey(row.platform_key) ? row.platform_key : 'custom', providerKey: 'openai-compatible', adapterType: 'openai-compatible',
       baseUrl: String(row.base_url), model: String(row.model), timeoutMs: Number(row.timeout_ms), contextWindowTokens: Number(row.context_window_tokens),
-      maxOutputTokens: Number(row.max_output_tokens), structuredOutput: row.structured_output === 'required' || row.structured_output === 'disabled' ? row.structured_output : 'auto',
+      maxOutputTokens: Number(row.max_output_tokens), structuredOutput: 'auto',
       supportsToolCalls: Boolean(row.supports_tool_calls), supportsStreaming: Boolean(row.supports_streaming), enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default),
     };
   }

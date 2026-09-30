@@ -6,6 +6,7 @@ export interface LlmProvider {
   readonly model: string;
   readonly structuredOutput?: 'auto' | 'required' | 'disabled';
   readonly maxOutputTokens?: number;
+  readonly contextWindowTokens?: number;
   chat(request: LlmRequest): Promise<LlmResponse>;
   stream(request: LlmRequest): AsyncIterable<LlmStreamEvent>;
 }

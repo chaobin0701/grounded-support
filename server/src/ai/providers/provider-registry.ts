@@ -13,7 +13,7 @@ export class UnsupportedProviderError extends Error {
   }
 }
 
-type ProviderFactory = (config: Pick<OpenAICompatibleProviderOptions, 'apiKey' | 'baseUrl' | 'model' | 'timeoutMs' | 'maxOutputTokens' | 'structuredOutput'>) => LlmProvider;
+type ProviderFactory = (config: Pick<OpenAICompatibleProviderOptions, 'apiKey' | 'baseUrl' | 'model' | 'timeoutMs' | 'maxOutputTokens' | 'contextWindowTokens' | 'structuredOutput'>) => LlmProvider;
 
 @Injectable()
 export class ProviderRegistry implements OnModuleInit {
@@ -27,6 +27,7 @@ export class ProviderRegistry implements OnModuleInit {
       model: llm.model,
       timeoutMs: llm.timeoutMs,
       maxOutputTokens: llm.maxOutputTokens,
+      contextWindowTokens: llm.contextWindowTokens,
       structuredOutput: llm.structuredOutput,
     }));
   }
@@ -34,7 +35,7 @@ export class ProviderRegistry implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     if (!this.database) return;
     const result = await this.database.query<Record<string, unknown>>(`
-      SELECT id::int, name, provider_key, adapter_type, base_url, model,
+      SELECT id::int, name, platform_key, provider_key, adapter_type, base_url, model,
              api_key_ciphertext, timeout_ms, context_window_tokens, max_output_tokens,
              structured_output, supports_tool_calls, supports_streaming, enabled, is_default
       FROM llm_profiles WHERE enabled = TRUE AND is_default = TRUE LIMIT 1
@@ -65,6 +66,7 @@ export class ProviderRegistry implements OnModuleInit {
       model: profile.model,
       timeoutMs: profile.timeoutMs,
       maxOutputTokens: profile.maxOutputTokens,
+      contextWindowTokens: profile.contextWindowTokens,
       structuredOutput: profile.structuredOutput,
     });
   }
@@ -88,6 +90,7 @@ class RuntimeLlmProvider implements LlmProvider {
   get model(): string { return this.current.model; }
   get structuredOutput(): LlmProvider['structuredOutput'] { return this.current.structuredOutput; }
   get maxOutputTokens(): number | undefined { return this.current.maxOutputTokens; }
+  get contextWindowTokens(): number | undefined { return this.current.contextWindowTokens; }
   chat(request: Parameters<LlmProvider['chat']>[0]): ReturnType<LlmProvider['chat']> { return this.current.chat(request); }
   stream(request: Parameters<LlmProvider['stream']>[0]): ReturnType<LlmProvider['stream']> { return this.current.stream(request); }
   set(provider: LlmProvider): void { this.current = provider; }
@@ -95,10 +98,10 @@ class RuntimeLlmProvider implements LlmProvider {
 
 function toProfile(row: Record<string, unknown>): LlmProfileRecord {
   return {
-    id: Number(row.id), name: String(row.name), providerKey: 'openai-compatible', adapterType: 'openai-compatible',
+    id: Number(row.id), name: String(row.name), platformKey: row.platform_key === 'volcengine' || row.platform_key === 'openai' || row.platform_key === 'deepseek' ? row.platform_key : 'custom', providerKey: 'openai-compatible', adapterType: 'openai-compatible',
     baseUrl: String(row.base_url), model: String(row.model), apiKey: undefined,
     timeoutMs: Number(row.timeout_ms), contextWindowTokens: Number(row.context_window_tokens), maxOutputTokens: Number(row.max_output_tokens),
-    structuredOutput: row.structured_output === 'required' || row.structured_output === 'disabled' ? row.structured_output : 'auto',
+    structuredOutput: 'auto',
     supportsToolCalls: Boolean(row.supports_tool_calls), supportsStreaming: Boolean(row.supports_streaming),
     enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default),
   };

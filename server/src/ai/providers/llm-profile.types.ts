@@ -1,6 +1,9 @@
+import type { LlmPlatformKey } from './llm-platforms';
+
 export type LlmProfileRecord = {
   id: number;
   name: string;
+  platformKey: LlmPlatformKey;
   providerKey: 'openai-compatible';
   adapterType: 'openai-compatible';
   baseUrl: string;
@@ -9,7 +12,7 @@ export type LlmProfileRecord = {
   timeoutMs: number;
   contextWindowTokens: number;
   maxOutputTokens: number;
-  structuredOutput: 'auto' | 'required' | 'disabled';
+  structuredOutput: 'auto';
   supportsToolCalls: boolean;
   supportsStreaming: boolean;
   enabled: boolean;

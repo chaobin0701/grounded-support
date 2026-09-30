@@ -1,5 +1,6 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AppConfigService } from '../config/config.service';
+import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
 
 export type ContextPurpose = 'planner' | 'answer' | 'summary';
 export type ContextPressure = 'normal' | 'elevated' | 'high' | 'overflow';
@@ -32,13 +33,13 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 1_200;
 
 @Injectable()
 export class ContextGovernor {
-  constructor(@Optional() private readonly config?: AppConfigService) {}
+  constructor(@Optional() private readonly config?: AppConfigService, @Optional() @Inject(LLM_PROVIDER) private readonly provider?: LlmProvider) {}
 
   inspect(input: ContextGovernorInput): ContextBudget {
-    const contextWindowTokens = this.config?.llm.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
+    const contextWindowTokens = this.provider?.contextWindowTokens ?? this.config?.llm.contextWindowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     const maxOutputTokens = input.purpose === 'summary'
       ? 800
-      : this.config?.llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+      : this.provider?.maxOutputTokens ?? this.config?.llm.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     const safetyBufferTokens = Math.max(1_024, Math.ceil(contextWindowTokens * 0.05));
     const inputBudgetTokens = Math.max(0, contextWindowTokens - maxOutputTokens - safetyBufferTokens);
     const estimatedInputTokens = estimateTokens(`${input.systemPrompt}\n${input.userPrompt}`);

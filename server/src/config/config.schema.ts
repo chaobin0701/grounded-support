@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 const DEFAULT_LLM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+const DEFAULT_LLM_ALLOWED_BASE_URLS = [
+  DEFAULT_LLM_BASE_URL,
+  'https://api.openai.com/v1',
+  'https://api.deepseek.com/v1',
+];
 const DEFAULT_LLM_MODEL = 'deepseek-v4-1-flash-260910';
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
 const DEFAULT_LLM_CONTEXT_WINDOW_TOKENS = 32_000;
@@ -69,7 +74,7 @@ export const configSchema = z.object({
     contextWindowTokens: z.coerce.number().int().min(1_024).max(1_000_000).default(DEFAULT_LLM_CONTEXT_WINDOW_TOKENS),
     maxOutputTokens: z.coerce.number().int().min(128).max(32_000).default(DEFAULT_LLM_MAX_OUTPUT_TOKENS),
     structuredOutput: z.enum(['auto', 'required', 'disabled']).default('auto'),
-    allowedBaseUrls: z.array(z.string().url()).default([DEFAULT_LLM_BASE_URL]),
+    allowedBaseUrls: z.array(z.string().url()).default(DEFAULT_LLM_ALLOWED_BASE_URLS),
   }).default({
     provider: 'openai-compatible',
     apiKey: '',
@@ -79,7 +84,7 @@ export const configSchema = z.object({
     contextWindowTokens: DEFAULT_LLM_CONTEXT_WINDOW_TOKENS,
     maxOutputTokens: DEFAULT_LLM_MAX_OUTPUT_TOKENS,
     structuredOutput: 'auto',
-    allowedBaseUrls: [DEFAULT_LLM_BASE_URL],
+    allowedBaseUrls: DEFAULT_LLM_ALLOWED_BASE_URLS,
   }),
 });
 

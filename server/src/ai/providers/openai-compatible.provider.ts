@@ -21,6 +21,7 @@ export interface OpenAICompatibleProviderOptions {
   model: string;
   timeoutMs: number;
   maxOutputTokens?: number;
+  contextWindowTokens?: number;
   supportedModels?: readonly string[];
   /** `auto` retries without response_format only when the endpoint rejects it. */
   structuredOutput?: 'auto' | 'required' | 'disabled';
@@ -44,6 +45,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   readonly maxOutputTokens: number | undefined;
+  readonly contextWindowTokens: number | undefined;
   private readonly supportedModels: readonly string[];
   readonly structuredOutput: NonNullable<OpenAICompatibleProviderOptions['structuredOutput']>;
   private readonly logger = new Logger(OpenAICompatibleProvider.name);
@@ -54,6 +56,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     this.model = options.model;
     this.timeoutMs = options.timeoutMs;
     this.maxOutputTokens = options.maxOutputTokens;
+    this.contextWindowTokens = options.contextWindowTokens;
     // OpenAI-compatible endpoints expose model identifiers configured by the
     // account.  Keep an optional allow-list for deployments that need one, but
     // do not impose a built-in list on user-managed profiles.
