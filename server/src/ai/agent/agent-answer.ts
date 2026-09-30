@@ -5,6 +5,7 @@ import type { ProductDetail, ProductSummary } from '../tools/product-catalog/pro
 import type { SkillResponseMode } from '../skills/skill.types';
 
 export const REFUSAL = '无法确定，建议联系人工。';
+export const RECOVERY_REFUSAL = '我暂时没能读取到足够的资料，无法可靠回答这次问题。你可以换一种说法，或稍后再试。';
 
 export function validateAgentAnswer(
   raw: string,

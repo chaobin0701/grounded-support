@@ -1,21 +1,14 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { ArrowRight, Bot, ChevronRight, CircleHelp, ExternalLink, Headphones, Leaf, MessageCircle, ShieldCheck, Sparkles, X } from '@lucide/vue';
 import ChatWorkspace from './ChatWorkspace.vue';
+import { fetchProducts, type WebsiteProduct } from './product-api';
 
-type Product = {
-  slug: string; brand: string; name: string; category: string; intro: string; description: string[]; accent: string; image: string; suggestedPrice: string;
-  specs: { label: string; value: string }[]; source: string; sourceLabel: string; note: string;
-};
+type Product = WebsiteProduct;
 
-// Public official specifications and image assets are used for learning/demo content only.
-const products: Product[] = [
-  { slug: 'midea-hft20zbj', brand: 'Midea', name: '美的塔式暖风机 HFT20ZBJ', category: '取暖', intro: '面向小空间的塔式取暖器，强调快速升温与基础安全保护。', description: ['塔式机身适合卧室、书房等有限面积空间，广角送风让暖意更均匀。', '资料中的参考功率为 2000 W，支持三档调节与遥控操作；价格会随官方渠道和活动变化。'], accent: '#e46c45', image: 'https://oss-accelerate-ga.midea.com/vision-material-634-public-prd-g5-cdn/material_gpim/20260426/0f6e75e87b8ef78d58846cc2ebc49f85.jpg', suggestedPrice: '参考 ¥343', specs: [{ label: '额定功率', value: '2000 W' }, { label: '适用面积', value: '10㎡以下' }, { label: '档位', value: '3 档' }, { label: '控制方式', value: '遥控' }], source: 'https://www.midea.cn/27/1000000000400702883665.html', sourceLabel: '美的官方商城规格', note: '页面价格、库存与促销信息会变化，本展示不构成销售承诺。' },
-  { slug: 'xiaomi-electric-warmer', brand: 'Xiaomi', name: '米家电暖器', category: '取暖', intro: '对流式电暖器，适合卧室和书房等有限面积空间。', description: ['通过空气微循环对流加热，减少风感，适合需要安静取暖的家庭空间。', '产品支持机械、触摸与 App 等多种控制方式，实际购买和售后请以官方渠道为准。'], accent: '#ef8a3a', image: 'https://c1.mifile.cn/f/i/16/chain/warmer-electric/specs-1.jpg', suggestedPrice: '以官方渠道为准', specs: [{ label: '额定功率', value: '1500 W' }, { label: '适用面积', value: '15㎡以内' }, { label: '控制方式', value: '机械 + 触摸 + App' }, { label: '防护等级', value: 'IPX4' }], source: 'https://www.mi.com/warmer-electric/specs', sourceLabel: '小米官方规格页', note: '规格来自公开官方页面，实际购买与售后请以小米官方渠道为准。' },
-  { slug: 'xiaomi-air-purifier-pro', brand: 'Xiaomi', name: '米家空气净化器 Pro', category: '空气', intro: '以空气循环、传感器和 App 控制为重点的家用空气净化设备。', description: ['适用于客厅、卧室等家庭场景，以较高的颗粒物 CADR 帮助改善室内空气循环。', 'OLED 显示与米家 App 让空气状态更容易被看见，也方便日常管理。'], accent: '#3d74dd', image: 'https://c1.mifile.cn/f/i/16/chain/airpro/airpro-02.jpg', suggestedPrice: '以官方渠道为准', specs: [{ label: '颗粒物 CADR', value: '500 m³/h' }, { label: '适用面积', value: '35–60㎡' }, { label: '显示', value: 'OLED' }, { label: '控制', value: '米家 App' }], source: 'https://www.mi.com/airpro', sourceLabel: '小米官方产品页', note: '适用面积受房间高度、密封性等因素影响，请以官方说明为准。' },
-  { slug: 'xiaomi-fresh-air-ventilator', brand: 'Xiaomi', name: '米家新风机', category: '空气', intro: '面向全屋通风的壁挂式设备，提供新风、过滤与辅助升温能力。', description: ['壁挂式设计适合需要持续通风的居住空间，资料中提供了风量、功率和噪声等核心参数。', '新风机涉及墙体打孔与安装条件，购买前应先确认物业、墙体和专业安装要求。'], accent: '#27a37b', image: 'https://i1.mifile.cn/f/i/16/chain/fresh-air-ventilator/specs-01.jpg', suggestedPrice: '以官方渠道为准', specs: [{ label: '额定风量', value: '300 m³/h' }, { label: '适用面积', value: '≤105㎡' }, { label: '额定功率', value: '42 W' }, { label: '辅热功率', value: '800 W' }], source: 'https://www.mi.com/fresh-air-ventilator/specs', sourceLabel: '小米官方规格页', note: '新风机涉及墙体打孔和安装条件，使用前请确认物业与安装要求。' },
-];
+const products = ref<Product[]>([]);
+/* Product records are loaded from the same catalog used by Agent tools. */
 
 const news = [
   { date: '2026.09', label: '品牌动态', title: '暖巢智能服务入口完成一次体验升级', excerpt: '让产品资料、使用支持和人工服务拥有更清晰的入口。' },
@@ -29,12 +22,19 @@ const category = ref('全部');
 const chatOpen = ref(false);
 const chatWorkspace = ref<InstanceType<typeof ChatWorkspace> | null>(null);
 const categories = ['全部', '取暖', '空气'];
-const selectedProduct = computed(() => products.find((product) => product.slug === route.params.slug));
+const selectedProduct = computed(() => products.value.find((product) => product.slug === route.params.slug));
 const isDetail = computed(() => route.path.startsWith('/product/') && Boolean(route.params.slug) && !['about', 'support', 'news', 'assistant'].includes(String(route.params.slug)));
 const page = computed(() => route.path === '/product/about' ? 'about' : route.path === '/product/support' ? 'support' : route.path === '/product/news' ? 'news' : route.path === '/product/assistant' ? 'assistant' : 'home');
-const filteredProducts = computed(() => products.filter((product) => (category.value === '全部' || product.category === category.value) && `${product.name} ${product.brand}`.toLowerCase().includes(query.value.trim().toLowerCase())));
+const filteredProducts = computed(() => products.value.filter((product) => (category.value === '全部' || product.category === category.value) && `${product.name} ${product.brand}`.toLowerCase().includes(query.value.trim().toLowerCase())));
 function startWidgetConversation() { chatWorkspace.value?.newConversation(); }
 watch(() => route.path, () => { chatOpen.value = false; });
+onMounted(async () => {
+  try {
+    products.value = await fetchProducts();
+  } catch {
+    products.value = [];
+  }
+});
 </script>
 
 <template>

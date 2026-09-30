@@ -7,9 +7,20 @@ import { adaptMcpTool } from '../dist/ai/mcp/mcp-tool.adapter.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
 import { productConsultationSkill } from '../dist/ai/skills/built-in/product-consultation.skill.js';
 
+const fakeDatabase = {
+  query: async (statement) => {
+    if (statement.includes('GROUP BY')) return { rows: [{ id: 'heating', name: '取暖' }, { id: 'air', name: '空气' }] };
+    return { rows: [{
+      id: 'midea-hft20zbj', brand: 'Midea', name: '美的塔式暖风机 HFT20ZBJ', category_id: 'heating', category_name: '取暖',
+      summary: '面向小空间的塔式取暖器。', description: '适合小空间。', suggested_price: '参考 ¥343', image_url: null, source_url: null,
+      specifications: { 额定功率: '2000 W', 档位: '3 档' },
+    }] };
+  },
+};
+
 test('internal product MCP plugin discovers and calls tools through the official protocol', async () => {
   const registry = new McpPluginRegistry();
-  registry.register(createProductCatalogPlugin(new ProductCatalogService()));
+  registry.register(createProductCatalogPlugin(new ProductCatalogService(fakeDatabase)));
   const client = await registry.start('product_catalog');
   assert.ok(client);
 

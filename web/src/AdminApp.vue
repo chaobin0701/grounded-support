@@ -63,7 +63,7 @@ const permissionGroups = computed(() => {
 const views: { id: View; label: string; permissions: string[]; icon: Component }[] = [
   { id: 'dashboard', label: '概览', icon: LayoutDashboard, permissions: ['documents.read', 'knowledge_bases.manage', 'conversations.read'] },
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
-  { id: 'products', label: '产品目录', icon: Boxes, permissions: ['knowledge_bases.manage'] },
+  { id: 'products', label: '产品管理', icon: Boxes, permissions: ['knowledge_bases.manage'] },
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
@@ -431,7 +431,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
         <AdminDashboard v-else-if="view === 'dashboard'" :display-name="session.me.displayName" :document-count="documents.length" :conversation-count="chatTraces.length" />
         <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
-        <ProductCatalogAdmin v-else-if="view === 'products'" />
+        <ProductCatalogAdmin v-else-if="view === 'products'" :token="session.token" />
         <section v-else-if="view === 'documents'">
           <AdminPageHeader eyebrow="知识管理" title="资料库" description="维护客服可引用的资料。仅已就绪且未下架的内容参与回答。">
             <template #actions><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></template>
