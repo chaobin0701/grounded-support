@@ -15,7 +15,7 @@ test('local product tools expose the three read-only catalogue capabilities', as
   assert.equal(categories.data.categories.length, 3);
 
   const list = await new ProductListTool(catalog).execute({}, context());
-  assert.equal(list.data.total, 5);
+  assert.equal(list.data.total, 9);
   assert.equal(list.data.products[0].keySpecifications.length, 2);
 
   const detailTool = new ProductDetailTool(catalog);

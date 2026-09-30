@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { categories, products, Product } from './product-catalog.data';
 
-export type ProductSummary = Pick<Product, 'id' | 'name' | 'categoryId' | 'summary'> & { keySpecifications: string[] };
+export type ProductSummary = Pick<Product, 'id' | 'name' | 'categoryId' | 'summary' | 'suggestedPrice' | 'sourceUrl'> & { keySpecifications: string[] };
 export type ProductDetail = Product;
 
 @Injectable()
@@ -18,11 +18,13 @@ export class ProductCatalogService {
     );
     return {
       total: matched.length,
-      products: matched.map(({ id, name, categoryId: category, summary, specifications }): ProductSummary => ({
+      products: matched.map(({ id, name, categoryId: category, summary, suggestedPrice, sourceUrl, specifications }): ProductSummary => ({
         id,
         name,
         categoryId: category,
         summary,
+        suggestedPrice,
+        sourceUrl,
         keySpecifications: Object.entries(specifications).slice(0, 2).map(([key, value]) => `${key}：${value}`),
       })),
     };
