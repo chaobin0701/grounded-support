@@ -37,3 +37,7 @@ export class ProviderUnavailableError extends ProviderError {
 export class ProviderInvalidResponseError extends ProviderError {
   constructor() { super('Model provider returned an invalid response', 'provider_invalid_response', false); }
 }
+
+export class ProviderUnsupportedResponseFormatError extends ProviderError {
+  constructor(status?: number) { super('Model provider does not support the requested response format', 'provider_unsupported_response_format', false, status); }
+}

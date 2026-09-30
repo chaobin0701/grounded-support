@@ -67,6 +67,7 @@ export const configSchema = z.object({
     timeoutMs: z.coerce.number().int().min(1_000).max(120_000).default(DEFAULT_LLM_TIMEOUT_MS),
     contextWindowTokens: z.coerce.number().int().min(1_024).max(1_000_000).default(DEFAULT_LLM_CONTEXT_WINDOW_TOKENS),
     maxOutputTokens: z.coerce.number().int().min(128).max(32_000).default(DEFAULT_LLM_MAX_OUTPUT_TOKENS),
+    structuredOutput: z.enum(['auto', 'required', 'disabled']).default('auto'),
   }).default({
     provider: 'openai-compatible',
     apiKey: '',
@@ -75,6 +76,7 @@ export const configSchema = z.object({
     timeoutMs: DEFAULT_LLM_TIMEOUT_MS,
     contextWindowTokens: DEFAULT_LLM_CONTEXT_WINDOW_TOKENS,
     maxOutputTokens: DEFAULT_LLM_MAX_OUTPUT_TOKENS,
+    structuredOutput: 'auto',
   }),
 });
 
@@ -126,6 +128,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       timeoutMs: env.LLM_TIMEOUT_MS,
       contextWindowTokens: env.LLM_CONTEXT_WINDOW_TOKENS,
       maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
+      structuredOutput: env.LLM_STRUCTURED_OUTPUT,
     },
   });
   if (!parsed.success) {
@@ -157,6 +160,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       'llm.timeoutMs': 'LLM_TIMEOUT_MS',
       'llm.contextWindowTokens': 'LLM_CONTEXT_WINDOW_TOKENS',
       'llm.maxOutputTokens': 'LLM_MAX_OUTPUT_TOKENS',
+      'llm.structuredOutput': 'LLM_STRUCTURED_OUTPUT',
     };
     const details = parsed.error.issues
       .map((issue) => `${names[issue.path.join('.')] ?? (issue.path.join('.') || 'config')} ${issue.message}`)

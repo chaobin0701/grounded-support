@@ -100,6 +100,7 @@ test('agent executes provider-native tool calls and preserves the call id', asyn
     model: 'test-model',
     completeDetailed: async (_system, _user, _model, _purpose, options) => {
       assert.ok(options.tools.some((item) => item.name === 'search_knowledge'));
+      assert.deepEqual(options.responseFormat, { type: 'json_object' });
       return { ...responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 };
     },
   };

@@ -38,6 +38,7 @@ Provider 不负责：
 - `LlmStreamEvent`：原生 SSE 流中的文本增量和完成事件；
 - `LlmToolDefinition`：工具定义；
 - `LlmToolCall`：模型返回的工具调用；
+- `LlmResponseFormat`：结构化输出契约，由 Provider 映射为供应商的 `response_format`；
 - `LlmUsage`：输入、输出和总 Token。
 
 如果不同模型供应商的字段不同，应在 Provider 内部转换，不要把供应商字段泄露到这些公共类型中。
@@ -50,6 +51,7 @@ Provider 不负责：
 
 - 接收配置层传入的 API Key、Base URL、模型和超时；
 - 转换消息和工具定义；
+- 映射结构化 JSON 输出请求，并按兼容模式处理不支持该参数的端点；
 - 解析文本与标准 Tool Call；
 - 解析 Token 用量和完成原因；
 - 将模型原生 SSE 转换为统一的文本增量事件；
@@ -75,6 +77,7 @@ Provider 不直接读取 `process.env`。环境变量由 `config/` 中的 `AppCo
 - `ProviderModelNotFoundError`：模型不存在或未开通；
 - `ProviderUnavailableError`：服务暂时不可用；
 - `ProviderInvalidResponseError`：响应格式不符合预期。
+- `ProviderUnsupportedResponseFormatError`：端点不支持请求的结构化输出格式。
 
 上层应根据错误类型决定是否重试或向用户返回统一提示，不要解析供应商的原始错误 JSON。
 
