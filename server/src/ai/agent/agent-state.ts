@@ -6,6 +6,7 @@ import type { ToolExecutionState } from '../tools/tool-policy';
 import type { SkillDefinition } from '../skills/skill.types';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 import type { ContextBudget } from '../../chat/context-governor';
+import type { LlmToolCall, LlmToolDefinition } from '../providers/provider.types';
 
 export type AgentModelCall = {
   id: string;
@@ -13,12 +14,14 @@ export type AgentModelCall = {
   plannerRound?: number;
   model: string;
   request: {
-    messages: Array<{ role: string; content: string }>;
+    messages: Array<{ role: string; content: string; name?: string; toolCallId?: string; toolCalls?: LlmToolCall[] }>;
+    tools?: LlmToolDefinition[];
     temperature: number;
     maxTokens: number;
   };
   response: {
     content: string;
+    toolCalls?: LlmToolCall[];
     finishReason: string | null;
     inputTokens: number | null;
     outputTokens: number | null;

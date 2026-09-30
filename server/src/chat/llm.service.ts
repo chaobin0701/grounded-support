@@ -1,11 +1,12 @@
 import { Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
 import { ProviderError } from '../ai/providers/provider-errors';
-import { LlmMessage } from '../ai/providers/provider.types';
+import { LlmMessage, LlmToolCall, LlmToolDefinition } from '../ai/providers/provider.types';
 import { AppConfigService } from '../config/config.service';
 
 export type ModelResult = {
   content: string;
+  toolCalls: LlmToolCall[];
   model: string;
   inputTokens: number | null;
   outputTokens: number | null;
@@ -13,6 +14,11 @@ export type ModelResult = {
   finishReason: string | null;
   durationMs: number;
   attempts: number;
+};
+
+export type LlmCompletionOptions = {
+  messages?: LlmMessage[];
+  tools?: LlmToolDefinition[];
 };
 
 export class ModelFailure extends ServiceUnavailableException {
@@ -35,7 +41,7 @@ export class LlmService {
     return (await this.completeDetailed(system, user, model)).content;
   }
 
-  async completeDetailed(system: string, user: string, model = this.model, purpose: 'answer' | 'summary' | 'planner' = 'answer'): Promise<ModelResult> {
+  async completeDetailed(system: string, user: string, model = this.model, purpose: 'answer' | 'summary' | 'planner' = 'answer', options: LlmCompletionOptions = {}): Promise<ModelResult> {
     const provider = this.provider;
     const started = Date.now();
     const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0, seen: false };
@@ -43,9 +49,11 @@ export class LlmService {
       let reason = 'network_error';
       let retryable = true;
       try {
+        const messages = options.messages ?? [{ role: 'system', content: system }, { role: 'user', content: user } satisfies LlmMessage];
         const response = await provider.chat({
           model,
-          messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
+          messages,
+          ...(options.tools?.length ? { tools: options.tools } : {}),
           temperature: 0.1,
           maxTokens: purpose === 'summary' ? 800 : this.config?.llm.maxOutputTokens ?? 1200,
         });
@@ -53,9 +61,11 @@ export class LlmService {
         usage.inputTokens += response.usage.inputTokens ?? 0;
         usage.outputTokens += response.usage.outputTokens ?? 0;
         usage.totalTokens += response.usage.totalTokens ?? 0;
-        if (response.content) {
+        const toolCalls = response.toolCalls ?? [];
+        if (response.content || toolCalls.length > 0) {
           return {
             content: response.content,
+            toolCalls,
             model: response.model,
             inputTokens: usage.seen ? usage.inputTokens : null,
             outputTokens: usage.seen ? usage.outputTokens : null,
@@ -102,6 +112,6 @@ export class LlmService {
         finishReason = event.finishReason;
       }
     }
-    return { content, model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: 1 };
+    return { content, toolCalls: [], model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: 1 };
   }
 }

@@ -4,6 +4,7 @@ import { ToolContext } from './tool-context';
 import { ToolPolicy, ToolExecutionState } from './tool-policy';
 import { ToolRegistry } from './tool-registry';
 import { ToolResult } from './tool-result';
+import type { LlmToolDefinition } from '../providers/provider.types';
 
 export type ToolExecutionTrace = {
   name: string;
@@ -45,6 +46,20 @@ export class ToolExecutionService {
     } catch {
       return true;
     }
+  }
+
+  /** Convert the registered, policy-visible tools to the provider-neutral native tool contract. */
+  toolDefinitions(allowedTools?: readonly string[]): LlmToolDefinition[] {
+    const allowed = allowedTools ? new Set(allowedTools) : undefined;
+    const registryWithList = this.registry as ToolRegistry & { list?: () => AgentTool[] };
+    const tools = typeof registryWithList.list === 'function' ? registryWithList.list() : [];
+    return tools
+      .filter((tool) => !allowed || allowed.has(tool.name))
+      .map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: nativeParametersFor(tool.name),
+      }));
   }
 
   createState(): ToolExecutionState {
@@ -115,6 +130,33 @@ export class ToolExecutionService {
       result: { success: false, content: errorCode, errorCode },
       trace: { ...trace, ok: false, errorCode, durationMs: Math.max(0, trace.durationMs) },
     };
+  }
+}
+
+function nativeParametersFor(name: string): Record<string, unknown> {
+  switch (name) {
+    case 'search_knowledge':
+      return {
+        type: 'object',
+        properties: { query: { type: 'string', description: '要检索的资料问题' }, topK: { type: 'integer', minimum: 1, maximum: 8 } },
+        required: ['query'],
+        additionalProperties: false,
+      };
+    case 'list_products':
+    case 'mcp_product_catalog_list_products':
+      return {
+        type: 'object',
+        properties: { categoryId: { type: 'string' }, search: { type: 'string' } },
+        additionalProperties: false,
+      };
+    case 'get_product_detail':
+    case 'mcp_product_catalog_get_product_detail':
+      return { type: 'object', properties: { productId: { type: 'string' } }, required: ['productId'], additionalProperties: false };
+    case 'list_product_categories':
+    case 'mcp_product_catalog_list_product_categories':
+      return { type: 'object', properties: {}, additionalProperties: false };
+    default:
+      return { type: 'object', additionalProperties: true };
   }
 }
 
