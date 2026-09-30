@@ -106,6 +106,16 @@ button:disabled { cursor: not-allowed; }
   .embedded-conversation-select { max-width: 230px; }
 }
 
+/* Full assistant inside the website keeps the site's header/footer while the chat card owns its scroll area. */
+.chat-page-embedded { height: 650px; min-height: 560px; overflow: hidden; }
+.chat-page-embedded .sidebar, .chat-page-embedded .workspace { min-height: 0; height: 100%; }
+.chat-page-embedded .sidebar { overflow: hidden; }
+@media (max-width: 680px) {
+  .chat-page-embedded { height: min(720px, calc(100svh - 190px)); min-height: 480px; }
+  .chat-page-embedded .sidebar { display: none; }
+  .chat-page-embedded .workspace { height: 100%; }
+}
+
 /* Shared product language: quiet surfaces, compact navigation, clear evidence. */
 :root { --ink: #1d2925; --muted: #68766f; --line: #e4e9e4; --pine: #244c3e; --canvas: #f7f8f5; color: var(--ink); background: var(--canvas); }
 button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #9ac0a8; outline-offset: 2px; }

@@ -12,6 +12,7 @@ export const router = createRouter({
     { path: '/product/about', name: 'product-about', component: routeSurface },
     { path: '/product/support', name: 'product-support', component: routeSurface },
     { path: '/product/news', name: 'product-news', component: routeSurface },
+    { path: '/product/assistant', name: 'product-assistant', component: routeSurface },
     { path: '/product/:slug', name: 'product-detail', component: routeSurface },
     { path: '/help', name: 'help', component: routeSurface },
     { path: '/admin', name: 'admin-login', component: routeSurface },
