@@ -9,6 +9,7 @@ export const router = createRouter({
   routes: [
     { path: '/', name: 'chat', component: routeSurface },
     { path: '/product', name: 'product', component: routeSurface },
+    { path: '/product/:slug', name: 'product-detail', component: routeSurface },
     { path: '/help', name: 'help', component: routeSurface },
     { path: '/admin', name: 'admin-login', component: routeSurface },
     { path: '/admin/documents', redirect: '/admin/knowledge' },

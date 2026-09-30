@@ -9,10 +9,10 @@ import { Bot, Check, CheckCircle2, Copy, Database, FileText, LoaderCircle, MoreH
 
 const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
-const isProductRoute = computed(() => route.path === '/product');
+const isProductRoute = computed(() => route.path === '/product' || route.path.startsWith('/product/'));
 const isHelpRoute = computed(() => route.path === '/help');
 watch(() => route.path, (path) => {
-  document.title = path === '/product' ? '暖巢智能客服 · 产品介绍'
+  document.title = path === '/product' || path.startsWith('/product/') ? '暖巢智能客服 · 产品介绍'
     : path === '/help' ? '暖巢智能客服 · 帮助中心'
       : path.startsWith('/admin') ? '暖巢智能客服 · 管理中心' : '暖巢智能客服';
 }, { immediate: true });
