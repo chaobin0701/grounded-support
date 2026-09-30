@@ -18,6 +18,7 @@ watch(() => route.path, (path) => {
 }, { immediate: true });
 const ACTIVE_CONVERSATION_KEY = 'grounded.activeConversationId';
 const PENDING_REQUEST_KEY = 'grounded.pendingChatRequest';
+const DRAFT_INPUT_PREFIX = 'grounded.draftInput.';
 
 type Message =
   | { id: number; role: 'visitor'; text: string; createdAt: string }
@@ -62,6 +63,24 @@ function newRequestId(): string {
   return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function draftInputKey(id: string | null) {
+  return `${DRAFT_INPUT_PREFIX}${id || 'new'}`;
+}
+
+function readDraftInput(id: string | null) {
+  return window.localStorage.getItem(draftInputKey(id)) || '';
+}
+
+function writeDraftInput(id: string | null, value: string) {
+  const key = draftInputKey(id);
+  if (value) window.localStorage.setItem(key, value);
+  else window.localStorage.removeItem(key);
+}
+
+watch(question, (value) => {
+  if (!isSending.value) writeDraftInput(activeConversationId.value, value);
+});
+
 onMounted(async () => {
   window.addEventListener('click', closeConversationMenu);
   if (isAdminRoute.value || isProductRoute.value || isHelpRoute.value) return;
@@ -77,7 +96,7 @@ onMounted(async () => {
     const savedId = window.localStorage.getItem(ACTIVE_CONVERSATION_KEY);
     const preferred = conversations.value.find((item) => item.id === savedId) || conversations.value[0];
     if (preferred) await openConversation(preferred.id);
-    else await newConversation();
+    else newConversation();
   } catch {
     errorMessage.value = '暂时无法加载历史对话，请稍后刷新。';
   } finally {
@@ -170,6 +189,7 @@ async function openConversation(id: string) {
     activeConversationId.value = id;
     window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, id);
     messages.value = displayMessages(items);
+    question.value = readDraftInput(id);
     errorMessage.value = '';
     await recoverPendingRequest(id);
     await scrollToLatest();
@@ -180,18 +200,12 @@ async function openConversation(id: string) {
 
 async function newConversation() {
   if (isSending.value) return;
-  try {
-    const item = await conversationApi.create();
-    conversations.value.unshift(item);
-    activeConversationId.value = item.id;
-    window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, item.id);
-    messages.value = [];
-    activeProgressEvents.value = [];
-    question.value = '';
-    errorMessage.value = '';
-  } catch {
-    errorMessage.value = '新建对话失败，请重试。';
-  }
+  activeConversationId.value = null;
+  window.localStorage.removeItem(ACTIVE_CONVERSATION_KEY);
+  messages.value = [];
+  activeProgressEvents.value = [];
+  question.value = readDraftInput(null);
+  errorMessage.value = '';
 }
 
 async function removeConversation(item: ConversationItem) {
@@ -253,6 +267,7 @@ async function send(value = question.value) {
   }
 
   errorMessage.value = '';
+  writeDraftInput(activeConversationId.value, trimmed);
   question.value = '';
   isSending.value = true;
   draftAnswer.value = '';
@@ -263,9 +278,9 @@ async function send(value = question.value) {
     let id = activeConversationId.value;
     if (!id) {
       const item = await conversationApi.create();
-      conversations.value.unshift(item);
       activeConversationId.value = item.id;
       window.localStorage.setItem(ACTIVE_CONVERSATION_KEY, item.id);
+      writeDraftInput(null, '');
       id = item.id;
     }
     const pending = readPendingRequest();
@@ -283,6 +298,7 @@ async function send(value = question.value) {
     });
     messages.value.push({ id: nextId--, role: 'assistant', text: result.answer, refused: result.refused, citations: result.citations, progressEvents: activeProgressEvents.value, createdAt: new Date().toISOString() });
     clearPendingRequest();
+    writeDraftInput(id, '');
     try { conversations.value = await conversationApi.list(); } catch { /* Answer was saved; list can refresh later. */ }
   } catch (error) {
     let recovered = false;
@@ -310,6 +326,7 @@ async function send(value = question.value) {
         errorMessage.value = '发送失败，请检查网络后重试。';
       }
       question.value = trimmed;
+      writeDraftInput(activeConversationId.value, trimmed);
       if (pushed) messages.value.pop();
     }
   } finally {
