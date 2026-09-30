@@ -305,3 +305,13 @@ button:focus-visible, a:focus-visible, summary:focus-visible, textarea:focus-vis
   .chat-page-embedded .composer-area { padding: 10px 2px 0; }
   .chat-page-embedded .message-bubble .answer-text { font-size: 14px; line-height: 1.8; }
 }
+
+/* The assistant page owns the viewport: only the conversation and history panes scroll. */
+.assistant-site-shell { display: flex; flex-direction: column; height: 100svh; min-height: 0; overflow: hidden; }
+.assistant-site-shell > header, .assistant-site-shell > footer { flex: none; }
+.assistant-site-shell > .assistant-site-main { display: flex; flex: 1 1 auto; flex-direction: column; width: 100%; min-height: 0; overflow: hidden; }
+.assistant-site-shell .chat-page-embedded { display: grid; flex: 1 1 auto; height: auto; min-height: 0; }
+@media (max-width: 680px) {
+  .assistant-site-shell .chat-page-embedded { display: flex; flex-direction: column; height: auto; min-height: 0; }
+  .assistant-site-shell .chat-page-embedded .workspace { flex: 1 1 auto; height: auto; }
+}

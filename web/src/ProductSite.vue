@@ -38,7 +38,7 @@ watch(() => route.path, () => { chatOpen.value = false; });
 </script>
 
 <template>
-  <div class="min-h-screen bg-[#fbfcfa] text-[#17211e]">
+  <div class="min-h-screen bg-[#fbfcfa] text-[#17211e]" :class="{ 'assistant-site-shell': page === 'assistant' }">
     <header class="sticky top-0 z-40 border-b border-[#e3e8e3]/90 bg-[#fbfcfa]/95 backdrop-blur"><nav class="mx-auto flex h-[72px] max-w-[1240px] items-center justify-between px-6 lg:px-10"><RouterLink to="/product" class="flex items-center gap-3 text-[15px] font-semibold tracking-[-.02em]"><span class="grid size-10 place-items-center rounded-[13px] bg-[#2457e6] text-lg text-white">暖</span><span>暖巢智能</span></RouterLink><div class="hidden items-center gap-7 text-sm text-[#68756f] md:flex"><RouterLink to="/product" class="transition hover:text-[#17211e]">首页</RouterLink><RouterLink to="/product/about" class="transition hover:text-[#17211e]">关于我们</RouterLink><RouterLink to="/product#products" class="transition hover:text-[#17211e]">产品</RouterLink><RouterLink to="/product/support" class="transition hover:text-[#17211e]">服务支持</RouterLink><RouterLink to="/product/news" class="transition hover:text-[#17211e]">品牌动态</RouterLink></div><button v-if="page !== 'assistant'" type="button" class="inline-flex h-10 items-center gap-2 rounded-lg bg-[#2457e6] px-4 text-sm font-semibold text-white transition hover:bg-[#1d48c5]" @click="chatOpen = true">咨询 AI 助手 <MessageCircle :size="16" /></button></nav></header>
 
     <main v-if="page === 'home' && !isDetail">
