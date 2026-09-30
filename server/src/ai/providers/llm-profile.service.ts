@@ -117,12 +117,14 @@ export class LlmProfileService {
     return this.toView(updated.rows[0]);
   }
 
-  async test(id: number): Promise<{ ok: true; model: string; durationMs: number }> {
+  async test(id: number): Promise<{ ok: true; model: string; durationMs: number; responsePreview: string }> {
     const row = await this.find(id);
     if (!row) throw new NotFoundException('LLM profile not found');
     const provider = this.registry.createFromProfile(await this.hydrate(row));
     const response = await provider.chat({ model: String(row.model), messages: [{ role: 'user', content: '只回复：连接成功' }], maxTokens: 16 });
-    return { ok: true, model: response.model, durationMs: response.durationMs };
+    const responsePreview = response.content.trim().replace(/\s+/gu, ' ').slice(0, 160);
+    if (!responsePreview) throw new BadRequestException('模型返回为空，连接测试未完成');
+    return { ok: true, model: response.model, durationMs: response.durationMs, responsePreview };
   }
 
   private async find(id: number): Promise<ProfileRow | null> {

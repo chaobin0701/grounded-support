@@ -373,5 +373,5 @@ export const adminApi = {
   updateLlmProfile: (token: string, id: number, input: Partial<Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'structuredOutput'>> & { apiKey?: string }) => request<LlmProfileItem>(`/model-profiles/llm/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
   activateLlmProfile: (token: string, id: number) => request<LlmProfileItem>(`/model-profiles/llm/${id}/activate`, { method: 'POST' }, token),
   setLlmProfileStatus: (token: string, id: number, enabled: boolean) => request<LlmProfileItem>(`/model-profiles/llm/${id}/status`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
-  testLlmProfile: (token: string, id: number) => request<{ ok: true; model: string; durationMs: number }>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
+  testLlmProfile: (token: string, id: number) => request<{ ok: true; model: string; durationMs: number; responsePreview: string }>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
 };

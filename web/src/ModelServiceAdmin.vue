@@ -12,6 +12,8 @@ const saving = ref(false);
 const dialogOpen = ref(false);
 const editingId = ref<number | null>(null);
 const testingId = ref<number | null>(null);
+type TestResult = { ok: true; model: string; durationMs: number; responsePreview: string } | { ok: false; message: string };
+const testResults = ref<Record<number, TestResult>>({});
 const form = ref({
   name: '火山引擎主模型',
   platformKey: 'volcengine' as 'volcengine' | 'openai' | 'deepseek' | 'custom',
@@ -62,8 +64,17 @@ async function toggle(profile: LlmProfileItem) {
 }
 async function test(profile: LlmProfileItem) {
   testingId.value = profile.id;
-  try { const result = await adminApi.testLlmProfile(props.token, profile.id); emit('notice', `连接成功 · ${result.model} · ${result.durationMs} ms`); }
-  catch (cause) { emit('error', cause instanceof Error ? cause.message : '连接测试失败'); }
+  const { [profile.id]: _previousResult, ...remainingResults } = testResults.value;
+  testResults.value = remainingResults;
+  try {
+    const result = await adminApi.testLlmProfile(props.token, profile.id);
+    testResults.value = { ...testResults.value, [profile.id]: result };
+    emit('notice', `连接成功 · ${result.model} · ${result.durationMs} ms`);
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : '连接测试失败';
+    testResults.value = { ...testResults.value, [profile.id]: { ok: false, message } };
+    emit('error', message);
+  }
   finally { testingId.value = null; }
 }
 function openCreate() { resetForm(); dialogOpen.value = true; }
@@ -95,7 +106,7 @@ onMounted(load);
       <article v-for="profile in profiles" :key="profile.id" class="model-service-card" :class="{ active: profile.isDefault }">
         <div class="model-service-card-head"><div><div class="model-service-title"><h2>{{ profile.name }}</h2><span class="model-platform-label">{{ ({ volcengine: '火山引擎方舟', openai: 'OpenAI', deepseek: 'DeepSeek', custom: '其他兼容平台' } as Record<string, string>)[profile.platformKey] }}</span><span v-if="profile.isDefault" class="admin-status ready"><CheckCircle2 :size="13" />当前使用</span><span v-else class="admin-status" :class="profile.enabled ? 'ready' : 'archived'">{{ profile.enabled ? '已启用' : '已停用' }}</span></div><p class="admin-mono">{{ profile.model }}</p></div><span class="model-service-protocol">OpenAI Compatible</span></div>
         <dl class="model-service-meta"><div><dt>服务地址</dt><dd>{{ profile.baseUrl }}</dd></div><div><dt>密钥</dt><dd>{{ profile.hasApiKey ? '已配置' : '未配置' }}</dd></div><div><dt>超时</dt><dd>{{ profile.timeoutMs.toLocaleString() }} ms</dd></div><div><dt>上下文 / 输出</dt><dd>{{ profile.contextWindowTokens.toLocaleString() }} / {{ profile.maxOutputTokens.toLocaleString() }}</dd></div></dl>
-        <div v-if="props.canManage" class="model-service-actions"><button type="button" @click="test(profile)" :disabled="testingId === profile.id"><TestTube2 :size="15" />{{ testingId === profile.id ? '测试中…' : '测试连接' }}</button><button type="button" @click="edit(profile)"><Pencil :size="15" />编辑</button><button v-if="!profile.isDefault && profile.enabled" type="button" class="primary-link" @click="activate(profile)"><Play :size="15" />设为当前</button><button v-if="!profile.isDefault" type="button" class="muted-link" @click="toggle(profile)">{{ profile.enabled ? '停用' : '启用' }}</button></div>
+        <div class="model-service-footer"><div v-if="props.canManage" class="model-service-actions"><button type="button" class="model-action-primary" @click="test(profile)" :disabled="testingId === profile.id"><TestTube2 :size="15" />{{ testingId === profile.id ? '正在请求模型…' : '测试连接' }}</button><button type="button" @click="edit(profile)"><Pencil :size="15" />编辑</button><button v-if="!profile.isDefault && profile.enabled" type="button" class="primary-link" @click="activate(profile)"><Play :size="15" />设为当前</button><button v-if="!profile.isDefault" type="button" class="muted-link" @click="toggle(profile)">{{ profile.enabled ? '停用' : '启用' }}</button></div><div v-if="testResults[profile.id]" class="model-test-result" :class="{ success: testResults[profile.id]?.ok, failure: testResults[profile.id] && !testResults[profile.id]?.ok }"><template v-if="testResults[profile.id]?.ok"><strong>连接成功</strong><span>已收到模型响应：{{ (testResults[profile.id] as Extract<TestResult, { ok: true }>).responsePreview }}</span><small>{{ (testResults[profile.id] as Extract<TestResult, { ok: true }>).model }} · {{ (testResults[profile.id] as Extract<TestResult, { ok: true }>).durationMs }} ms</small></template><template v-else>{{ (testResults[profile.id] as Extract<TestResult, { ok: false }>).message }}</template></div></div>
       </article>
     </div>
     <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="editingId === null ? '添加模型服务' : '编辑模型服务'" description="填写符合 OpenAI Compatible 协议的 HTTPS 接口。" size="lg" @update:open="dialogOpen = $event">
@@ -113,7 +124,7 @@ onMounted(load);
 .admin-page-actions button, .model-service-actions button { display: inline-flex; align-items: center; gap: 6px; }
 .model-service-note { display: flex; gap: 12px; padding: 14px 16px; border: 1px solid #dbe5f8; background: #f5f8ff; color: #315cae; border-radius: 12px; }
 .model-service-note p { margin: 3px 0 0; color: #7184a5; }
-.model-service-list { display: grid; gap: 14px; max-width: 980px; }
+.model-service-list { display: grid; gap: 14px; width: 100%; }
 .model-service-card { border: 1px solid var(--admin-border); border-radius: 14px; padding: 20px; background: white; box-shadow: 0 8px 20px rgba(31, 54, 88, .04); }
 .model-service-card.active { border-color: #86aafc; box-shadow: 0 10px 26px rgba(44, 99, 234, .1); }
 .model-service-card-head { display: flex; justify-content: space-between; gap: 16px; }
@@ -123,7 +134,7 @@ onMounted(load);
 .model-platform-label { color: #315cae; background: #eef4ff; border-radius: 999px; padding: 3px 8px; font-size: 12px; }
 .model-service-meta { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 16px; margin: 18px 0; padding: 14px 0; border-block: 1px solid #edf0f5; }
 .model-service-meta dt { color: var(--admin-muted); font-size: 12px; margin-bottom: 4px; }.model-service-meta dd { margin: 0; word-break: break-all; font-size: 13px; }
-.primary-link { color: #2860e8; }.muted-link { color: var(--admin-muted); }.wide-field { grid-column: span 2; }
+.model-service-footer { display: grid; gap: 10px; }.model-action-primary { color: #2457e6 !important; border-color: #cbd9ff !important; background: #f5f8ff !important; }.model-test-result { display: grid; gap: 3px; width: fit-content; max-width: min(100%, 720px); padding: 8px 11px; border-radius: 7px; font-size: 12px; line-height: 1.4; }.model-test-result span, .model-test-result small { color: inherit; opacity: .82; overflow-wrap: anywhere; }.model-test-result.success { color: #28774d; background: #e7f5eb; }.model-test-result.failure { color: #a5483e; background: #fff0ec; }.primary-link { color: #2860e8; }.muted-link { color: var(--admin-muted); }.wide-field { grid-column: span 2; }
 .platform-picker { display: grid; gap: 10px; }.platform-picker p { margin: 0; font-weight: 700; }.platform-options { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }.platform-options button { display: grid; gap: 4px; text-align: left; padding: 12px; border: 1px solid var(--admin-border); border-radius: 10px; background: #fff; color: inherit; cursor: pointer; }.platform-options button.selected { border-color: #2860e8; background: #f3f7ff; box-shadow: inset 0 0 0 1px #2860e8; }.platform-options small, .fixed-setting small { color: var(--admin-muted); line-height: 1.4; }.fixed-setting { display: grid; align-content: start; gap: 5px; padding: 2px 0; }.fixed-setting span { font-weight: 700; }.fixed-setting strong { color: #2860e8; }
 @media (max-width: 760px) { .admin-page-header, .model-service-card-head { flex-direction: column; }.model-service-meta { grid-template-columns: 1fr 1fr; }.wide-field { grid-column: auto; }.platform-options { grid-template-columns: 1fr 1fr; } }
 </style>
