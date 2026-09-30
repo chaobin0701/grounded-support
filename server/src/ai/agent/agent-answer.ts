@@ -10,8 +10,8 @@ export function validateAgentAnswer(
   raw: string,
   hits: SearchHit[],
   products: Array<ProductSummary | ProductDetail>,
-  responseMode: SkillResponseMode = 'grounded',
-  evidenceRequired = responseMode !== 'conversational' && responseMode !== 'auto',
+  _responseMode: SkillResponseMode = 'grounded',
+  _evidenceRequired = false,
 ): ChatAnswer {
   const refusal: ChatAnswer = { answer: REFUSAL, refused: true, citations: [] };
   try {
@@ -21,15 +21,22 @@ export function validateAgentAnswer(
     const citationIds = parsed.citationIds;
     const productIds = parsed.productIds;
     if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length > 5 || productIds.length > 10) return refusal;
-    if (evidenceRequired && citationIds.length + productIds.length === 0) return refusal;
-    if (!evidenceRequired && citationIds.length + productIds.length === 0) {
-      return { answer: parsed.answer.trim(), refused: false, citations: [] };
-    }
     const byProduct = new Map(products.map((product) => [product.id, product]));
-    if (productIds.some((id) => typeof id !== 'string' || !byProduct.has(id))) return refusal;
-    const citations = citationIds.length ? validateAnswer(JSON.stringify({ status: 'answered', answer: parsed.answer, citationIds }), hits) : null;
-    if (citations?.refused) return refusal;
-    const answer = products.reduce((text, product) => text.replaceAll(product.id, ''), parsed.answer.trim()).replace(/ {2,}/gu, ' ').trim();
+
+    // This first version validates the response protocol only. The model may
+    // reuse evidence from a prior turn that is present in the transcript but not
+    // rehydrated into this turn's state. Matching citations are display metadata;
+    // unresolved citations never invalidate an otherwise valid answer.
+    const validCitationIds = citationIds.filter((id): id is number =>
+      Number.isInteger(id) && hits.some((hit) => hit.chunkId === id),
+    );
+    const citations = validCitationIds.length
+      ? validateAnswer(JSON.stringify({ status: 'answered', answer: parsed.answer, citationIds: validCitationIds }), hits)
+      : null;
+    const answer = [...byProduct.values()]
+      .reduce((text, product) => text.replaceAll(product.id, ''), parsed.answer.trim())
+      .replace(/ {2,}/gu, ' ')
+      .trim();
     return { answer, refused: false, citations: citations?.citations || [] };
   } catch {
     return refusal;

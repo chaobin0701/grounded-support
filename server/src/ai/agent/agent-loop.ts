@@ -144,16 +144,6 @@ export class AgentLoop {
     if (final) {
       modelStep.stage = 'final_answer';
       modelStep.detail = '模型返回最终回答';
-      const evidenceRequired = ((state.skill.responseMode !== 'auto' && state.skill.responseMode !== 'conversational')
-        || state.toolCalls.length > 0 || state.hits.size > 0 || state.products.size > 0);
-      if (final.status === 'answered' && evidenceRequired && Array.isArray(final.citationIds) && Array.isArray(final.productIds)
-        && final.citationIds.length === 0 && final.productIds.length === 0) {
-        state.toolResults.push({ validation: 'final_answer_requires_a_retrieved_citation_or_product_id' });
-        state.executionSteps.push({ type: 'validation', stage: 'answer_guard', plannerRound, ok: false, durationMs: 0, detail: '最终回答缺少有效资料或产品引用' });
-        state.contextSnapshot.toolResults = state.toolResults;
-        state.contextSnapshot.executionSteps = state.executionSteps;
-        return { type: 'continue' };
-      }
       state.contextSnapshot.sources = [...state.hits.values()].map((hit) => ({
         chunkId: hit.chunkId,
         title: hit.documentTitle,
@@ -162,7 +152,7 @@ export class AgentLoop {
       state.contextSnapshot.products = [...state.products.values()];
       state.contextSnapshot.toolCalls = state.toolCalls;
       state.contextSnapshot.toolResults = state.toolResults;
-      const validated = validateAgentAnswer(JSON.stringify(final), [...state.hits.values()], [...state.products.values()], state.skill.responseMode, evidenceRequired);
+      const validated = validateAgentAnswer(JSON.stringify(final), [...state.hits.values()], [...state.products.values()], state.skill.responseMode, false);
       this.appendTranscript(state, {
         ...this.transcriptBase(state),
         role: 'assistant',
@@ -177,8 +167,8 @@ export class AgentLoop {
         ok: !validated.refused || final.status === 'refused',
         durationMs: 0,
         detail: final.status === 'refused'
-          ? '资料不足，已安全拒答'
-          : validated.refused ? '回答未通过引用或事实校验' : '回答与引用校验通过',
+          ? '模型选择拒答'
+          : validated.refused ? '回答未通过协议校验' : '回答协议校验通过',
       });
       state.contextSnapshot.executionSteps = state.executionSteps;
       return {
