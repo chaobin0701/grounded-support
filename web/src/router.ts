@@ -9,6 +9,7 @@ export const router = createRouter({
   routes: [
     { path: '/', name: 'chat', component: routeSurface },
     { path: '/product', name: 'product', component: routeSurface },
+    { path: '/product/products', name: 'product-products', component: routeSurface },
     { path: '/product/about', name: 'product-about', component: routeSurface },
     { path: '/product/support', name: 'product-support', component: routeSurface },
     { path: '/product/news', name: 'product-news', component: routeSurface },
@@ -29,3 +30,6 @@ export const router = createRouter({
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });
+
+// Keep legacy in-page product links working while the catalogue has its own page.
+router.beforeEach((to) => to.path === '/product' && to.hash === '#products' ? { path: '/product/products' } : true);

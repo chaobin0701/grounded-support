@@ -5,10 +5,14 @@ import AdminApp from './AdminApp.vue';
 import ChatWorkspace from './ChatWorkspace.vue';
 import HelpCenter from './HelpCenter.vue';
 import ProductSite from './ProductSite.vue';
+import ProductHome from './ProductHome.vue';
+import ProductCatalog from './ProductCatalog.vue';
 
 const route = useRoute();
 const isAdminRoute = computed(() => route.path === '/admin' || route.path.startsWith('/admin/'));
 const isProductRoute = computed(() => route.path === '/product' || route.path.startsWith('/product/'));
+const isProductHome = computed(() => route.path === '/product');
+const isProductCatalog = computed(() => route.path === '/product/products');
 const isHelpRoute = computed(() => route.path === '/help');
 const isLegacyEmbeddedChat = computed(() => route.path === '/' && route.query.embed === '1');
 
@@ -20,7 +24,9 @@ watch(() => route.path, (path) => {
 </script>
 
 <template>
-  <ProductSite v-if="isProductRoute" />
+  <ProductHome v-if="isProductHome" />
+  <ProductCatalog v-else-if="isProductCatalog" />
+  <ProductSite v-else-if="isProductRoute" />
   <HelpCenter v-else-if="isHelpRoute" />
   <AdminApp v-else-if="isAdminRoute" />
   <ChatWorkspace v-else :mode="isLegacyEmbeddedChat ? 'widget' : 'full'" />
