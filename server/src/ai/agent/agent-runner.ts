@@ -1,12 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ContextBuilder } from '../../chat/context-builder';
 import type { AgentCallbacks, AgentInput } from './agent-input';
 import type { AgentResult } from './agent-result';
 import type { AgentState } from './agent-state';
 import { RECOVERY_REFUSAL } from './agent-answer';
 import { AgentLoop } from './agent-loop';
-import { questionAnsweringSkill } from '../skills/built-in/question-answering.skill';
-import type { SkillDefinition } from '../skills/skill.types';
+import { AppConfigService } from '../../config/config.service';
+import { DEFAULT_AGENT_CONFIGURATION } from '../../config/agent-config';
 import { TRANSCRIPT_VERSION, transcriptMessageBase, type AgentTranscriptMessage } from '../../chat/agent-transcript';
 
 @Injectable()
@@ -14,10 +14,11 @@ export class AgentRunner {
   constructor(
     private readonly loop: AgentLoop,
     private readonly contextBuilder: ContextBuilder,
+    @Optional() private readonly config?: AppConfigService,
   ) {}
 
   async run(input: AgentInput, callbacks: AgentCallbacks = {}): Promise<AgentResult> {
-    const skill = input.skill ?? questionAnsweringSkill;
+    const agent = input.configurationSnapshot?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION;
     const priorTranscript = input.priorTranscript ?? [];
     const userMessage: AgentTranscriptMessage = {
       ...transcriptMessageBase(input.conversationId, input.traceId, priorTranscript.length + 1),
@@ -26,27 +27,27 @@ export class AgentRunner {
     };
     const transcript = [...priorTranscript, userMessage];
     const initialContext = this.contextBuilder.build({
+      configuration: agent,
       question: input.question,
       summary: input.summary,
       recentHistory: input.recentHistory,
       toolResults: [],
       initialEvidence: input.initialEvidence,
-      skill,
+      availableSkills: input.availableSkills,
+      loadedSkills: input.initialSkills,
       transcript,
     });
-    const state = this.createState(initialContext, skill, transcript, [userMessage]);
+    const state = this.createState(initialContext, input, transcript, [userMessage]);
     for (const hit of input.initialEvidence ?? []) state.hits.set(hit.chunkId, hit);
     state.contextSnapshot.preflight = input.preflight;
-    state.contextSnapshot.skillSelection = { skillId: skill.id, selectedBy: input.selectedBy ?? 'default' };
     state.executionSteps.push({
-      type: 'skill_selection',
+      type: 'agent_setup',
       stage: 'planning',
-      skillId: skill.id,
-      selectedBy: input.selectedBy ?? 'default',
       ok: true,
       durationMs: 0,
-      detail: `已选择 ${skill.name}`,
+      detail: `使用 ${agent.identity.name} 的默认提示词，不预选 Skill`,
     });
+    for (const skill of input.initialSkills ?? []) state.executionSteps.push({ type: 'skill_loaded', stage: 'planning', skillId: skill.id, selectedBy: 'explicit', ok: true, durationMs: 0, detail: `显式加载 ${skill.name}` });
     if (input.preflight?.query) {
       state.executionSteps.push({
         type: 'preflight',
@@ -63,7 +64,7 @@ export class AgentRunner {
     state.contextSnapshot.executionSteps = state.executionSteps;
     callbacks.onContext?.(state.contextSnapshot);
 
-    for (let round = 0; round < skill.maxToolCalls; round += 1) {
+    for (let round = 0; round < state.runtime.maxPlannerRounds; round += 1) {
       const step = await this.loop.step(input, state, callbacks.onProgress);
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
@@ -73,16 +74,21 @@ export class AgentRunner {
 
   private createState(
     initialContext: ReturnType<ContextBuilder['build']>,
-    skill: SkillDefinition,
+    input: AgentInput,
     transcript: AgentTranscriptMessage[],
     traceTranscript: AgentTranscriptMessage[],
   ): AgentState {
+    const agent = input.configurationSnapshot?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION;
+    const runtime = agent.runtime;
+    const loadedSkills = new Map((input.initialSkills ?? []).map(skill => [skill.id, skill]));
     return {
+      configuration: agent,
       toolContext: {
-        permissions: skill.allowedTools,
+        permissions: runtime.allowedTools,
+        enabledSkillIds: agent.enabledSkills,
         state: new Map([['knownProductIds', new Set<string>()]]),
       },
-      executionState: this.loop.createExecutionStateForSkill(skill.allowedTools, skill.maxToolCalls),
+      executionState: this.loop.createExecutionStateForAgent(runtime.allowedTools, runtime.maxToolCalls, { timeoutMs: runtime.toolTimeoutMs, maxResultChars: runtime.maxToolResultChars }),
       toolCalls: [],
       toolResults: [],
       executionSteps: [],
@@ -90,8 +96,10 @@ export class AgentRunner {
       hits: new Map(),
       products: new Map(),
       contextSnapshot: {
-        promptVersion: 'custom-orchestrator-v1',
-        systemPrompt: `${this.loop.prompt}\n${skill.systemInstructions}`,
+        promptVersion: 'agent-base-with-on-demand-skills-v2',
+        systemPrompt: this.loop.systemPromptFor(input.availableSkills ?? [], [...loadedSkills.values()], agent),
+        agentConfigurationRevision: input.configurationSnapshot?.revision,
+        agentConfigurationVersion: input.configurationSnapshot?.configurationVersion,
         question: initialContext.question,
         summary: initialContext.summary,
         history: initialContext.history,
@@ -101,14 +109,18 @@ export class AgentRunner {
         modelCalls: [],
         agentTranscript: traceTranscript,
         transcriptVersion: TRANSCRIPT_VERSION,
-        skill: { id: skill.id, version: skill.version, name: skill.name, responseMode: skill.responseMode },
+        agent: { name: agent.identity.name, role: agent.identity.role },
+        runtime,
+        availableSkills: input.availableSkills ?? [],
+        loadedSkills: [...loadedSkills.values()].map(({ id, name, version }) => ({ id, name, version })),
       },
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
       usageSeen: false,
       finalRaw: '',
-      skill,
+      runtime,
+      loadedSkills,
       plannerRound: 0,
       transcript,
       traceTranscript,
@@ -128,6 +140,7 @@ export class AgentRunner {
     state.contextSnapshot.transcriptVersion = TRANSCRIPT_VERSION;
     state.contextSnapshot.executionSteps = state.executionSteps;
     state.contextSnapshot.modelCalls = state.modelCalls;
+    state.contextSnapshot.loadedSkills = [...state.loadedSkills.values()].map(({ id, name, version }) => ({ id, name, version }));
     return {
       result,
       contextSnapshot: state.contextSnapshot,
@@ -139,7 +152,7 @@ export class AgentRunner {
       toolResults: state.toolResults,
       sources: [...state.hits.values()],
       products: [...state.products.values()],
-      skill: { id: state.skill.id, version: state.skill.version },
+      loadedSkills: [...state.loadedSkills.values()].map(({ id, name, version, description }) => ({ id, name, version, description })),
     };
   }
 }

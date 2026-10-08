@@ -31,6 +31,41 @@ test('knowledge base publishing controls require management permission', () => {
   assert.deepEqual(Reflect.getMetadata(PERMISSION_KEY, KnowledgeBaseController.prototype.upload), ['documents.upload']);
 });
 
+test('default and ordinary bases archive transactionally without deleting documents or changing defaults', async () => {
+  for (const isDefault of [true, false]) {
+    const statements = [];
+    const bases = new KnowledgeBaseService({ transaction: work => work({ query: async (sql, values) => {
+      statements.push({ sql, values });
+      return { rows: sql.startsWith('SELECT') ? [{ id: 3, is_default: isDefault }] : [], rowCount: 1 };
+    } }) });
+    assert.deepEqual(await bases.archive(7, 3), { id: 3, archived: true });
+    assert.match(statements[0].sql, /archived_at IS NULL FOR UPDATE/);
+    assert.match(statements[1].sql, /archived_at = now\(\), enabled_for_chat = false/);
+    assert.deepEqual(statements[1].values, [3]);
+    assert.match(statements[2].sql, /knowledge_base\.archived/);
+    assert.deepEqual(statements[2].values, [7, '3']);
+    assert.ok(statements.every(({ sql }) => !/DELETE|SET is_default|UPDATE documents|UPDATE knowledge_index_versions/.test(sql)));
+  }
+});
+
+test('nonexistent or already archived bases never produce writes or audit entries', async () => {
+  const statements = [];
+  const bases = new KnowledgeBaseService({ transaction: work => work({ query: async sql => {
+    statements.push(sql); return { rows: [] };
+  } }) });
+  await assert.rejects(bases.archive(7, 3), error => error.getStatus() === 404);
+  assert.equal(statements.length, 1);
+});
+
+test('legacy diagnostic lookup does not choose an archived default published index', async () => {
+  const statements = [];
+  const search = new SearchService({ query: async sql => { statements.push(sql); return { rows: [] }; } }, { enabled: false }, {
+    search: async () => { throw new Error('Archived default must not enter version search'); },
+  });
+  assert.deepEqual((await search.diagnose('保修期限', 5, undefined)).results, []);
+  assert.match(statements[0], /is_default AND archived_at IS NULL/);
+});
+
 test('knowledge base recall test searches only ready, active documents in the selected base', async () => {
   const statements = [];
   const database = { query: async (sql, values) => {
@@ -115,8 +150,9 @@ test('PostgreSQL migration, document scope and chat visibility remain isolated',
     await client.query("UPDATE documents SET status = 'ready' WHERE id = $1", [uploaded.id]);
     await client.query(`INSERT INTO document_chunks (document_id, ordinal, content, source_start_line, source_end_line)
       VALUES ($1, 1, '隔离资料', 1, 1)`, [uploaded.id]);
+    await bases.update(actor, second.id, { enabledForChat: false });
     assert.equal((await search.searchForAgent('隔离资料')).hits.length, 0);
-    await bases.update(actor, second.id, { name: '已更名' });
+    await bases.update(actor, second.id, { name: '已更名', enabledForChat: true });
     assert.equal((await bases.get(second.id)).enabledForChat, true);
     assert.equal((await search.searchForAgent('隔离资料')).hits.length, 1, 'ready documents enter chat retrieval automatically');
     assert.equal((await search.diagnose('隔离资料', 5, undefined)).results.length, 0);
@@ -186,7 +222,39 @@ test('PostgreSQL migration, document scope and chat visibility remain isolated',
     await bases.archive(actor, second.id);
     assert.equal((await search.searchForAgent('隔离资料')).hits.length, 0);
     await assert.rejects(documents.upload(actor, file, '拒绝上传', second.id), (error) => error.getStatus() === 404);
-    await assert.rejects(bases.archive(actor, defaultBase.id), (error) => error.getStatus() === 409);
+    const legacy = (await documents.list(50, 0))[0];
+    await client.query(`INSERT INTO document_chunks (document_id, ordinal, content, source_start_line, source_end_line)
+      VALUES ($1, 1, '默认归档测试资料', 1, 1)`, [legacy.id]);
+    assert.equal((await search.searchForAgent('默认归档测试资料')).hits.length, 1);
+    const version = (await client.query(`INSERT INTO knowledge_index_versions
+      (knowledge_base_id,status,config,input_snapshot,created_by)
+      VALUES ($1,'ready','{}','[]',$2) RETURNING id`, [defaultBase.id, actor])).rows[0];
+    await client.query(`INSERT INTO index_chunks (version_id,document_id,document_title,original_filename,ordinal,kind,
+      heading_path,content,search_content,search_vector,source_locator)
+      VALUES ($1,$2,'原有资料','old.md',1,'general','','默认归档测试资料','默认归档测试资料',
+        to_tsvector('simple','默认归档测试资料'),'{}')`, [version.id, legacy.id]);
+    await client.query('UPDATE knowledge_bases SET active_index_version_id=$2 WHERE id=$1', [defaultBase.id, version.id]);
+    assert.equal((await versionSearch.search('默认归档测试资料', 5)).hits.length, 1);
+    const documentRows = (await client.query('SELECT * FROM documents WHERE knowledge_base_id=$1 ORDER BY id', [defaultBase.id])).rows;
+    const chunkRows = (await client.query('SELECT * FROM document_chunks WHERE document_id=$1 ORDER BY id', [legacy.id])).rows;
+    const indexRows = (await client.query('SELECT * FROM knowledge_index_versions WHERE knowledge_base_id=$1 ORDER BY id', [defaultBase.id])).rows;
+    const indexChunks = (await client.query('SELECT * FROM index_chunks WHERE version_id=$1 ORDER BY id', [version.id])).rows;
+    assert.deepEqual(await bases.archive(actor, defaultBase.id), { id: defaultBase.id, archived: true });
+    const archived = await bases.get(defaultBase.id);
+    assert.ok(archived.archivedAt); assert.equal(archived.enabledForChat, false); assert.equal(archived.isDefault, true);
+    assert.equal(String(archived.activeIndexVersionId), String(version.id));
+    assert.equal((await search.searchForAgent('默认归档测试资料')).hits.length, 0);
+    assert.equal((await versionSearch.search('默认归档测试资料', 5)).hits.length, 0);
+    assert.equal((await search.diagnose('默认归档测试资料', 5, undefined)).results.length, 0);
+    assert.deepEqual((await client.query('SELECT * FROM documents WHERE knowledge_base_id=$1 ORDER BY id', [defaultBase.id])).rows, documentRows);
+    assert.deepEqual((await client.query('SELECT * FROM document_chunks WHERE document_id=$1 ORDER BY id', [legacy.id])).rows, chunkRows);
+    assert.deepEqual((await client.query('SELECT * FROM knowledge_index_versions WHERE knowledge_base_id=$1 ORDER BY id', [defaultBase.id])).rows, indexRows);
+    assert.deepEqual((await client.query('SELECT * FROM index_chunks WHERE version_id=$1 ORDER BY id', [version.id])).rows, indexChunks);
+    for (const baseId of [undefined, defaultBase.id]) {
+      await assert.rejects(documents.upload(actor, file, '拒绝写入已归档默认库', baseId), error => error.getStatus() === 404);
+    }
+    await assert.rejects(bases.archive(actor, defaultBase.id), error => error.getStatus() === 404);
+    assert.equal((await client.query("SELECT count(*)::int AS count FROM audit_logs WHERE action='knowledge_base.archived' AND target_id=$1", [String(defaultBase.id)])).rows[0].count, 1);
   } finally {
     await client.query('ROLLBACK');
     await client.end();

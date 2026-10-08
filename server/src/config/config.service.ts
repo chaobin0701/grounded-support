@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { AppConfig, EmbeddingConfig, JwtConfig, LlmConfig, readConfigEnvironment, SecurityConfig } from './config.schema';
+import { readAgentConfiguration } from './agent-config';
 
 @Injectable()
 export class AppConfigService {
   readonly config: AppConfig;
+  readonly agent = readAgentConfiguration();
 
   constructor() {
     this.config = readConfigEnvironment();

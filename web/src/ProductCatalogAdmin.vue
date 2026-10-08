@@ -109,7 +109,7 @@ onMounted(() => { void loadProducts(); });
 
 <template>
   <section>
-    <AdminPageHeader eyebrow="工具数据" title="产品管理" description="数据库中的统一产品目录，同时供官网产品列表和 Agent 产品工具使用。">
+    <AdminPageHeader title="产品管理">
       <template #actions><button type="button" class="ui-button" :disabled="loading" @click="loadProducts"><RefreshCw :size="15" :class="{ 'animate-spin': loading }" /> 刷新</button><button type="button" class="ui-button ui-button-primary" @click="openCreate"><Plus :size="15" /> 添加产品</button></template>
     </AdminPageHeader>
     <div v-if="notice" class="my-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{{ notice }}</div>

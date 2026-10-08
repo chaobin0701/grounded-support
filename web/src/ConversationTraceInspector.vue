@@ -63,6 +63,7 @@ const skill = computed(
       (step) => step.type === 'skill_selection',
     )?.skillId ?? '—',
 );
+const loadedSkills = computed(() => context.value.loadedSkills?.map(item => item.name || item.id).join('、') || (skill.value !== '—' ? `历史策略：${skill.value}` : '未加载（使用默认提示词）'));
 const traceStatus = computed(() =>
   props.trace?.status === 'failed'
     ? '执行失败'
@@ -81,6 +82,8 @@ function stepLabel(step: TraceStep) {
     return step.stage === 'final_answer' ? '生成回答' : '模型规划';
   if (step.type === 'preflight') return '预检索';
   if (step.type === 'skill_selection') return '选择能力';
+  if (step.type === 'skill_loaded') return '读取专项 Skill';
+  if (step.type === 'agent_setup') return 'Agent 默认配置';
   return '格式校验';
 }
 async function loadDebug() {
@@ -192,8 +195,8 @@ function copyIds() {
           <dl>
             <dt>模型</dt>
             <dd>{{ trace.model || '—' }}</dd>
-            <dt>Skill</dt>
-            <dd>{{ skill }}</dd>
+            <dt>加载的 Skill</dt>
+            <dd>{{ loadedSkills }}</dd>
             <dt>输入 / 输出</dt>
             <dd>
               {{ trace.inputTokens ?? '—' }} /

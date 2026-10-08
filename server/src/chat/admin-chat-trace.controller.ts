@@ -40,6 +40,19 @@ export class AdminChatTraceController {
       : {};
     delete context.systemPrompt;
     delete context.modelCalls;
+    // Skill instructions are internal prompt material, not ordinary trace data.
+    if (Array.isArray(context.toolResults)) context.toolResults = context.toolResults.map(item => {
+      if (item && typeof item === 'object' && item.tool === 'load_skill') return { tool: 'load_skill', result: '专项指导已加载，完整内容需调试权限' };
+      return item;
+    });
+    if (Array.isArray(context.executionSteps)) context.executionSteps = context.executionSteps.map(item => {
+      if (item && typeof item === 'object' && item.name === 'load_skill') return { ...item, result: '专项指导已加载，完整内容需调试权限' };
+      return item;
+    });
+    if (Array.isArray(context.agentTranscript)) context.agentTranscript = context.agentTranscript.map(item => {
+      if (item && typeof item === 'object' && item.toolName === 'load_skill') return { ...item, content: '专项指导已加载，完整内容需调试权限' };
+      return item;
+    });
     return { ...trace, contextSnapshot: context, rawModelOutput: null };
   }
 }

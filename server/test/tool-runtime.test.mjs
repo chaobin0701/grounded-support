@@ -25,8 +25,7 @@ test('tool execution validates input and records a normalized trace', async () =
 });
 
 test('tool execution rejects duplicate calls and truncates model-facing results', async () => {
-  const policy = new ToolPolicy();
-  policy.maxResultChars = 5;
+  const policy = new ToolPolicy({ agent: { runtime: { maxToolResultChars: 5 } } });
   const runtime = new ToolExecutionService({ get: () => ({
     name: 'example',
     inputSchema: { safeParse: (input) => ({ success: true, data: input }) },
@@ -43,8 +42,7 @@ test('tool execution rejects duplicate calls and truncates model-facing results'
 });
 
 test('tool execution converts timeout and unknown tool failures to safe error codes', async () => {
-  const policy = new ToolPolicy();
-  policy.timeoutMs = 10;
+  const policy = new ToolPolicy({ agent: { runtime: { toolTimeoutMs: 10 } } });
   const runtime = new ToolExecutionService({ get: (name) => {
     if (name === 'missing') throw new Error('not found');
     return {
@@ -59,14 +57,14 @@ test('tool execution converts timeout and unknown tool failures to safe error co
   assert.equal(unknown.result.errorCode, 'unknown_tool');
 });
 
-test('tool execution enforces a skill tool allowlist and call limit', async () => {
+test('tool execution enforces the Agent tool allowlist and call limit', async () => {
   const tool = (name) => ({
     name,
     inputSchema: { safeParse: (input) => ({ success: true, data: input }) },
     execute: async () => ({ success: true, content: name }),
   });
   const runtime = new ToolExecutionService({ get: (name) => tool(name) }, new ToolPolicy());
-  const state = runtime.createStateForSkill(['allowed'], 1);
+  const state = runtime.createStateForAgent(['allowed'], 1);
   const denied = await runtime.execute('blocked', {}, context, state);
   assert.equal(denied.result.errorCode, 'tool_not_allowed');
   const allowed = await runtime.execute('allowed', {}, context, state);

@@ -10,15 +10,18 @@ import { ProductCatalogService } from './product-catalog/product-catalog.service
 import { ToolExecutionService } from './tool-execution';
 import { ToolPolicy } from './tool-policy';
 import { ToolRegistry } from './tool-registry';
+import { SkillsModule } from '../skills/skills.module';
+import { LoadSkillTool } from './load-skill.tool';
 
 @Module({
-  imports: [DocumentModule, AdminModule],
+  imports: [DocumentModule, AdminModule, SkillsModule],
   providers: [
     ProductCatalogService,
     ProductCategoryTool,
     ProductListTool,
     ProductDetailTool,
     KnowledgeSearchTool,
+    LoadSkillTool,
     ToolPolicy,
     ToolExecutionService,
     ToolRegistry,
@@ -32,10 +35,11 @@ export class ToolsModule implements OnModuleInit {
     private readonly productCategory: ProductCategoryTool,
     private readonly productList: ProductListTool,
     private readonly productDetail: ProductDetailTool,
+    private readonly loadSkill: LoadSkillTool,
   ) {}
 
   onModuleInit(): void {
-    const tools: AgentTool[] = [this.knowledgeSearch, this.productCategory, this.productList, this.productDetail];
+    const tools: AgentTool[] = [this.knowledgeSearch, this.productCategory, this.productList, this.productDetail, this.loadSkill];
     for (const tool of tools) this.registry.register(tool);
   }
 }

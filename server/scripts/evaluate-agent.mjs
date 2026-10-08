@@ -6,8 +6,7 @@ import { AgentLoop } from '../dist/ai/agent/agent-loop.js';
 import { AgentRunner } from '../dist/ai/agent/agent-runner.js';
 import { ToolExecutionService } from '../dist/ai/tools/tool-execution.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
-import { customerSupportSkill } from '../dist/ai/skills/built-in/customer-support.skill.js';
-import { productConsultationSkill } from '../dist/ai/skills/built-in/product-consultation.skill.js';
+import { DEFAULT_AGENT_CONFIGURATION, parseAgentConfiguration } from '../dist/config/agent-config.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const expectedPath = path.join(root, 'samples/eval/expected.json');
@@ -41,14 +40,18 @@ function createCaseRuntime(testCase) {
   const llm = { model: 'offline-eval-model', completeDetailed: async () => { const next = responses.shift(); return { content: JSON.stringify(next ?? { type: 'final', status: 'refused', answer: '无法确定，建议联系人工。', citationIds: [], productIds: [] }), model: 'offline-eval-model', inputTokens: 100, outputTokens: 20, totalTokens: 120 }; } };
   const tools = [fixtureTool('search_knowledge', testCase.id === 'unsupported-refusal' ? { hits: [] } : { hits: [hit] }, testCase.id === 'unsupported-refusal' ? '没有找到相关资料。' : '[12] 退货政策：七天内可申请退货。'), fixtureTool('mcp_product_catalog_list_products', { total: 1, products: [h2] }), fixtureTool('mcp_product_catalog_get_product_detail', h2Detail)];
   const registry = { get: (name) => { const tool = tools.find((item) => item.name === name); if (!tool) throw new Error(`unknown fixture tool: ${name}`); return tool; } };
-  const runner = new AgentRunner(new AgentLoop(llm, new ContextBuilder(), new ToolExecutionService(registry, new ToolPolicy())), new ContextBuilder());
-  return { runner, skill: testCase.skill === 'product_consultation' ? productConsultationSkill : customerSupportSkill };
+  const agent = structuredClone(DEFAULT_AGENT_CONFIGURATION);
+  Object.assign(agent.runtime, testCase.runtime ?? {});
+  const config = { agent: parseAgentConfiguration(agent) };
+  const builder = new ContextBuilder(config);
+  const runner = new AgentRunner(new AgentLoop(llm, builder, new ToolExecutionService(registry, new ToolPolicy(config)), undefined, config), builder, config);
+  return { runner };
 }
 
 export async function evaluateCase(testCase) {
   const started = Date.now();
-  const { runner, skill } = createCaseRuntime(testCase);
-  const result = await runner.run({ question: testCase.question, summary: '', recentHistory: [], skill });
+  const { runner } = createCaseRuntime(testCase);
+  const result = await runner.run({ question: testCase.question, summary: '', recentHistory: [] });
   const expected = testCase.expected;
   const traces = result.toolCalls;
   const keys = traces.map((trace) => JSON.stringify({ name: trace.name, arguments: trace.arguments }));
@@ -60,11 +63,13 @@ export async function evaluateCase(testCase) {
     productId: !expected.productId || result.products.some((product) => product.id === expected.productId),
     noDuplicateToolCalls: !expected.noDuplicateToolCalls || duplicateCount === 0,
     duplicateCount: expected.duplicateCount === undefined || duplicateCount >= expected.duplicateCount,
-    maxToolCalls: expected.maxToolCalls === undefined || traces.length <= expected.maxToolCalls,
+    // Policy-rejected attempts are observable traces, but never execute a tool.
+    maxToolCalls: expected.maxToolCalls === undefined || traces.filter(trace => trace.ok).length <= expected.maxToolCalls,
     toolCallCountAtMost: expected.toolCallCountAtMost === undefined || traces.length <= expected.toolCallCountAtMost,
+    toolError: !expected.toolError || traces.some(trace => trace.errorCode === expected.toolError),
     sessionEvidenceMustNotContain: !expected.sessionEvidenceMustNotContain || !JSON.stringify(result.contextSnapshot).includes(expected.sessionEvidenceMustNotContain),
   };
-  return { caseId: testCase.id, passed: Object.values(checks).every(Boolean), checks, refused: result.result.refused, toolCalls: { count: traces.length, duplicates: duplicateCount, names: traces.map((trace) => trace.name) }, usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens }, latencyMs: Date.now() - started, skill: result.skill };
+  return { caseId: testCase.id, passed: Object.values(checks).every(Boolean), checks, refused: result.result.refused, toolCalls: { count: traces.length, succeeded: traces.filter(trace => trace.ok).length, duplicates: duplicateCount, names: traces.map((trace) => trace.name) }, usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens }, latencyMs: Date.now() - started, loadedSkills: result.loadedSkills };
 }
 
 export async function evaluate(cases, onlyCase) {

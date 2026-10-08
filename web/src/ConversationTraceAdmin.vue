@@ -3,12 +3,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  List,
   LoaderCircle,
   RefreshCw,
   Search,
 } from '@lucide/vue';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import {
   adminApi,
@@ -28,12 +27,26 @@ import AdminPageHeader from './ui/AdminPageHeader.vue';
 import MarkdownContent from './ui/MarkdownContent.vue';
 import ToastNotice from './ui/ToastNotice.vue';
 import UiDrawer from './ui/UiDrawer.vue';
+import {
+  conversationDetailLocation,
+  conversationListPath,
+  conversationListQuery,
+  conversationUuid as uuid,
+  queryString,
+  readConversationListState,
+} from './conversation-navigation';
 
 const props = defineProps<{ token: string; canDebug?: boolean }>();
 const route = useRoute();
 const router = useRouter();
 const page = ref<HTMLElement | null>(null);
+const listScroller = ref<HTMLElement | null>(null);
 const wideLayout = ref(false);
+const isDetailPage = computed(() => typeof route.params.conversationId === 'string');
+const backTo = computed(() => router.resolve({
+  path: conversationListPath,
+  query: conversationListQuery(readConversationListState(route.query)),
+}).href);
 const sessions = ref<ConversationListItem[]>([]);
 const selectedId = ref('');
 const selectedConversation = ref<ConversationDetail | null>(null);
@@ -50,12 +63,12 @@ const visitorOptions = ref<
 const offset = ref(0);
 const hasMore = ref(false);
 const loading = ref(false);
+const lookupLoading = ref(false);
 const detailLoading = ref(false);
 const traceLoading = ref(false);
 const error = ref('');
 const traceError = ref('');
 const inspectorOpen = ref(false);
-const listOpen = ref(true);
 const expandedAnswers = ref(new Set<number>());
 const notice = ref('');
 const noticeType = ref<'success' | 'error'>('success');
@@ -63,6 +76,8 @@ let listRequest = 0;
 let detailRequest = 0;
 let traceRequest = 0;
 let lookupRequest = 0;
+let savedListScroll = 0;
+let appliedPagePath = '';
 let observer: ResizeObserver | undefined;
 const turns = computed(() =>
   selectedConversation.value
@@ -82,8 +97,20 @@ const clientLabel: Record<string, string> = {
   feishu: '飞书',
   api: 'API',
 };
-const uuid =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function listState() {
+  return { query: query.value, visitorId: visitorId.value, device: device.value, timeRange: timeRange.value, offset: offset.value };
+}
+function detailLocation(id: string, traceId?: string) {
+  return conversationDetailLocation(id, traceId, readConversationListState(route.query));
+}
+function rememberListScroll() {
+  savedListScroll = listScroller.value?.scrollTop ?? 0;
+  lookupRequest++;
+}
+function focusHeading() {
+  page.value?.querySelector<HTMLElement>('h1')?.focus({ preventScroll: true });
+}
 
 function date(value: string | null) {
   return value
@@ -131,23 +158,19 @@ function copyIds(traceId: string | null, conversationId: string) {
   );
 }
 function copyLink() {
-  const href = router.resolve({
-    path: '/admin/conversations',
-    query: {
-      conversationId: selectedId.value,
-      ...(selectedTrace.value ? { traceId: selectedTrace.value.id } : {}),
-    },
-  }).href;
+  const href = router.resolve(detailLocation(selectedId.value, selectedTrace.value?.id)).href;
   void copy(new URL(href, window.location.origin).href, '定位链接');
 }
 function syncRoute(traceId?: string) {
-  void router.replace({
-    path: '/admin/conversations',
-    query: {
-      conversationId: selectedId.value,
-      ...(traceId ? { traceId } : {}),
-    },
-  });
+  void router.replace(detailLocation(selectedId.value, traceId));
+}
+function closeInspector() {
+  traceRequest++;
+  traceLoading.value = false;
+  selectedTrace.value = null;
+  selectedTurnId.value = null;
+  inspectorOpen.value = false;
+  syncRoute();
 }
 function clearSelection() {
   detailRequest++;
@@ -162,9 +185,15 @@ function clearSelection() {
 }
 function reload() {
   offset.value = 0;
-  void loadSessions();
+  savedListScroll = 0;
+  void updateListRoute();
 }
-async function loadSessions(autoSelect = true) {
+async function updateListRoute() {
+  const target = { path: conversationListPath, query: conversationListQuery(listState()) };
+  if (router.resolve(target).fullPath === route.fullPath) await loadSessions();
+  else await router.push(target);
+}
+async function loadSessions() {
   const request = ++listRequest;
   loading.value = true;
   error.value = '';
@@ -180,21 +209,18 @@ async function loadSessions(autoSelect = true) {
     sessions.value = result.items;
     hasMore.value = result.pagination.hasMore;
     visitorOptions.value = result.filters;
-    if (
-      autoSelect &&
-      !sessions.value.some((item) => item.id === selectedId.value)
-    ) {
-      if (sessions.value[0]) await chooseConversation(sessions.value[0].id);
-      else {
-        clearSelection();
-        void router.replace({ path: '/admin/conversations', query: {} });
-      }
-    }
   } catch (cause) {
-    if (request === listRequest)
+    if (request === listRequest) {
+      sessions.value = [];
+      hasMore.value = false;
       error.value = cause instanceof Error ? cause.message : '加载会话失败';
+    }
   } finally {
-    if (request === listRequest) loading.value = false;
+    if (request === listRequest) {
+      loading.value = false;
+      await nextTick();
+      if (listScroller.value) listScroller.value.scrollTop = savedListScroll;
+    }
   }
 }
 async function chooseConversation(id: string, focusTraceId?: string) {
@@ -214,8 +240,6 @@ async function chooseConversation(id: string, focusTraceId?: string) {
     const result = await adminApi.conversation(props.token, id);
     if (request !== detailRequest) return;
     selectedConversation.value = result;
-    if (window.innerWidth < 800) listOpen.value = false;
-    syncRoute(focusTraceId);
     if (focusTraceId) {
       selectedTurnId.value =
         turns.value.find((turn) => turn.trace?.id === focusTraceId)?.user.id ??
@@ -256,6 +280,7 @@ function viewTurn(turn: ConversationTurn) {
   if (turn.trace) void chooseTrace(turn.trace.id);
 }
 async function search() {
+  if (loading.value || lookupLoading.value) return;
   const id = query.value.trim();
   if (!uuid.test(id)) {
     reload();
@@ -264,6 +289,7 @@ async function search() {
   // Resolve trace IDs without fetching privileged model context.
   const lookup = ++lookupRequest;
   const selection = detailRequest;
+  lookupLoading.value = true;
   try {
     let conversationId = id;
     let traceId: string | undefined;
@@ -278,24 +304,26 @@ async function search() {
       traceId = id;
     }
     if (lookup !== lookupRequest || selection !== detailRequest) return;
-    await chooseConversation(conversationId, traceId);
+    rememberListScroll();
+    await router.push(conversationDetailLocation(conversationId, traceId, listState()));
   } catch (cause) {
     if (lookup !== lookupRequest || selection !== detailRequest) return;
     notify(
       cause instanceof Error ? cause.message : '未找到会话或轨迹',
       'error',
     );
+  } finally {
+    if (lookup === lookupRequest) lookupLoading.value = false;
   }
 }
 async function refresh() {
-  const id = selectedId.value;
-  const traceId = selectedTrace.value?.id;
-  await loadSessions(false);
-  if (id && selectedId.value === id) await chooseConversation(id, traceId);
+  if (isDetailPage.value) await chooseConversation(String(route.params.conversationId), queryString(route.query.traceId));
+  else await loadSessions();
 }
 function nextPage(direction: number) {
   offset.value = Math.max(0, offset.value + direction * 30);
-  void loadSessions();
+  savedListScroll = 0;
+  void updateListRoute();
 }
 function answer(turn: ConversationTurn) {
   return turn.assistant?.content || turn.trace?.finalAnswer || '';
@@ -315,46 +343,93 @@ function toolCount(turn: ConversationTurn) {
     ? turn.assistant.toolSteps.length
     : null;
 }
+async function applyRoute() {
+  const lookup = ++lookupRequest;
+  lookupLoading.value = false;
+  const pageChanged = route.path !== appliedPagePath;
+  appliedPagePath = route.path;
+  const id = queryString(route.params.conversationId);
+  const traceId = queryString(route.query.traceId);
+  if (isDetailPage.value) {
+    listRequest++;
+    loading.value = false;
+    if (!uuid.test(id)) {
+      clearSelection();
+      error.value = '会话 ID 无效，请返回列表重新选择。';
+      return;
+    }
+    if (selectedId.value !== id) await chooseConversation(id, uuid.test(traceId) ? traceId : undefined);
+    else if (uuid.test(traceId) && selectedTrace.value?.id !== traceId) {
+      selectedTurnId.value = turns.value.find(turn => turn.trace?.id === traceId)?.user.id ?? null;
+      await chooseTrace(traceId);
+    } else if (!traceId) {
+      traceRequest++;
+      traceLoading.value = false;
+      selectedTrace.value = null;
+      selectedTurnId.value = null;
+      inspectorOpen.value = false;
+    }
+  } else {
+    clearSelection();
+    const state = readConversationListState(route.query);
+    const legacyId = queryString(route.query.conversationId);
+    // Existing dashboard links and bookmarked trace URLs remain usable.
+    if (uuid.test(legacyId)) {
+      await router.replace(conversationDetailLocation(legacyId, traceId, state));
+      return;
+    }
+    if (uuid.test(traceId)) {
+      try {
+        const trace = await adminApi.chatTrace(props.token, traceId);
+        if (lookup !== lookupRequest) return;
+        if (!trace.conversationId) throw new Error('这条轨迹没有关联会话');
+        await router.replace(conversationDetailLocation(trace.conversationId, traceId, state));
+        return;
+      } catch (cause) {
+        if (lookup !== lookupRequest) return;
+        notify(cause instanceof Error ? cause.message : '无法定位轨迹所属会话', 'error');
+      }
+    }
+    query.value = state.query;
+    visitorId.value = state.visitorId;
+    device.value = state.device;
+    timeRange.value = state.timeRange;
+    offset.value = state.offset;
+    await loadSessions();
+  }
+  if (lookup !== lookupRequest) return;
+  await nextTick();
+  const heading = page.value?.querySelector<HTMLElement>('h1');
+  heading?.setAttribute('tabindex', '-1');
+  if (pageChanged && !inspectorOpen.value) focusHeading();
+}
+watch(() => route.fullPath, applyRoute);
 onMounted(async () => {
   observer = new ResizeObserver(([entry]) => {
-    wideLayout.value = (entry?.contentRect.width ?? 0) >= 1320;
+    wideLayout.value = (entry?.contentRect.width ?? 0) >= 1060;
   });
   if (page.value) observer.observe(page.value);
-  await loadSessions(false);
-  const conversationId =
-    typeof route.query.conversationId === 'string'
-      ? route.query.conversationId
-      : '';
-  const traceId =
-    typeof route.query.traceId === 'string' ? route.query.traceId : '';
-  if (conversationId && uuid.test(conversationId))
-    await chooseConversation(
-      conversationId,
-      uuid.test(traceId) ? traceId : undefined,
-    );
-  else if (traceId && uuid.test(traceId)) {
-    query.value = traceId;
-    await search();
-  } else if (sessions.value[0]) await chooseConversation(sessions.value[0].id);
+  await applyRoute();
 });
 onUnmounted(() => {
   observer?.disconnect();
   listRequest++;
   detailRequest++;
   traceRequest++;
+  lookupRequest++;
 });
 </script>
 
 <template>
   <section ref="page" class="conversation-page">
     <AdminPageHeader
-      eyebrow="运行记录"
-      title="会话管理"
-      description="查看访客会话，按轮次检查回答、执行过程与模型上下文。"
+      :title="isDetailPage ? '会话详情' : '会话管理'"
+      :back-to="isDetailPage ? backTo : undefined"
+      back-label="返回会话列表"
       ><template #actions
         ><button
           class="ui-button secondary"
-          :disabled="loading || detailLoading"
+          :disabled="loading || lookupLoading || detailLoading || (isDetailPage && !uuid.test(String(route.params.conversationId)))"
           @click="refresh"
         >
           <RefreshCw :size="15" />刷新
@@ -362,7 +437,7 @@ onUnmounted(() => {
       ></AdminPageHeader
     >
     <ToastNotice :message="notice" :type="noticeType" @dismiss="notice = ''" />
-    <form class="conversation-toolbar" @submit.prevent="search">
+    <form v-if="!isDetailPage" class="conversation-toolbar" @submit.prevent="search">
       <label class="conversation-search"
         ><Search :size="15" /><input
           v-model="query"
@@ -371,8 +446,9 @@ onUnmounted(() => {
           aria-label="搜索会话或轨迹" /><button
           type="submit"
           aria-label="执行搜索"
+          :disabled="loading || lookupLoading"
         >
-          <ChevronRight :size="16" /></button></label
+          <LoaderCircle v-if="lookupLoading" class="spin" :size="16" /><ChevronRight v-else :size="16" /></button></label
       ><select
         v-model="visitorId"
         class="ui-input"
@@ -411,50 +487,33 @@ onUnmounted(() => {
       </select>
     </form>
     <p v-if="error" class="conversation-error" role="alert">{{ error }}</p>
-    <div
-      class="session-workspace"
-      :class="{
-        'with-inspector': wideLayout && inspectorOpen,
-        'list-collapsed': !listOpen,
-      }"
-    >
-      <aside class="session-list-panel">
+    <section v-if="!isDetailPage" class="session-list-panel" aria-label="会话列表" :aria-busy="loading">
         <header class="pane-heading">
           <strong>访客会话</strong
           ><span>{{ loading ? '加载中…' : `本页 ${sessions.length} 个` }}</span>
         </header>
-        <div class="session-list">
-          <button
-            v-for="item in sessions"
-            :key="item.id"
-            class="session-item"
-            :class="{ selected: item.id === selectedId }"
-            :aria-pressed="item.id === selectedId"
-            @click="chooseConversation(item.id)"
-          >
-            <strong>{{
-              item.title || item.lastQuestion || '未命名会话'
-            }}</strong
-            ><span class="session-preview">{{
-              item.lastQuestion || '暂无问题'
-            }}</span
-            ><span class="session-meta"
-              ><span>{{ item.turnCount }} 轮 · {{ date(item.updatedAt) }}</span
-              ><i
-                v-if="item.hasFailed"
-                title="存在执行失败的轮次"
-                class="issue-dot"
-              ></i></span
-            ><span class="session-visitor"
-              >{{
-                clientLabel[item.clientType] || item.clientType || '浏览器'
-              }}
-              · 访客 {{ item.visitorSessionId.slice(0, 8) }}</span
-            >
-          </button>
-          <p v-if="!sessions.length && !loading" class="empty-copy">
-            没有匹配的会话
-          </p>
+        <div ref="listScroller" class="session-list" role="region" aria-label="会话记录" tabindex="0">
+          <div v-if="loading" class="conversation-empty" role="status"><LoaderCircle class="spin" :size="20" />正在加载会话…</div>
+          <table v-else-if="sessions.length" class="session-table">
+            <thead><tr><th scope="col">会话</th><th scope="col">访客 / 设备</th><th scope="col">轮数</th><th scope="col">最近更新</th><th scope="col"><span class="visually-hidden">操作</span></th></tr></thead>
+            <tbody>
+              <tr v-for="item in sessions" :key="item.id" class="session-item">
+                <td class="session-summary">
+                  <RouterLink class="session-link" :to="detailLocation(item.id)" @click="rememberListScroll">
+                    <strong :title="item.title || item.lastQuestion || ''">{{ item.title || item.lastQuestion || '未命名会话' }}</strong>
+                    <span class="session-preview" :title="item.lastQuestion || ''">{{ item.lastQuestion || '暂无问题' }}</span>
+                  </RouterLink>
+                  <div class="session-flags"><code :title="item.id">{{ item.id.slice(0, 8) }}</code><span v-if="item.hasFailed" class="session-flag failed">含执行失败</span><span v-if="item.hasRefused" class="session-flag refused">含拒答</span></div>
+                </td>
+                <td class="session-audience"><span :title="item.visitorSessionId">访客 {{ item.visitorSessionId.slice(0, 8) }}</span><small>{{ clientLabel[item.clientType] || item.clientType || '浏览器' }}</small></td>
+                <td class="session-rounds">{{ item.turnCount }}<span class="mobile-unit"> 轮</span></td>
+                <td class="session-date"><time>{{ date(item.updatedAt) }}</time></td>
+                <td class="session-actions"><button class="pane-toggle" :aria-label="`复制会话 ID：${item.id}`" title="复制会话 ID" @click="copy(item.id, '会话 ID')"><Copy :size="15" /></button><RouterLink class="session-detail-link" :to="detailLocation(item.id)" :aria-label="`查看会话：${item.title || item.id}`" @click="rememberListScroll">查看详情<ChevronRight :size="15" aria-hidden="true" /></RouterLink></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-else-if="!error" class="conversation-empty"><p>没有匹配的会话</p><button v-if="query || visitorId || device !== 'all' || timeRange !== 'all' || offset" class="ui-button secondary" @click="query = ''; visitorId = ''; device = 'all'; timeRange = 'all'; reload()">清除筛选</button></div>
+          <div v-else class="conversation-empty"><button class="ui-button secondary" @click="refresh">重新加载</button></div>
         </div>
         <footer class="session-pagination">
           <button
@@ -462,17 +521,18 @@ onUnmounted(() => {
             :disabled="offset === 0 || loading"
             @click="nextPage(-1)"
           >
-            <ChevronLeft :size="15" /></button
+            <ChevronLeft :size="15" />上一页</button
           ><span>第 {{ Math.floor(offset / 30) + 1 }} 页</span
           ><button
             aria-label="下一页"
             :disabled="!hasMore || loading"
             @click="nextPage(1)"
           >
-            <ChevronRight :size="15" />
+            下一页<ChevronRight :size="15" />
           </button>
         </footer>
-      </aside>
+    </section>
+    <div v-else class="session-workspace" :class="{ 'with-inspector': wideLayout && inspectorOpen }">
       <main class="conversation-detail-panel">
         <div v-if="detailLoading" class="conversation-empty" role="status">
           <LoaderCircle class="spin" :size="22" />正在加载会话…
@@ -480,14 +540,6 @@ onUnmounted(() => {
         <template v-else-if="selectedConversation"
           ><header class="conversation-detail-header">
             <div class="conversation-title-row">
-              <button
-                class="pane-toggle"
-                :aria-label="listOpen ? '收起会话列表' : '显示会话列表'"
-                :aria-expanded="listOpen"
-                @click="listOpen = !listOpen"
-              >
-                <List :size="17" />
-              </button>
               <h2>{{ selectedConversation.title || '未命名会话' }}</h2>
               <button
                 class="pane-toggle"
@@ -501,7 +553,7 @@ onUnmounted(() => {
               <code :title="selectedConversation.id">{{
                 selectedConversation.id
               }}</code
-              ><span>{{ date(selectedConversation.updatedAt) }}</span>
+              ><span>更新于 {{ date(selectedConversation.updatedAt) }}</span><span :title="selectedConversation.visitorSessionId">访客 {{ selectedConversation.visitorSessionId.slice(0, 8) }}</span>
             </div>
             <div class="turn-filter">
               <span>{{ turns.length }} 轮对话</span
@@ -572,7 +624,7 @@ onUnmounted(() => {
                 </div>
               </div>
               <footer class="turn-footer">
-                <span
+                  <span
                   >{{ citationCount(turn) }} 个引用<template
                     v-if="toolCount(turn) !== null"
                   >
@@ -610,15 +662,7 @@ onUnmounted(() => {
             </p>
           </div>
         </template>
-        <div v-else class="conversation-empty">
-          <button
-            v-if="!listOpen"
-            class="ui-button secondary"
-            @click="listOpen = true"
-          >
-            显示会话列表</button
-          >选择左侧会话查看消息
-        </div>
+        <div v-else class="conversation-empty"><p>无法加载这个会话</p><RouterLink class="ui-button secondary" :to="backTo">返回会话列表</RouterLink></div>
       </main>
       <aside v-if="wideLayout && inspectorOpen" class="desktop-inspector">
         <ConversationTraceInspector
@@ -627,7 +671,7 @@ onUnmounted(() => {
           :loading="traceLoading"
           :error="traceError"
           :can-debug="canDebug"
-          @close="inspectorOpen = false"
+          @close="closeInspector"
           @copy="copy"
           @link="copyLink"
         />
@@ -636,7 +680,7 @@ onUnmounted(() => {
     <UiDrawer
       :open="inspectorOpen && !wideLayout"
       title="执行轨迹"
-      @update:open="inspectorOpen = $event"
+      @update:open="!$event && closeInspector()"
       ><ConversationTraceInspector
         :show-heading="false"
         :token="token"
@@ -644,7 +688,7 @@ onUnmounted(() => {
         :loading="traceLoading"
         :error="traceError"
         :can-debug="canDebug"
-        @close="inspectorOpen = false"
+        @close="closeInspector"
         @copy="copy"
         @link="copyLink"
     /></UiDrawer>
@@ -664,6 +708,7 @@ onUnmounted(() => {
 .conversation-page :deep(.admin-page-header) {
   flex: none;
 }
+.conversation-page :deep(h1:focus) { outline: none; box-shadow: none; }
 .conversation-toolbar {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(140px, 190px) 130px 140px;
@@ -672,8 +717,8 @@ onUnmounted(() => {
   margin-bottom: 18px;
 }
 .conversation-toolbar .ui-input {
-  height: 36px;
-  font-size: 12px;
+  height: 40px;
+  font-size: 13px;
   min-width: 0;
 }
 .conversation-search {
@@ -710,11 +755,11 @@ onUnmounted(() => {
   flex: none;
   margin: 0 0 14px;
   color: #bd3d3d;
-  font-size: 12px;
+  font-size: 13px;
 }
 .session-workspace {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   border: 1px solid #e3e8ef;
@@ -723,61 +768,62 @@ onUnmounted(() => {
   background: #fff;
 }
 .session-workspace.with-inspector {
-  grid-template-columns: 240px minmax(0, 1fr) 390px;
-}
-.session-workspace.list-collapsed {
-  grid-template-columns: minmax(0, 1fr);
-}
-.session-workspace.list-collapsed.with-inspector {
   grid-template-columns: minmax(0, 1fr) 390px;
-}
-.list-collapsed .session-list-panel {
-  display: none;
 }
 .session-list-panel {
   display: flex;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  border-right: 1px solid #e7ecf2;
-  background: #fcfdfe;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
 }
 .pane-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex: none;
-  padding: 16px 14px;
+  padding: 16px 20px;
   border-bottom: 1px solid #e7ecf2;
-  font-size: 12px;
+  font-size: 13px;
 }
 .pane-heading > span {
-  font-size: 10px;
-  color: #98a2b3;
+  font-size: 12px;
+  color: var(--muted);
 }
 .session-list {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
+  isolation: isolate;
+  scroll-padding-top: 44px;
 }
-.session-item {
-  display: block;
-  width: 100%;
-  padding: 14px;
-  border: 0;
-  border-bottom: 1px solid #edf0f4;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
+/* Keep a native table so header/body columns stay aligned. Separate borders
+   paint correctly when the sticky cells cover rows scrolling underneath. */
+.session-table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
+.session-table th { position: sticky; top: 0; z-index: 2; padding: 12px 20px; background: var(--canvas); color: var(--muted); font-size: 12px; font-weight: 500; text-align: left; box-shadow: inset 0 -1px 0 var(--line); }
+.session-table th:first-child { width: 45%; }
+.session-table th:nth-child(2) { width: 17%; }
+.session-table th:nth-child(3) { width: 7%; }
+.session-table th:nth-child(4) { width: 15%; }
+.session-table th:last-child { width: 16%; }
+.session-table td { padding: 14px 20px; border-top: 1px solid var(--line); font-size: 13px; }
+.session-item { position: relative; transition: background .18s; }
 .session-item:hover {
-  background: #f5f8fc;
+  background: var(--canvas);
 }
-.session-item.selected {
-  background: #eef4ff;
-  box-shadow: inset 3px 0 #2457e6;
-}
+.session-item:focus-within { background: var(--color-brand-50); }
+.session-link { display: block; color: var(--ink); text-decoration: none; }
+.session-link::after { content: ''; position: absolute; inset: 0; }
+.session-link:hover { color: var(--pine); }
+.session-actions { position: relative; z-index: 1; }
+.session-actions .pane-toggle { display: inline-grid; vertical-align: middle; }
+.session-detail-link { display: inline-flex; align-items: center; gap: 3px; padding: 0 5px; min-height: 36px; vertical-align: middle; color: var(--pine); font-size: 12px; white-space: nowrap; text-decoration: none; border-radius: 5px; }
+.session-detail-link:hover { background: var(--color-brand-50); }
 .session-item strong,
 .session-preview {
   display: block;
@@ -786,52 +832,46 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .session-item strong {
-  font-size: 12px;
-  color: #27344a;
+  font-size: 14px;
+  color: inherit;
   font-weight: 600;
 }
 .session-preview {
-  margin: 6px 0 10px;
-  color: #8a96a8;
-  font-size: 11px;
+  margin: 5px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
 }
-.session-meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #8a96a8;
-  font-size: 10px;
-}
-.issue-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #dd5c5c;
-}
-.session-visitor {
-  display: block;
-  margin-top: 5px;
-  font-size: 10px;
-  color: #98a2b3;
-}
+.session-flags { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.session-flags code { font-size: 11px; }
+.session-flag { padding: 2px 5px; border-radius: 4px; }
+.session-flag.failed { color: #bd3d3d; background: #ffeded; }
+.session-flag.refused { color: #9a6800; background: #fff5df; }
+.session-audience span, .session-audience small { display: block; }
+.session-audience small { margin-top: 5px; color: var(--muted); font-size: 12px; }
+.session-date { color: var(--muted); font-variant-numeric: tabular-nums; }
+.session-rounds { font-variant-numeric: tabular-nums; }
+.mobile-unit { display: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .session-pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex: none;
-  min-height: 45px;
-  padding: 0 10px;
+  min-height: 60px;
+  padding: 0 20px;
   border-top: 1px solid #e7ecf2;
-  font-size: 11px;
-  color: #98a2b3;
+  font-size: 12px;
+  color: var(--muted);
 }
 .session-pagination button,
 .pane-toggle {
-  display: grid;
-  place-items: center;
-  min-width: 30px;
-  min-height: 30px;
-  padding: 0;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 6px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -872,22 +912,20 @@ onUnmounted(() => {
   font-size: 15px;
   font-weight: 600;
   line-height: 1.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .conversation-metadata {
   display: flex;
   align-items: center;
   gap: 12px;
   margin: 8px 0;
-  color: #98a2b3;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   flex-wrap: wrap;
 }
 .conversation-metadata code {
   font:
-    10px ui-monospace,
+    12px ui-monospace,
     monospace;
   overflow-wrap: anywhere;
 }
@@ -896,13 +934,13 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 11px;
-  color: #8a96a8;
+  font-size: 12px;
+  color: var(--muted);
 }
 .turn-filter .ui-input {
   width: 146px;
-  height: 30px;
-  font-size: 11px;
+  height: 36px;
+  font-size: 12px;
 }
 .turn-list {
   flex: 1;
@@ -925,8 +963,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
-  color: #98a2b3;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
 }
 .turn-heading > span:first-child {
   color: #667085;
@@ -936,7 +974,7 @@ onUnmounted(() => {
   padding: 3px 7px;
   border-radius: 5px;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: 12px;
 }
 .turn-status.answered {
   color: #248554;
@@ -971,7 +1009,7 @@ onUnmounted(() => {
   margin: 0;
   color: #27344a;
   line-height: 1.8;
-  font-size: 13px;
+  font-size: 14px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1018,8 +1056,8 @@ onUnmounted(() => {
   gap: 12px;
   padding-top: 15px;
   margin-top: 14px;
-  color: #98a2b3;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 12px;
   flex-wrap: wrap;
 }
 .turn-footer > div {
@@ -1061,8 +1099,10 @@ onUnmounted(() => {
   justify-content: center;
   gap: 12px;
   flex: 1;
-  color: #98a2b3;
-  font-size: 12px;
+  min-height: 160px;
+  flex-direction: column;
+  color: var(--muted);
+  font-size: 13px;
   padding: 25px;
 }
 .empty-copy {
@@ -1084,6 +1124,11 @@ onUnmounted(() => {
     animation: none;
   }
 }
+/* In very short/landscape windows, let the existing outer content scroller
+   expose the whole panel instead of shrinking away its records or pagination. */
+@media (max-height:540px) {
+  .session-list-panel { min-height: 220px; }
+}
 @container (max-width:850px) {
   .conversation-toolbar {
     grid-template-columns: 1fr 1fr 1fr;
@@ -1091,9 +1136,13 @@ onUnmounted(() => {
   .conversation-search {
     grid-column: 1/-1;
   }
-  .session-workspace {
-    grid-template-columns: 210px minmax(0, 1fr);
-  }
+  .session-table th, .session-table td { padding-left: 12px; padding-right: 12px; }
+  .session-table th:first-child { width: 39%; }
+  .session-table th:nth-child(2) { width: 19%; }
+  .session-table th:nth-child(3) { width: 8%; }
+  .session-table th:nth-child(4) { width: 18%; }
+  .session-table th:last-child { width: 16%; }
+  .session-detail-link { font-size: 0; padding: 0 8px; }
   .conversation-detail-header {
     padding: 14px 16px 12px;
   }
@@ -1104,22 +1153,24 @@ onUnmounted(() => {
     gap: 8px;
   }
 }
-@media (max-width: 799px) {
-  .session-workspace {
-    display: flex;
-  }
-  .session-list-panel {
-    width: 100%;
-    flex: none;
-    border-right: 0;
-  }
-  .conversation-detail-panel {
-    display: none;
-  }
-  .list-collapsed .conversation-detail-panel {
-    display: flex;
-    flex: 1;
-  }
+@container (max-width:600px) {
+  .session-list { scroll-padding-top: 0; }
+  .session-table, .session-table tbody { display: block; }
+  .session-table thead { display: none; }
+  .session-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 16px; border-bottom: 1px solid var(--line); }
+  .session-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .session-summary { grid-column: 1 / -1; }
+  .session-audience { grid-row: 2; grid-column: 1; }
+  .session-audience span, .session-audience small { display: inline; margin: 0 8px 0 0; font-size: 12px; }
+  .session-rounds { grid-row: 3; grid-column: 1; }
+  .session-date { grid-row: 3; grid-column: 1; margin-left: 44px; }
+  .session-actions { grid-row: 2 / 4; grid-column: 2; align-self: end; }
+  .mobile-unit { display: inline; }
+  .session-table .session-actions .pane-toggle, .session-detail-link { min-height: 44px; min-width: 44px; }
+  .session-actions .session-detail-link { font-size: 0; padding: 0; }
+  .conversation-toolbar { gap: 8px; }
+  .conversation-toolbar .ui-input { height: 44px; font-size: 13px; }
+  .session-pagination button, .pane-toggle, .text-action, .trace-action { min-height: 44px; }
   .conversation-toolbar {
     grid-template-columns: 1fr 1fr 1fr;
   }
@@ -1127,7 +1178,7 @@ onUnmounted(() => {
     grid-column: 1/-1;
   }
   .conversation-title-row h2 {
-    font-size: 13px;
+    font-size: 15px;
   }
   .conversation-detail-header {
     padding: 12px;

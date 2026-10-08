@@ -12,6 +12,6 @@ import { ContextGovernor } from '../../chat/context-governor';
 @Module({
   imports: [AiModule, ToolsModule, SkillsModule, McpModule],
   providers: [ContextBuilder, ContextGovernor, LlmService, AgentLoop, AgentRunner],
-  exports: [ContextBuilder, ContextGovernor, LlmService, AgentLoop, AgentRunner],
+  exports: [ContextBuilder, ContextGovernor, LlmService, AgentLoop, AgentRunner, ToolsModule],
 })
 export class AgentModule {}

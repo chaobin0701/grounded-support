@@ -5,7 +5,6 @@ import { createProductCatalogPlugin } from '../dist/ai/mcp/built-in/product-cata
 import { McpPluginRegistry } from '../dist/ai/mcp/mcp-plugin-registry.js';
 import { adaptMcpTool } from '../dist/ai/mcp/mcp-tool.adapter.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
-import { productConsultationSkill } from '../dist/ai/skills/built-in/product-consultation.skill.js';
 
 const fakeDatabase = {
   query: async (statement) => {
@@ -44,9 +43,9 @@ test('MCP plugin registry disables a plugin without starting it', async () => {
   assert.deepEqual(registry.list().map((plugin) => plugin.id), ['disabled']);
 });
 
-test('MCP tools remain subject to the Skill tool allowlist', () => {
+test('MCP tools remain subject to an independent Agent tool allowlist', () => {
   const policy = new ToolPolicy();
-  const state = policy.createState({ allowedTools: productConsultationSkill.allowedTools, maxToolCalls: productConsultationSkill.maxToolCalls });
+  const state = policy.createState({ allowedTools: ['mcp_product_catalog_list_products'], maxToolCalls: 5 });
   assert.equal(policy.beforeCall(state, 'mcp_product_catalog_list_products', {}), null);
   assert.equal(policy.beforeCall(state, 'search_knowledge', {}), 'tool_not_allowed');
 });

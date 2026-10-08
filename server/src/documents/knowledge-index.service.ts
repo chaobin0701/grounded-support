@@ -2,8 +2,10 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { z } from 'zod';
 import { DatabaseService } from '../database.service';
 import { DocumentQueueService } from './document-queue.service';
-import { buildChunks } from './build-chunks';
+import { buildChunks, searchTokens } from './build-chunks';
 import { documentBlockSchema, knowledgeConfigSchema } from './knowledge-config';
+import type { PoolClient } from 'pg';
+import { embeddingFingerprint, embeddingProfileSchema } from './profile-embedding';
 
 export const indexInputSchema = z.array(z.object({
   documentId: z.number().int().positive(),
@@ -19,6 +21,16 @@ export class KnowledgeIndexService {
     const parsed = knowledgeConfigSchema.safeParse(input);
     if (!parsed.success) throw new BadRequestException(parsed.error.issues.map((v) => v.message).join('; '));
     return this.database.transaction(async (client) => {
+      const kb = (await client.query('SELECT draft_config,active_index_version_id FROM knowledge_bases WHERE id=$1 AND archived_at IS NULL FOR UPDATE', [id])).rows[0];
+      if (!kb) throw new NotFoundException('Active knowledge base not found');
+      if (parsed.data.embeddingProfileId) {
+        const selected = await client.query('SELECT id FROM embedding_profiles WHERE id=$1 AND enabled FOR SHARE', [parsed.data.embeddingProfileId]);
+        if (!selected.rowCount) throw new BadRequestException('Enabled embedding profile required');
+      }
+      const previous = knowledgeConfigSchema.parse(kb.draft_config);
+      if (!kb.active_index_version_id && (previous.indexMode !== parsed.data.indexMode || previous.embeddingProfileId !== parsed.data.embeddingProfileId)) {
+        await this.freezeLiveIndex(client, actorId, id, previous);
+      }
       const updated = await client.query(`UPDATE knowledge_bases SET draft_config = $2, updated_at = now()
         WHERE id = $1 AND archived_at IS NULL RETURNING draft_config`, [id, JSON.stringify(parsed.data)]);
       if (!updated.rowCount) throw new NotFoundException('Active knowledge base not found');
@@ -26,6 +38,40 @@ export class KnowledgeIndexService {
         VALUES ($1,'knowledge_base.configured','knowledge_base',$2)`, [actorId, String(id)]);
       return parsed.data;
     });
+  }
+
+  /** A legacy/live index has no version pointer. Freeze it before replacing its
+   * vector space, so uploads and draft settings cannot invalidate chat queries. */
+  private async freezeLiveIndex(client: PoolClient, actorId: number, id: number, config: ReturnType<typeof knowledgeConfigSchema.parse>) {
+    const chunks = (await client.query(`SELECT c.*,d.title,d.original_filename,d.source_type
+      FROM document_chunks c JOIN documents d ON d.id=c.document_id
+      WHERE d.knowledge_base_id=$1 AND d.archived_at IS NULL AND d.status='ready' ORDER BY d.id,c.ordinal`, [id])).rows;
+    if (!chunks.length) return;
+    const profileRow = config.embeddingProfileId ? (await client.query('SELECT config FROM embedding_profiles WHERE id=$1 FOR SHARE', [config.embeddingProfileId])).rows[0] : null;
+    const profile = profileRow ? embeddingProfileSchema.parse(profileRow.config) : null;
+    if (config.indexMode === 'high_quality' && !profile) throw new ConflictException('Previous embedding profile is unavailable; cannot preserve the current index');
+    const version = (await client.query(`INSERT INTO knowledge_index_versions
+      (knowledge_base_id,status,config,embedding_snapshot,input_snapshot,chunk_count,created_by,finished_at)
+      VALUES ($1,'ready',$2,$3,'[]',$4,$5,now()) RETURNING id::int`,
+    [id, JSON.stringify(config), profile ? JSON.stringify(profile) : null, chunks.length, actorId])).rows[0];
+    for (const chunk of chunks) {
+      const searchContent = `${chunk.heading_path}\n${chunk.content}`;
+      const locatorType = chunk.source_type === 'faq' ? 'faq_entry' : /\.pdf$/iu.test(chunk.original_filename) ? 'pdf_page'
+        : /\.docx$/iu.test(chunk.original_filename) ? 'docx_paragraph' : 'markdown_lines';
+      const inserted = (await client.query(`INSERT INTO index_chunks
+        (version_id,document_id,ordinal,kind,heading_path,content,search_content,search_vector,source_locator,document_title,original_filename)
+        VALUES($1,$2,$3,'general',$4,$5,$6,to_tsvector('simple',$7),$8,$9,$10) RETURNING id::int`,
+      [version.id, chunk.document_id, chunk.ordinal, chunk.heading_path, chunk.content, searchContent, searchTokens(searchContent),
+        JSON.stringify({ type:locatorType,start:chunk.source_start_line,end:chunk.source_end_line }), chunk.title, chunk.original_filename])).rows[0];
+      if (profile && chunk.embedding_fingerprint === embeddingFingerprint(profile)) {
+        await client.query(`INSERT INTO chunk_embeddings(chunk_id,embedding,dimensions)
+          SELECT $1,embedding,$3 FROM document_chunks WHERE id=$2 AND embedding IS NOT NULL AND vector_dims(embedding)=$3`,
+        [inserted.id, chunk.id, profile.dimensions]);
+      }
+    }
+    await client.query('UPDATE knowledge_bases SET active_index_version_id=$2 WHERE id=$1', [id,version.id]);
+    await client.query(`INSERT INTO audit_logs(actor_admin_id,action,target_type,target_id,details)
+      VALUES($1,'knowledge_index.preserved','knowledge_base',$2,$3)`, [actorId,String(id),JSON.stringify({versionId:version.id})]);
   }
 
   async preview(id: number, documentId: number) {
@@ -78,7 +124,7 @@ export class KnowledgeIndexService {
       const snapshot = indexInputSchema.parse(inputs.map(({ status, ...input }) => input));
       let profile: unknown = null;
       if (config.indexMode === 'high_quality') {
-        profile = (await client.query('SELECT config FROM embedding_profiles WHERE id=$1 AND enabled', [config.embeddingProfileId])).rows[0]?.config;
+        profile = (await client.query('SELECT config FROM embedding_profiles WHERE id=$1 AND enabled FOR SHARE', [config.embeddingProfileId])).rows[0]?.config;
         if (!profile) throw new BadRequestException('Enabled embedding profile required');
       }
       const version = (await client.query(`INSERT INTO knowledge_index_versions

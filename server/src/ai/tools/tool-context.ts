@@ -5,5 +5,6 @@ export interface ToolContext {
   readonly userId?: string;
   readonly tenantId?: string;
   readonly permissions: readonly string[];
+  readonly enabledSkillIds?: readonly string[];
   readonly state: Map<string, unknown>;
 }

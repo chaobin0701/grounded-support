@@ -11,7 +11,8 @@ import { parseDocument, ScannedPdfError } from './documents/extract-document';
 import { AppConfigService } from './config/config.service';
 import { DOCUMENT_PARSER_VERSION } from './documents/document-block';
 import { knowledgeConfigSchema } from './documents/knowledge-config';
-import { embedWithProfile, embeddingProfileSchema } from './documents/profile-embedding';
+import { embeddingFingerprint, embeddingProfileSchema } from './documents/profile-embedding';
+import { embedForProfile } from './documents/embedding-runtime';
 
 type DocumentJob = { documentId: number };
 const runtimeConfig = new AppConfigService();
@@ -42,18 +43,22 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
     const texts = parsed.chunks.map((chunk) => `${chunk.headingPath}\n${chunk.content}`);
     let vectors: number[][] = [];
     let embeddingModel: string | null = null;
+    let fingerprint: string | null = null;
+    let profileId: number | null = null;
     if (indexConfig.indexMode === 'high_quality') {
       const profileRow = (await pool.query<{ config: unknown }>(
         'SELECT config FROM embedding_profiles WHERE id=$1 AND enabled', [indexConfig.embeddingProfileId],
       )).rows[0];
       if (!profileRow) throw new Error('Selected embedding profile is unavailable');
       const profile = embeddingProfileSchema.parse(profileRow.config);
-      if (profile.dimensions !== 2048) throw new Error('The live document index currently requires 2048-dimensional embeddings');
-      vectors = await embedWithProfile(profile, texts, runtimeConfig);
+      vectors = await embedForProfile(pool, runtimeConfig, profile, texts);
       embeddingModel = profile.model;
+      fingerprint = embeddingFingerprint(profile);
+      profileId = profile.profileId ?? indexConfig.embeddingProfileId;
     } else if (document.legacy && embeddings.enabled) {
       vectors = await embeddings.embed(texts);
       embeddingModel = embeddings.model;
+      fingerprint = embeddings.fingerprint;
     }
 
     const client = await pool.connect();
@@ -75,17 +80,19 @@ async function processDocument(pool: Pool, documentId: number): Promise<void> {
           "headingPath" text, content text, "sourceLocator" jsonb)`, [documentId, JSON.stringify(parsed.blocks)]);
       await client.query(
         `INSERT INTO document_chunks
-           (document_id, ordinal, heading_path, content, source_start_line, source_end_line, embedding, embedding_model)
+           (document_id, ordinal, heading_path, content, source_start_line, source_end_line, embedding, embedding_model, embedding_fingerprint, embedding_profile_id)
          SELECT $1, x.ordinal, x."headingPath", x.content, x."sourceStartLine", x."sourceEndLine",
-                x.embedding::vector, x."embeddingModel"
+                x.embedding::vector, x."embeddingModel", x.fingerprint, x."profileId"
          FROM jsonb_to_recordset($2::jsonb) AS x(
            ordinal integer, "headingPath" text, content text,
            "sourceStartLine" integer, "sourceEndLine" integer,
-           embedding text, "embeddingModel" text)`,
+           embedding text, "embeddingModel" text, fingerprint text, "profileId" bigint)`,
         [documentId, JSON.stringify(parsed.chunks.map((chunk, index) => ({
           ...chunk,
           embedding: vectors[index] ? `[${vectors[index].join(',')}]` : null,
           embeddingModel: vectors[index] ? embeddingModel : null,
+          fingerprint: vectors[index] ? fingerprint : null,
+          profileId: vectors[index] ? profileId : null,
         })))],
       );
       await client.query(

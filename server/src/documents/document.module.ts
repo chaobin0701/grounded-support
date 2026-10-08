@@ -12,10 +12,11 @@ import { KnowledgeIndexService } from './knowledge-index.service';
 import { EmbeddingProfileService } from './embedding-profile.service';
 import { VersionSearchService } from './version-search.service';
 import { FaqService } from './faq.service';
+import { EmbeddingProfileController } from './embedding-profile.controller';
 
 @Module({
   imports: [AdminModule],
-  controllers: [DocumentController, SearchController, KnowledgeBaseController],
+  controllers: [DocumentController, SearchController, KnowledgeBaseController, EmbeddingProfileController],
   providers: [DocumentQueueService, DocumentService, EmbeddingService, SearchService, KnowledgeBaseService, KnowledgeIndexService, EmbeddingProfileService, VersionSearchService, FaqService],
   exports: [SearchService],
 })

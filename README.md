@@ -45,6 +45,8 @@ node scripts/dev-supervisor.mjs
 
 首次运行前确保 `server/node_modules` 和 `web/node_modules` 已安装。该模式会自动执行数据库迁移，并停止 Docker 中的 API、Worker 和 Web 容器；需要恢复完整 Docker 验收时运行 `docker compose up --build -d`，访问 `http://localhost:8081`。
 
+后台的「平台配置 → Agent 配置」分为基本与回答、会话与记忆、Skills、工具能力和高级设置。`agent_config.manage` 可保存人设、记忆、欢迎语、风格和能力启停；`agent_config.read` 仅查看。数据库配置即时用于新请求，每轮保留固定版本快照；JSON 只负责首次初始化。基础问答属于默认提示词，模型按需加载专项 Skill，不预选或关键词分流。协议、工具参数和基础格式校验只读。详见 [Agent 配置说明](docs/agent-configuration.md)。
+
 本机数据库映射到 `localhost:5433`，供数据库客户端连接；容器之间通过服务名 `postgres:5432` 通信。API 不直接暴露到主机，由 Web 容器代理 `/api/`。
 
 停止服务：`docker compose down`。数据库使用命名卷保存；不要使用 `down -v`，除非明确要清空本地数据。

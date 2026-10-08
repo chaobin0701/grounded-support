@@ -121,11 +121,8 @@
 .admin-primary:hover:not(:disabled) { background: #1f46bd; }
 .admin-shell { grid-template-columns: 196px minmax(0, 1fr); grid-template-rows:60px minmax(0,1fr); background:#fff; }
 .admin-shell { height: 100svh; min-height: 0; overflow: hidden; }
-.admin-global-header { z-index:20; display:grid; grid-column:1/-1; grid-template-columns:196px minmax(260px,1fr) auto; align-items:center; min-height:60px; border-bottom:1px solid var(--line); background:#fff; }
+.admin-global-header { z-index:20; display:flex; grid-column:1/-1; justify-content:space-between; align-items:center; min-height:60px; border-bottom:1px solid var(--line); background:#fff; }
 .admin-global-header .admin-brand { padding:0 20px; }
-.admin-global-search { position:relative; justify-self:end; width:min(340px,38vw); margin-right:22px; }
-.admin-global-search svg { position:absolute; top:50%; left:12px; transform:translateY(-50%); color:#8b97a9; }
-.admin-global-search input { width:100%; height:36px; box-sizing:border-box; padding:0 12px 0 36px; border:1px solid #dce3ec; border-radius:8px; background:#f9fafc; color:#344054; font:inherit; font-size:12px; }
 .admin-global-user { display:flex; align-items:center; gap:10px; min-width:180px; padding:0 22px; border-left:1px solid #edf0f4; }
 .admin-global-user > span { display:grid; width:32px; height:32px; place-items:center; border-radius:50%; background:#e5edff; color:#2457e6; font-size:12px; font-weight:700; }
 .admin-global-user strong,.admin-global-user small { display:block; }.admin-global-user strong { color:#273249; font-size:12px; }.admin-global-user small { margin:3px 0 0; color:#8a96a8; font-size:9px; }
@@ -256,7 +253,6 @@
   .admin-shell { display: flex; flex-direction:column; height:100svh; overflow:hidden; }
   .admin-global-header { display:flex; justify-content:space-between; min-height:58px; }
   .admin-global-header .admin-brand { padding:0 16px; }
-  .admin-global-search { display:none; }
   .admin-global-user { min-width:0; padding:0 16px; border-left:0; }
   .admin-global-user div { display:none; }
   .admin-sidebar { flex:none; height:auto; min-height:0; overflow:visible; padding:9px 16px; border-right:0; border-bottom:1px solid var(--line); }

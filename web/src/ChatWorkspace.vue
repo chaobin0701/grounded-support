@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { askInConversationStream, conversationApi, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage, type ProgressEvent } from './chat-api';
+import { askInConversationStream, conversationApi, getChatPresentation, ChatApiError, type ChatAnswer, type ConversationItem, type ConversationMessage, type ProgressEvent, type ChatPresentation } from './chat-api';
 import { Bot, Check, CheckCircle2, Copy, Database, FileText, LoaderCircle, MoreHorizontal, Search, Sparkles, ThumbsDown, ThumbsUp, UserRound } from '@lucide/vue';
 
 const props = withDefaults(defineProps<{ mode?: 'widget' | 'full'; embedded?: boolean }>(), { mode: 'full', embedded: false });
@@ -15,7 +15,8 @@ type Message =
   | { id: number; role: 'assistant'; text: string; refused: boolean; citations: ConversationMessage['citations']; progressEvents: ProgressEvent[]; createdAt: string };
 type PendingRequest = { conversationId: string; requestId: string; question: string };
 
-const suggestions = ['暖风机保修多久？', '满多少钱免基础配送费？', '退款一般多久能到账？'];
+const presentation = ref<ChatPresentation | null>(null);
+const suggestions = computed(() => presentation.value?.suggestedQuestions ?? []);
 const messages = ref<Message[]>([]);
 const conversations = ref<ConversationItem[]>([]);
 const activeConversationId = ref<string | null>(null);
@@ -49,6 +50,8 @@ function writeDraftInput(id: string | null, value: string) { const key = draftIn
 watch(question, (value) => { if (!isSending.value) writeDraftInput(activeConversationId.value, value); });
 
 onMounted(async () => {
+  // Welcome settings must not block history loading or sending a question.
+  void getChatPresentation().then(value => { presentation.value = value; }).catch(() => {});
   window.addEventListener('click', closeConversationMenu);
   isLoadingConversations.value = true;
   try {
@@ -155,7 +158,7 @@ function selectMobileConversation(event: Event) {
       <header v-if="showHeader" class="workspace-header"><div><p class="section-label">当前对话</p><h2>{{ activeConversationId ? (conversations.find((item) => item.id === activeConversationId)?.title || '对话') : '新对话' }}</h2></div></header>
       <div v-if="embedded && !isWidget" class="embedded-mobile-nav"><label for="embedded-conversation" class="sr-only">选择对话</label><select id="embedded-conversation" :value="activeConversationId || ''" :disabled="isSending || isLoadingConversations" @change="selectMobileConversation"><option value="">新对话</option><option v-for="item in conversations" :key="item.id" :value="item.id">{{ item.title }}</option></select><button type="button" :disabled="isSending || isLoadingConversations" @click="newConversation">＋ 新对话</button></div>
       <section ref="conversation" class="conversation" aria-label="问答记录" aria-live="polite">
-        <div v-if="messages.length === 0" class="welcome"><div class="welcome-symbol" aria-hidden="true"><span>暖</span></div><p class="section-label">暖巢 · AI 助手</p><h3>你好，有什么可以帮你？</h3><p>我会查询已收录的资料和演示产品目录，再根据结果回答。</p><div class="suggestions" aria-label="示例问题"><button v-for="item in suggestions" :key="item" type="button" :disabled="isSending" @click="chooseSuggestion(item)">{{ item }}<span aria-hidden="true">↗</span></button></div></div>
+        <div v-if="messages.length === 0" class="welcome"><div class="welcome-symbol" aria-hidden="true"><span>暖</span></div><p class="section-label">暖巢 · AI 助手</p><h3>{{ presentation?.title || '你好，有什么可以帮你？' }}</h3><p v-if="presentation">{{ presentation.description }}</p><div v-if="suggestions.length" class="suggestions" aria-label="示例问题"><button v-for="item in suggestions" :key="item" type="button" :disabled="isSending" @click="chooseSuggestion(item)">{{ item }}<span aria-hidden="true">↗</span></button></div></div>
         <div v-for="message in messages" :key="message.id" class="message" :class="message.role">
           <template v-if="message.role === 'visitor'"><div class="message-column"><div class="message-bubble visitor-bubble"><p class="answer-text">{{ message.text }}</p></div><time class="message-time" :datetime="message.createdAt">{{ formatMessageTime(message.createdAt) }}</time></div><span class="message-avatar visitor-avatar" aria-hidden="true"><UserRound :size="18" :stroke-width="2.2" /></span></template>
           <template v-else><span class="message-avatar assistant-avatar" aria-hidden="true"><Bot :size="18" :stroke-width="2.1" /></span><div class="message-column"><div class="message-meta"><span>暖巢 · AI 助手</span><time :datetime="message.createdAt">{{ formatMessageTime(message.createdAt) }}</time></div><div class="message-bubble assistant-bubble"><p class="answer-text">{{ message.text }}</p><p v-if="message.refused" class="answer-note">可用数据不足，未生成推测性回答。</p><div v-if="message.citations.length" class="message-reference"><FileText :size="18" :stroke-width="1.8" aria-hidden="true" /><span>{{ message.citations.length === 1 ? `参考资料 · ${message.citations[0].documentTitle || message.citations[0].originalFilename}` : `参考资料 · ${message.citations.length} 条` }}</span></div></div><div class="message-actions" aria-label="回答操作"><button type="button" :aria-label="copiedMessageId === message.id ? '已复制' : '复制回答'" @click="copyAnswer(message)"><Check v-if="copiedMessageId === message.id" :size="16" /><Copy v-else :size="16" /></button><button type="button" :class="{ selected: feedback[message.id] === 'up' }" aria-label="回答有帮助" @click="setFeedback(message, 'up')"><ThumbsUp :size="16" /></button><button type="button" :class="{ selected: feedback[message.id] === 'down' }" aria-label="回答需要改进" @click="setFeedback(message, 'down')"><ThumbsDown :size="16" /></button></div><details v-if="message.progressEvents.length" class="process-collapsible message-process"><summary><span class="process-summary-label"><Sparkles :size="14" aria-hidden="true" />查看处理过程</span><span>{{ progressSteps(message.progressEvents).length }} 步</span></summary><div class="process-content"><div v-for="event in progressSteps(message.progressEvents)" :key="event.key" class="process-step" :class="[event.status, `stage-${event.stage}`]"><span class="process-step-icon" aria-hidden="true"><component :is="progressIcon(event)" :size="14" :class="{ spinning: event.status === 'running' }" /></span><span class="process-step-copy"><small>{{ event.stageLabel }}</small><span>{{ event.text }}</span></span><span class="process-step-meta"><small>{{ event.stateLabel }}</small><small v-if="event.resultCount !== undefined">{{ event.resultCount }} 条</small><small v-if="formatDuration(event.durationMs)">{{ formatDuration(event.durationMs) }}</small></span></div></div></details></div></template>

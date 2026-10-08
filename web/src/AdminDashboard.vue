@@ -107,9 +107,8 @@ function traceLink(
   item: NonNullable<DashboardOverview['activity']>['recentFailures'][number],
 ) {
   return {
-    path: '/admin/conversations',
+    path: item.conversationId ? `/admin/conversations/${item.conversationId}` : '/admin/conversations',
     query: {
-      ...(item.conversationId ? { conversationId: item.conversationId } : {}),
       ...(item.traceId ? { traceId: item.traceId } : {}),
     },
   };
@@ -217,9 +216,7 @@ onUnmounted(() => {
 <template>
   <section class="dashboard-page" :aria-busy="loading">
     <AdminPageHeader
-      eyebrow="工作台"
       title="概览"
-      description="业务问答与资料处理的运行概况。"
       ><template #actions
         ><select
           v-model="range"

@@ -1,10 +1,13 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpException, Param, ParseUUIDPipe, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpException, Optional, Param, ParseUUIDPipe, Post, Req, Res } from '@nestjs/common';
+import { AppConfigService } from '../config/config.service';
+import { DEFAULT_AGENT_CONFIGURATION } from '../config/agent-config';
 import type { Request, Response } from 'express';
 import { AskQuestionDto } from './chat.dto';
 import { ChatRateLimitService } from './chat-rate-limit.service';
 import { ChatService } from './chat.service';
 import { ConversationService } from './conversation.service';
 import { ChatApplicationService } from './chat-application.service';
+import { AgentSettingsService } from '../config/agent-settings.service';
 
 @Controller('chat')
 export class ChatController {
@@ -13,7 +16,15 @@ export class ChatController {
     private readonly rateLimit: ChatRateLimitService,
     private readonly conversations: ConversationService,
     private readonly application: ChatApplicationService,
+    @Optional() private readonly config?: AppConfigService,
+    @Optional() private readonly settings?: AgentSettingsService,
   ) {}
+
+  @Get('presentation')
+  presentation() {
+    // Public allowlist: welcome text only; no persona, memory or tool policies.
+    return this.settings ? this.settings.snapshot().then(snapshot => snapshot.configuration.welcome) : (this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION).welcome;
+  }
 
   @Get('conversations')
   async listConversations(@Req() request: Request, @Res({ passthrough: true }) response: Response) {

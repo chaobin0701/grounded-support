@@ -3,6 +3,7 @@ import type { ProductDetail, ProductSummary } from '../tools/product-catalog/pro
 import type { ToolContext } from '../tools/tool-context';
 import type { ToolExecutionTrace } from '../tools/tool-execution';
 import type { ToolExecutionState } from '../tools/tool-policy';
+import type { AgentRuntimeConfiguration, AgentConfiguration } from '../../config/agent-config';
 import type { SkillDefinition } from '../skills/skill.types';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 import type { ContextBudget } from '../../chat/context-governor';
@@ -34,7 +35,7 @@ export type AgentModelCall = {
 };
 
 export type AgentExecutionStep = {
-  type: 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
+  type: 'agent_setup' | 'skill_loaded' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
   stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
   skillId?: string;
   selectedBy?: string;
@@ -60,6 +61,7 @@ export type AgentExecutionStep = {
 };
 
 export type AgentState = {
+  configuration: AgentConfiguration;
   toolContext: ToolContext;
   executionState: ToolExecutionState;
   toolCalls: ToolExecutionTrace[];
@@ -74,7 +76,8 @@ export type AgentState = {
   totalTokens: number;
   usageSeen: boolean;
   finalRaw: string;
-  skill: SkillDefinition;
+  runtime: AgentRuntimeConfiguration;
+  loadedSkills: Map<string, SkillDefinition>;
   plannerRound: number;
   transcript: AgentTranscriptMessage[];
   traceTranscript: AgentTranscriptMessage[];

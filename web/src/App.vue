@@ -19,7 +19,7 @@ const isLegacyEmbeddedChat = computed(() => route.path === '/' && route.query.em
 watch(() => route.path, (path) => {
   document.title = path === '/product' || path.startsWith('/product/') ? '暖巢智能客服 · 产品介绍'
     : path === '/help' ? '暖巢智能客服 · 帮助中心'
-      : path.startsWith('/admin') ? '暖巢智能客服 · 管理中心' : '暖巢智能客服';
+      : path.startsWith('/admin') ? '产品智能客服 · 管理中心' : '暖巢智能客服';
 }, { immediate: true });
 </script>
 

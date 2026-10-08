@@ -6,6 +6,43 @@ export interface AdminMe {
   permissionCodes: string[];
 }
 
+export interface AgentConfigurationView {
+  version: number;
+  revision: string;
+  configurationVersion: number;
+  updatedAt: string | null;
+  updatedBy: number | null;
+  source: string;
+  readOnly: boolean;
+  identity: { name: string; role: string; persona: string };
+  answeringInstructions: string;
+  responseStyle: { tone: 'professional' | 'friendly' | 'concise'; detail: 'brief' | 'balanced' | 'detailed' };
+  enabledSkills: string[];
+  settings: AgentEditableConfiguration;
+  memory: {
+    recentTurns: number; snapshotTurns: number;
+    transcriptMaxMessages: number; transcriptMaxTraces: number;
+    summaryTriggerTurns: number; summaryKeepRecentTurns: number;
+    summaryMaxChars: number; summaryBatchMaxMessages: number;
+    summaryInstructions: string;
+  };
+  welcome: { title: string; description: string; suggestedQuestions: string[] };
+  answerInstructions: string;
+  model: { name: string; contextWindowTokens: number; maxOutputTokens: number };
+  runtime: {
+    allowedTools: string[]; maxToolCalls: number; shouldPreRetrieve: boolean;
+    maxPlannerRounds: number; toolTimeoutMs: number; maxToolResultChars: number;
+    execution: 'sequential'; answerValidation: 'format_only';
+  };
+  availableSkills: { id: string; name: string; version: string; description: string; instructions: string; enabled: boolean }[];
+  capabilities: { id: string; name: string; description: string; source: string; system: boolean; enabled: boolean; tools: { name: string; description: string; source: string; canBatch: boolean; dependency: string; parameters: Record<string, unknown> }[] }[];
+  prompts: { base: string; protocol: string; assembled: string };
+}
+
+export type AgentEditableConfiguration = Pick<AgentConfigurationView, 'identity' | 'answeringInstructions' | 'responseStyle' | 'enabledSkills' | 'memory' | 'welcome'> & {
+  runtime: Pick<AgentConfigurationView['runtime'], 'allowedTools' | 'maxToolCalls' | 'maxPlannerRounds' | 'toolTimeoutMs' | 'maxToolResultChars'>;
+};
+
 export type DashboardRange = '24h' | '7d' | '30d';
 export interface DashboardOverview {
   generatedAt: string;
@@ -183,7 +220,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
     dataSource?: string;
     toolCalls?: { name: string; arguments: Record<string, unknown>; ok: boolean; durationMs: number }[];
     executionSteps?: {
-      type: 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
+      type: 'agent_setup' | 'skill_loaded' | 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
       stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
       skillId?: string;
       selectedBy?: string;
@@ -211,6 +248,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
     products?: { id: string; name: string }[];
     productDetails?: { id: string; name: string; specifications: Record<string, string> }[];
     modelCalls?: unknown[];
+    loadedSkills?: { id: string; name: string; version: string }[];
   };
   rawModelOutput: string | null;
 }
@@ -333,6 +371,26 @@ export class AdminApiError extends Error {
   }
 }
 
+export type EmbeddingPlatform = 'volcengine' | 'openai' | 'custom';
+export interface EmbeddingProfileInput {
+  name: string; platformKey: EmbeddingPlatform; provider: 'openai-compatible' | 'volcengine-multimodal';
+  baseUrl: string; model: string; dimensions: number; maxInputChars: number; batchSize: number; timeoutMs: number; apiKey?: string;
+}
+export interface EmbeddingProfileItem {
+  id: number; name: string; platformKey: EmbeddingPlatform; enabled: boolean;
+  config: Omit<EmbeddingProfileInput, 'name' | 'platformKey' | 'apiKey'>;
+  hasApiKey: boolean; apiKeyPreview: string | null; keySource: 'managed' | 'environment';
+  usageCount: number; referenceCount: number; geometryLocked: boolean;
+}
+export interface EmbeddingUsage { id: number; name: string; archived: boolean; configured: boolean; active: boolean; historical: boolean }
+export interface EmbeddingConnectionResult {
+  ok: boolean; message: string; model?: string; durationMs?: number; expectedDimensions?: number;
+  actualDimensions?: number; dimensionMatched?: boolean;
+}
+export interface EmbeddingPlatformPreset {
+  key: EmbeddingPlatform; label: string; baseUrl: string; provider: EmbeddingProfileInput['provider']; model: string; dimensions: number;
+}
+
 export async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(options.headers);
   if (token) headers.set('Authorization', `Bearer ${token}`);
@@ -357,6 +415,16 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
 }
 
 export const adminApi = {
+  embeddingProfiles: (token: string) => request<EmbeddingProfileItem[]>('/model-profiles/embedding', {}, token),
+  embeddingMetadata: (token: string) => request<{ platforms: EmbeddingPlatformPreset[]; minDimensions: number; maxDimensions: number }>('/model-profiles/embedding/metadata', {}, token),
+  createEmbeddingProfile: (token: string, input: EmbeddingProfileInput) => request<EmbeddingProfileItem>('/model-profiles/embedding', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateEmbeddingProfile: (token: string, id: number, input: Partial<EmbeddingProfileInput>) => request<EmbeddingProfileItem>(`/model-profiles/embedding/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  embeddingUsage: (token: string, id: number) => request<EmbeddingUsage[]>(`/model-profiles/embedding/${id}/usage`, {}, token),
+  setEmbeddingStatus: (token: string, id: number, enabled: boolean) => request<EmbeddingProfileItem>(`/model-profiles/embedding/${id}/status`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
+  deleteEmbeddingProfile: (token: string, id: number) => request<{ deleted: true }>(`/model-profiles/embedding/${id}`, { method: 'DELETE' }, token),
+  testEmbeddingConnection: (token: string, input: EmbeddingProfileInput & { profileId?: number }) => request<EmbeddingConnectionResult>('/model-profiles/embedding/test', { method: 'POST', body: JSON.stringify(input) }, token),
+  agentConfig: (token: string) => request<AgentConfigurationView>('/agent-config', {}, token),
+  saveAgentConfig: (token: string, revision: string, configurationVersion: number, settings: AgentEditableConfiguration) => request<AgentConfigurationView>('/agent-config', { method: 'PATCH', body: JSON.stringify({ revision, configurationVersion, settings }) }, token),
   dashboard: (token: string, range: DashboardRange) => request<DashboardOverview>(`/dashboard?range=${encodeURIComponent(range)}`, {}, token),
   login: (email: string, password: string) => request<{ accessToken: string; expiresIn: number }>('/auth/login', {
     method: 'POST', body: JSON.stringify({ email, password }),

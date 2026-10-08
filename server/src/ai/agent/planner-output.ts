@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const PLANNER_TOOL_NAMES = [
+  'load_skill',
   'search_knowledge',
   'list_product_categories',
   'list_products',

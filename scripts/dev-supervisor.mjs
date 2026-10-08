@@ -100,7 +100,8 @@ const dotEnv = readDotEnv();
 const databasePort = dotEnv.POSTGRES_PORT || '5433';
 const databaseName = dotEnv.POSTGRES_DB || 'grounded_support';
 const databaseUser = dotEnv.POSTGRES_USER || 'grounded';
-const databasePassword = dotEnv.POSTGRES_PASSWORD || 'grounded-local-only-2026';
+const databasePassword = dotEnv.POSTGRES_PASSWORD || process.env.POSTGRES_PASSWORD;
+if (!databasePassword) throw new Error('请在本地 .env 或环境变量中配置 POSTGRES_PASSWORD');
 const localData = resolve(root, '.data');
 mkdirSync(resolve(localData, 'uploads'), { recursive: true });
 const serverEnv = {
@@ -108,7 +109,7 @@ const serverEnv = {
   ...dotEnv,
   DATABASE_URL: `postgres://${databaseUser}:${databasePassword}@127.0.0.1:${databasePort}/${databaseName}`,
   PORT: '3000',
-  ALLOWED_ORIGINS: 'http://localhost:8848,http://localhost:3000,http://localhost:8081',
+  ALLOWED_ORIGINS: 'http://localhost:8848,http://localhost:3000,http://localhost:8081,http://localhost:8849,http://127.0.0.1:8849,http://localhost:8850,http://127.0.0.1:8850',
   UPLOAD_ROOT: resolve(localData, 'uploads'),
 };
 const webEnv = { ...process.env, ...dotEnv };

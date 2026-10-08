@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { AgentTool } from './agent-tool';
 import { ToolResult } from './tool-result';
+import { Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../../config/config.service';
 
 export const DEFAULT_MAX_TOOL_CALLS = 6;
 export const DEFAULT_TOOL_TIMEOUT_MS = 30_000;
@@ -11,6 +13,8 @@ export type ToolExecutionState = {
   seenCalls: Set<string>;
   allowedTools?: ReadonlySet<string>;
   maxToolCalls?: number;
+  timeoutMs?: number;
+  maxResultChars?: number;
 };
 
 export type ToolPolicyFailure = 'tool_call_limit_exceeded' | 'duplicate_tool_call' | 'invalid_arguments' | 'tool_not_allowed';
@@ -19,13 +23,16 @@ export type ToolInputValidation =
   | { ok: true; input: unknown }
   | { ok: false; errorCode: ToolPolicyFailure };
 
+@Injectable()
 export class ToolPolicy {
-  readonly maxToolCalls = DEFAULT_MAX_TOOL_CALLS;
-  readonly timeoutMs = DEFAULT_TOOL_TIMEOUT_MS;
-  readonly maxResultChars = DEFAULT_MAX_RESULT_CHARS;
+  constructor(@Optional() private readonly config?: AppConfigService) {}
 
-  createState(options: { allowedTools?: readonly string[]; maxToolCalls?: number } = {}): ToolExecutionState {
-    return { callCount: 0, seenCalls: new Set<string>(), allowedTools: options.allowedTools ? new Set(options.allowedTools) : undefined, maxToolCalls: options.maxToolCalls };
+  get maxToolCalls() { return this.config?.agent.runtime.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS; }
+  get timeoutMs() { return this.config?.agent.runtime.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS; }
+  get maxResultChars() { return this.config?.agent.runtime.maxToolResultChars ?? DEFAULT_MAX_RESULT_CHARS; }
+
+  createState(options: { allowedTools?: readonly string[]; maxToolCalls?: number; timeoutMs?: number; maxResultChars?: number } = {}): ToolExecutionState {
+    return { callCount: 0, seenCalls: new Set<string>(), allowedTools: options.allowedTools ? new Set(options.allowedTools) : undefined, maxToolCalls: options.maxToolCalls, timeoutMs: options.timeoutMs, maxResultChars: options.maxResultChars };
   }
 
   beforeCall(state: ToolExecutionState, name: string, args: Record<string, unknown>): ToolPolicyFailure | null {
@@ -43,11 +50,11 @@ export class ToolPolicy {
     return parsed.success ? { ok: true, input: parsed.data } : { ok: false, errorCode: 'invalid_arguments' };
   }
 
-  normalizeResult(result: ToolResult): ToolResult {
-    if (result.content.length <= this.maxResultChars) return result;
+  normalizeResult(result: ToolResult, maxChars = this.maxResultChars): ToolResult {
+    if (result.content.length <= maxChars) return result;
     return {
       ...result,
-      content: `${result.content.slice(0, this.maxResultChars)}\n[tool_result_truncated]`,
+      content: `${result.content.slice(0, maxChars)}\n[tool_result_truncated]`,
       metadata: { ...result.metadata, resultTruncated: true },
     };
   }

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { z } from 'zod';
 import { DatabaseService } from '../database.service';
 import { knowledgeConfigSchema } from './knowledge-config';
@@ -43,6 +43,10 @@ export class KnowledgeBaseService {
     if (!parsed.success) throw new BadRequestException('Invalid knowledge base configuration');
     const value = parsed.data;
     return this.database.transaction(async (client) => {
+      if (value.draftConfig?.embeddingProfileId) {
+        const profile = await client.query('SELECT id FROM embedding_profiles WHERE id=$1 AND enabled FOR SHARE', [value.draftConfig.embeddingProfileId]);
+        if (!profile.rowCount) throw new BadRequestException('Enabled embedding profile required');
+      }
       const row = (await client.query(`INSERT INTO knowledge_bases (name, description, enabled_for_chat, draft_config)
         VALUES ($1, $2, $3, COALESCE($4::jsonb, '{}'::jsonb)) RETURNING ${columns}`, [value.name, value.description, value.enabledForChat, value.draftConfig ? JSON.stringify(value.draftConfig) : null])).rows[0];
       await client.query(`INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id)
@@ -69,9 +73,8 @@ export class KnowledgeBaseService {
 
   async archive(actorId: number, id: number) {
     return this.database.transaction(async (client) => {
-      const current = (await client.query('SELECT is_default FROM knowledge_bases WHERE id = $1 AND archived_at IS NULL FOR UPDATE', [id])).rows[0];
+      const current = (await client.query('SELECT id FROM knowledge_bases WHERE id = $1 AND archived_at IS NULL FOR UPDATE', [id])).rows[0];
       if (!current) throw new NotFoundException('Active knowledge base not found');
-      if (current.is_default) throw new ConflictException('Default knowledge base cannot be archived');
       await client.query('UPDATE knowledge_bases SET archived_at = now(), enabled_for_chat = false, updated_at = now() WHERE id = $1', [id]);
       await client.query(`INSERT INTO audit_logs (actor_admin_id, action, target_type, target_id)
         VALUES ($1, 'knowledge_base.archived', 'knowledge_base', $2)`, [actorId, String(id)]);

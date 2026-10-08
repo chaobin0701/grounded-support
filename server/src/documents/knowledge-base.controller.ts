@@ -13,6 +13,7 @@ import { EmbeddingProfileService } from './embedding-profile.service';
 import { VersionSearchService } from './version-search.service';
 import { FaqService } from './faq.service';
 import { SearchService } from './search.service';
+import { DOCUMENT_UPLOAD_OPTIONS } from './document-upload.options';
 
 @Controller('admin/knowledge-bases')
 @UseGuards(AdminAuthGuard, PermissionGuard)
@@ -52,14 +53,14 @@ export class KnowledgeBaseController {
 
   @Get('embedding-profiles')
   @RequirePermission('knowledge_bases.manage')
-  profileList() { return this.profiles.list(); }
+  profileList() { return this.profiles.choices(); }
 
   @Post('embedding-profiles')
-  @RequirePermission('knowledge_bases.manage')
+  @RequirePermission('embedding_profiles.manage')
   profileCreate(@Req() request: AdminRequest, @Body() body: unknown) { return this.profiles.create(request.admin!.id, body); }
 
   @Patch('embedding-profiles/:profileId')
-  @RequirePermission('knowledge_bases.manage')
+  @RequirePermission('embedding_profiles.manage')
   profileStatus(@Req() request: AdminRequest,@Param('profileId',ParseIntPipe) id:number,@Body() body:unknown) {
     return this.profiles.setEnabled(request.admin!.id,id,body);
   }
@@ -145,7 +146,7 @@ export class KnowledgeBaseController {
   @Post(':id/documents')
   @HttpCode(202)
   @RequirePermission('documents.upload')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 2 * 1024 * 1024, files: 1, fields: 1, parts: 2, fieldSize: 8 * 1024 } }))
+  @UseInterceptors(FileInterceptor('file', DOCUMENT_UPLOAD_OPTIONS))
   upload(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number,
     @UploadedFile() file: Express.Multer.File, @Body() body: UploadDocumentDto) {
     const source = request as AdminRequest & { ip?: string; socket?: { remoteAddress?: string } };

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Boxes, Cpu, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import { Bot, Boxes, Cpu, Database, LayoutDashboard, MessageSquareText, ScrollText, ShieldCheck, Users } from '@lucide/vue';
 import type { Component } from 'vue';
 import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
@@ -15,8 +15,10 @@ import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
 import ModelServiceAdmin from './ModelServiceAdmin.vue';
+import EmbeddingServiceAdmin from './EmbeddingServiceAdmin.vue';
+import AgentConfigAdmin from './AgentConfigAdmin.vue';
 
-type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'model-services' | 'admins' | 'roles' | 'audit';
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'agent-config' | 'model-services' | 'embedding-services' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
@@ -24,7 +26,6 @@ const email = ref('');
 const password = ref('');
 const loginBusy = ref(false);
 const loginError = ref('');
-const adminQuickSearch = ref('');
 const view = ref<View>('documents');
 const busy = ref(false);
 const error = ref('');
@@ -52,7 +53,7 @@ const roleForm = ref({ id: null as number | null, code: '', name: '', permission
 const selectedAdmin = computed(() => admins.value.find((item) => item.id === selectedAdminId.value) ?? null);
 const selectedRole = computed(() => roles.value.find((item) => item.id === selectedRoleId.value) ?? null);
 const permissionGroups = computed(() => {
-  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', model_profiles: '模型服务', audit: '操作记录' };
+  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', agent_config: 'Agent 配置', model_profiles: '模型服务', embedding_profiles: 'Embedding 服务', audit: '操作记录' };
   const grouped = new Map<string, PermissionItem[]>();
   for (const permission of permissions.value) {
     const key = permission.code.split('.')[0] ?? 'other';
@@ -66,7 +67,9 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
   { id: 'products', label: '产品管理', icon: Boxes, permissions: ['knowledge_bases.manage'] },
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
+  { id: 'agent-config', label: 'Agent 配置', icon: Bot, permissions: ['agent_config.read', 'agent_config.manage'] },
   { id: 'model-services', label: '模型服务', icon: Cpu, permissions: ['model_profiles.read', 'model_profiles.manage'] },
+  { id: 'embedding-services', label: 'Embedding 服务', icon: Database, permissions: ['embedding_profiles.read', 'embedding_profiles.manage'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
@@ -75,14 +78,11 @@ function viewFromRoute(): View | null {
   const section = route.params.section;
   if (typeof section === 'string' && views.some((item) => item.id === section)) return section as View;
   if (route.path.startsWith('/admin/knowledge/')) return 'knowledge';
+  if (route.path.startsWith('/admin/conversations/')) return 'conversations';
   return null;
 }
 const availableViews = computed(() => views.filter((item) => item.permissions.some(can)));
 const navigation = computed(() => groupAdminNavigation(availableViews.value));
-const quickSearchMatches = computed(() => {
-  const keyword = adminQuickSearch.value.trim().toLowerCase();
-  return keyword ? availableViews.value.filter((item) => item.label.toLowerCase().includes(keyword)) : availableViews.value;
-});
 const isSuperAdmin = computed(() => session.value?.me.roles.some((role) => role.code === 'super_admin') ?? false);
 const assignableRoles = computed(() => roles.value.filter((role) =>
   (!role.isSystem || isSuperAdmin.value) && role.permissionCodes.every(can),
@@ -120,7 +120,7 @@ async function signIn() {
       ? requested
       : availableViews.value[0]?.id;
     if (target) {
-      if (target === 'knowledge' && route.path.startsWith('/admin/knowledge/')) {
+      if (route.path.startsWith(`/admin/${target}/`)) {
         view.value = target;
         await refresh();
       } else await openView(target);
@@ -143,13 +143,6 @@ function signOut() {
   error.value = '';
   notice.value = '';
   void router.replace('/admin');
-}
-
-async function openQuickSearchResult() {
-  const target = quickSearchMatches.value[0];
-  if (!target) return;
-  adminQuickSearch.value = '';
-  await openView(target.id);
 }
 
 async function refreshIdentity() {
@@ -210,7 +203,7 @@ watch(() => route.path, async () => {
   if (session.value) await refresh();
 });
 onMounted(async () => {
-  document.title = '暖巢智能客服 · 管理中心';
+  document.title = '产品智能客服 · 管理中心';
   const restored = loadAdminSession();
   const savedView = loadAdminView();
   if (!restored) return;
@@ -359,7 +352,9 @@ function auditActionLabel(action: string): string {
     'knowledge_base.created': '创建知识库', 'knowledge_base.updated': '更新知识库', 'knowledge_base.archived': '归档知识库',
     'knowledge_base.configured': '更新索引配置', 'knowledge_index.build_requested': '请求构建索引', 'knowledge_index.activated': '启用索引版本',
     'embedding_profile.created': '添加 Embedding 配置', 'embedding_profile.updated': '更新 Embedding 配置', 'faq.saved': '保存 FAQ',
+    'embedding_profile.deleted': '删除 Embedding 配置', 'embedding_profile.tested': '测试 Embedding 连接', 'knowledge_index.preserved': '保留旧索引',
     'debug.inspected': '检查会话调试上下文',
+    'agent_config.updated': '更新 Agent 配置',
     'llm_profile.created': '添加模型配置', 'llm_profile.updated': '更新模型配置',
     'llm_profile.activated': '切换当前模型', 'llm_profile.deleted': '删除模型配置',
   };
@@ -390,9 +385,9 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
 <template>
   <div v-if="!session" class="admin-login">
-    <div class="admin-login-brand"><span class="brand-mark">暖</span><span>暖巢智能客服 <small>管理中心</small></span></div>
+    <div class="admin-login-brand"><span class="brand-mark" aria-hidden="true"><Bot :size="22" /></span><span>产品智能客服 <small>管理中心</small></span></div>
     <main class="admin-login-main">
-      <p class="section-label">暖巢 · 管理中心</p>
+      <p class="section-label">产品智能客服 · 管理中心</p>
       <h1>欢迎回来</h1>
       <p>登录状态保存在当前浏览器，直至服务端会话到期、主动退出或账号被停用。</p>
       <form @submit.prevent="signIn">
@@ -408,8 +403,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
   <div v-else class="admin-shell">
     <header class="admin-global-header">
-      <div class="admin-brand"><span class="brand-mark">暖</span><span>暖巢智能客服</span></div>
-      <form class="admin-global-search" @submit.prevent="openQuickSearchResult"><Search :size="16" /><input v-model="adminQuickSearch" list="admin-sections" placeholder="搜索后台页面…" aria-label="搜索后台页面" /><datalist id="admin-sections"><option v-for="item in availableViews" :key="item.id" :value="item.label" /></datalist></form>
+      <div class="admin-brand"><span class="brand-mark" aria-hidden="true"><Bot :size="20" /></span><span>产品智能客服</span></div>
       <div class="admin-global-user"><span>{{ session.me.displayName.slice(0, 1) }}</span><div><strong>{{ session.me.displayName }}</strong><small>{{ session.me.roles.map((role) => role.name).join(' · ') || '无角色' }}</small></div></div>
     </header>
     <aside class="admin-sidebar">
@@ -434,8 +428,9 @@ function sourceLocation(filename: string, start: number, end: number): string {
         <AdminDashboard v-else-if="view === 'dashboard'" :token="session.token" />
         <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
         <ProductCatalogAdmin v-else-if="view === 'products'" :token="session.token" />
+        <AgentConfigAdmin v-else-if="view === 'agent-config'" :token="session.token" :permissions="session.me.permissionCodes" />
         <section v-else-if="view === 'documents'">
-          <AdminPageHeader eyebrow="知识管理" title="资料库" description="维护客服可引用的资料。仅已就绪且未下架的内容参与回答。">
+          <AdminPageHeader title="资料库">
             <template #actions><button v-if="can('documents.read')" type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新状态 ↻</button></template>
           </AdminPageHeader>
           <form v-if="can('documents.upload')" class="admin-upload" @submit.prevent="upload">
@@ -471,9 +466,10 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
         <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" :can-debug="can('conversations.debug')" />
         <ModelServiceAdmin v-else-if="view === 'model-services'" :token="session.token" :can-manage="can('model_profiles.manage')" @notice="notice = $event" @error="error = $event" />
+        <EmbeddingServiceAdmin v-else-if="view === 'embedding-services'" :token="session.token" :can-manage="can('embedding_profiles.manage')" :can-read-knowledge="can('documents.read')" @notice="notice = $event" @error="error = $event" />
 
         <section v-else-if="view === 'admins'">
-          <AdminPageHeader eyebrow="账号管理" title="管理员" description="创建账号、分配角色和停用账号；实际授权始终由后端校验。">
+          <AdminPageHeader title="管理员">
             <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
           </AdminPageHeader>
           <div class="admin-section-head"><div><h2>账号列表</h2><span>{{ admins.length }} 位管理员 · 点击查看授权详情</span></div><button class="admin-primary" type="button" @click="adminDialog = 'createAdmin'">新建管理员</button></div>
@@ -484,7 +480,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
         </section>
 
         <section v-else-if="view === 'roles'">
-          <AdminPageHeader eyebrow="访问控制" title="角色权限" description="权限代码由后端定义；这里只组合权限，不创建新的权限代码。">
+          <AdminPageHeader title="角色权限">
             <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
           </AdminPageHeader>
           <div class="admin-section-head"><div><h2>现有角色</h2><span>{{ roles.length }} 个角色 · 点击查看权限范围</span></div><button class="admin-primary" type="button" @click="editRole()">新建角色</button></div>
@@ -495,7 +491,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
         </section>
 
         <section v-else-if="view === 'audit'">
-          <AdminPageHeader eyebrow="审计追踪" title="操作记录" description="最近 50 条管理员操作，用于追溯资料与权限变更。">
+          <AdminPageHeader title="操作记录">
             <template #actions><button type="button" class="admin-text-button" :disabled="busy" @click="refresh">刷新 ↻</button></template>
           </AdminPageHeader>
           <div class="admin-audit-table"><table><thead><tr><th>时间</th><th>操作</th><th>对象</th><th>操作者</th><th>变更详情</th></tr></thead><tbody><tr v-for="item in audits" :key="item.id"><td><time>{{ formatDate(item.createdAt) }}</time></td><td><strong :title="item.action">{{ auditActionLabel(item.action) }}</strong></td><td>{{ auditTargetLabel(item.targetType) }} <span class="admin-mono">#{{ item.targetId }}</span></td><td>管理员 #{{ item.actorAdminId }}</td><td><details v-if="Object.keys(item.details).length" class="admin-audit-details"><summary>查看</summary><pre>{{ JSON.stringify(item.details, null, 2) }}</pre></details><span v-else class="admin-muted">—</span></td></tr></tbody></table><p v-if="!audits.length && !busy" class="admin-muted">暂无操作记录。</p></div>

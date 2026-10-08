@@ -61,10 +61,11 @@ export const configSchema = z.object({
     apiKey: z.string().default(''),
     baseUrl: z.string().url().default(DEFAULT_EMBEDDING_BASE_URL),
     model: z.string().trim().min(1).default(DEFAULT_EMBEDDING_MODEL),
+    allowedBaseUrls: z.array(z.string().url()).default([DEFAULT_EMBEDDING_BASE_URL, 'https://api.openai.com/v1']),
     connections: z.record(z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/u), z.object({
       baseUrl: z.string().url(), apiKey: z.string().min(1),
     }).strict()).default({}),
-  }).default({ apiKey: '', baseUrl: DEFAULT_EMBEDDING_BASE_URL, model: DEFAULT_EMBEDDING_MODEL, connections: {} }),
+  }).default({ apiKey: '', baseUrl: DEFAULT_EMBEDDING_BASE_URL, model: DEFAULT_EMBEDDING_MODEL, allowedBaseUrls: [DEFAULT_EMBEDDING_BASE_URL, 'https://api.openai.com/v1'], connections: {} }),
   llm: z.object({
     provider: z.enum(['openai-compatible']).default('openai-compatible'),
     apiKey: z.string().default(''),
@@ -127,6 +128,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       apiKey: env.EMBEDDING_API_KEY?.trim(),
       baseUrl: env.EMBEDDING_BASE_URL?.trim(),
       model: env.EMBEDDING_MODEL?.trim(),
+      allowedBaseUrls: env.EMBEDDING_ALLOWED_BASE_URLS?.split(',').map(value => value.trim()).filter(Boolean),
       connections: embeddingConnections,
     },
     llm: {
@@ -164,6 +166,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       'embedding.apiKey': 'EMBEDDING_API_KEY',
       'embedding.baseUrl': 'EMBEDDING_BASE_URL',
       'embedding.model': 'EMBEDDING_MODEL',
+      'embedding.allowedBaseUrls': 'EMBEDDING_ALLOWED_BASE_URLS',
       'llm.provider': 'LLM_PROVIDER',
       'llm.apiKey': 'LLM_API_KEY',
       'llm.baseUrl': 'LLM_BASE_URL',

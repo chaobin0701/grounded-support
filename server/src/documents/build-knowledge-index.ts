@@ -3,7 +3,8 @@ import { AppConfigService } from '../config/config.service';
 import { buildChunks, searchTokens } from './build-chunks';
 import { knowledgeConfigSchema } from './knowledge-config';
 import { indexInputSchema } from './knowledge-index.service';
-import { embeddingProfileSchema, embedWithProfile } from './profile-embedding';
+import { embeddingProfileSchema } from './profile-embedding';
+import { embedForProfile } from './embedding-runtime';
 
 export async function buildKnowledgeIndex(pool: Pool, versionId: number, runtime: AppConfigService): Promise<void> {
   if (!Number.isSafeInteger(versionId) || versionId < 1) throw new Error('Invalid version ID');
@@ -22,7 +23,7 @@ export async function buildKnowledgeIndex(pool: Pool, versionId: number, runtime
     for (const input of inputs) {
       const chunks = buildChunks(input.blocks, config);
       const searchable = chunks.filter((chunk) => chunk.kind !== 'parent');
-      const vectors = profile ? await embedWithProfile(profile, searchable.map((chunk) => chunk.kind === 'faq' ? chunk.headingPath : `${chunk.headingPath}\n${chunk.content}`), runtime) : [];
+      const vectors = profile ? await embedForProfile(client, runtime, profile, searchable.map((chunk) => chunk.kind === 'faq' ? chunk.headingPath : `${chunk.headingPath}\n${chunk.content}`)) : [];
       const parents = new Map<number, number>();
       let vectorIndex = 0;
       for (const chunk of chunks) {

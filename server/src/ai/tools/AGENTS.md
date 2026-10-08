@@ -13,10 +13,11 @@
 - `tool-execution.ts`：提供统一工具执行入口，负责调用 Registry、执行策略、异常转换和执行轨迹。
 - `tools.module.ts`：注册当前应用内置工具。
 - `knowledge-search.tool.ts`：把知识库检索封装为 `search_knowledge` 工具。
+- `load-skill.tool.ts`：按注册 ID 读取专项指导，不读取任意文件、不切换 Agent，也不改变权限或运行预算。
 - `product-catalog/`：从 `catalog_products` 数据表读取官网与 Agent 共用的产品目录，并提供三个只读产品工具。
 
 ## 设计边界
 
-工具只执行能力并返回结构化结果，不生成最终客服答案，也不绕过回答引用校验。模型调用由 Provider 负责，调用循环由 `ChatOrchestratorService` 负责；工具执行的通用限制由 Tool Runtime 负责。
+工具只执行能力并返回结构化结果，不生成最终客服答案；最终回答目前只做基础格式校验。模型调用由 Provider 负责，调用循环由 `AgentRunner` / `AgentLoop` 负责；工具执行的通用限制由 Tool Runtime 负责，配置来源为 Agent 的独立 runtime 参数，不从 Skill 读取。
 
 MCP 适配器位于 `../mcp/`，只将静态、进程内插件转换为 `AgentTool`；业务工具和 Orchestrator 不应依赖 MCP 协议细节。

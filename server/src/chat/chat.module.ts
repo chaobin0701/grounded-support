@@ -14,11 +14,12 @@ import { ChatOrchestratorService } from './chat-orchestrator.service';
 import { AgentModule } from '../ai/agent/agent.module';
 import { ChatApplicationService } from './chat-application.service';
 import { SkillsModule } from '../ai/skills/skills.module';
-import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
+import { AdminAgentConfigController } from './admin-agent-config.controller';
+import { AgentSettingsService } from '../config/agent-settings.service';
 
 @Module({
   imports: [DocumentModule, AdminModule, AgentModule, SkillsModule],
-  controllers: [ChatController, AdminChatTraceController, AdminConversationController, AdminDebugController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, SkillPreflightService, AdminDebugService, AdminConversationService],
+  controllers: [ChatController, AdminChatTraceController, AdminConversationController, AdminDebugController, AdminAgentConfigController],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, AdminDebugService, AdminConversationService, AgentSettingsService],
 })
 export class ChatModule {}

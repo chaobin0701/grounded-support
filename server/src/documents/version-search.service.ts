@@ -2,7 +2,8 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { DatabaseService } from '../database.service';
 import { AppConfigService } from '../config/config.service';
 import { knowledgeConfigSchema } from './knowledge-config';
-import { embedWithProfile, embeddingProfileSchema } from './profile-embedding';
+import { embeddingProfileSchema } from './profile-embedding';
+import { embedForProfile } from './embedding-runtime';
 import { searchTokens } from './build-chunks';
 import { fuseSearchResults, SearchHit } from './fuse-search-results';
 
@@ -51,13 +52,16 @@ export class VersionSearchService {
       }
       if (config.indexMode === 'high_quality' && config.retrievalMode !== 'fulltext') {
         const profile = embeddingProfileSchema.parse(version.embedding_snapshot);
-        const [queryVector] = await embedWithProfile(profile, [query], this.runtime);
+        const [queryVector] = await embedForProfile(this.database, this.runtime, profile, [query]);
         embeddingCalls++;
         const coverage = await this.database.query<{ count: number }>('SELECT count(*)::int AS count FROM chunk_embeddings e JOIN index_chunks c ON c.id=e.chunk_id WHERE c.version_id=$1', [version.id]);
         vectorIndexedChunks += coverage.rows[0].count;
-        vector.push(...(await this.database.query<SearchHit>(`WITH scored AS (${base},
-          1-(e.embedding <=> $2::vector) AS score ${joins} JOIN chunk_embeddings e ON e.chunk_id=c.id
-          WHERE ${where} AND e.dimensions=$3)
+        vector.push(...(await this.database.query<SearchHit>(`WITH compatible AS MATERIALIZED (
+          SELECT e.* FROM chunk_embeddings e JOIN index_chunks c ON c.id=e.chunk_id
+          WHERE c.version_id=$1 AND e.dimensions=$3 AND vector_dims(e.embedding)=$3
+        ), scored AS (${base},
+          1-(e.embedding <=> $2::vector) AS score ${joins} JOIN compatible e ON e.chunk_id=c.id
+          WHERE ${where})
           SELECT * FROM scored WHERE score >= $4 ORDER BY score DESC,"chunkId" LIMIT $6`,
         [version.id, `[${queryVector.join(',')}]`, profile.dimensions, config.vectorThreshold, knowledgeBaseId !== undefined, limit * 4])).rows);
       }

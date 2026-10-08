@@ -171,7 +171,9 @@ test('unified agent answers a greeting without preflight or citation', async () 
 
   assert.equal(result.result.refused, false);
   assert.equal(result.result.answer, '你好啊，我可以帮你查询产品和售后资料。');
-  assert.equal(result.contextSnapshot.skill.id, 'question_answering');
+  assert.equal(result.contextSnapshot.skill, undefined);
+  assert.deepEqual(result.contextSnapshot.loadedSkills, []);
+  assert.equal(result.contextSnapshot.executionSteps.some(step => step.type === 'skill_selection'), false);
   assert.equal(result.contextSnapshot.executionSteps.some((step) => step.type === 'preflight'), false);
   assert.equal(result.contextSnapshot.toolCalls.length, 0);
 });

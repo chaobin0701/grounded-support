@@ -1,16 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { AppConfigService } from '../config/config.service';
+import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration } from '../config/agent-config';
 import { PreviousTurnDto } from './chat.dto';
 import type { SearchHit } from '../documents/fuse-search-results';
-import type { SkillDefinition } from '../ai/skills/skill.types';
+import type { SkillDefinition, SkillSummary } from '../ai/skills/skill.types';
 import type { AgentTranscriptMessage } from './agent-transcript';
 
 export interface ContextBuildInput {
+  configuration?: AgentConfiguration;
   question: string;
   summary: string;
   recentHistory: PreviousTurnDto[];
   toolResults: Array<Record<string, unknown>>;
   initialEvidence?: SearchHit[];
-  skill?: SkillDefinition;
+  availableSkills?: SkillSummary[];
+  loadedSkills?: SkillDefinition[];
   transcript?: AgentTranscriptMessage[];
 }
 
@@ -32,10 +36,13 @@ export interface BuiltContext {
 
 @Injectable()
 export class ContextBuilder {
+  constructor(@Optional() private readonly config?: AppConfigService) {}
+
   build(input: ContextBuildInput): BuiltContext {
+    const memory = (input.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION).memory;
     const question = input.question.trim().slice(0, 2000);
-    const summary = input.summary.slice(0, 1500);
-    const history = input.recentHistory.slice(-3).map((turn) => ({
+    const summary = input.summary.slice(0, memory.summaryMaxChars);
+    const history = input.recentHistory.slice(-memory.recentTurns).map((turn) => ({
       question: turn.question.trim().slice(0, 2000),
       answer: turn.answer.trim().slice(0, 1200),
     }));
@@ -44,7 +51,8 @@ export class ContextBuilder {
       summary,
       history,
       toolResults: input.toolResults,
-      skill: input.skill ? { id: input.skill.id, summary: input.skill.summary ?? input.skill.description, instructions: input.skill.systemInstructions } : undefined,
+      availableSkills: input.availableSkills ?? [],
+      loadedSkills: (input.loadedSkills ?? []).map(({ id, name, version, systemInstructions }) => ({ id, name, version, instructions: systemInstructions })),
       initialEvidence: (input.initialEvidence ?? []).map((hit) => ({
         chunkId: hit.chunkId,
         title: hit.documentTitle,

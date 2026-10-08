@@ -1,14 +1,15 @@
-import { Injectable, Optional } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { AgentRunner } from '../ai/agent/agent-runner';
 import type { PreviousTurnDto } from './chat.dto';
 import type { ChatRun, ChatStreamCallbacks, CommentaryEvent, PublicProgressEvent, ToolStep } from './chat.service';
 import { LlmService } from './llm.service';
-import { SkillSelector } from '../ai/skills/skill-selector';
-import { questionAnsweringSkill } from '../ai/skills/built-in/question-answering.skill';
-import { SkillPreflightService } from '../ai/skills/skill-preflight.service';
+import { SkillRegistry } from '../ai/skills/skill-registry';
 import type { AgentModelCall } from '../ai/agent/agent-state';
 import type { AgentTranscriptMessage } from './agent-transcript';
 import { ContextGovernor } from './context-governor';
+import { AppConfigService } from '../config/config.service';
+import { agentConfigurationRevision, DEFAULT_AGENT_CONFIGURATION, effectiveAgentConfiguration, type AgentConfigurationSnapshot } from '../config/agent-config';
+import { AgentSettingsService } from '../config/agent-settings.service';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -17,9 +18,10 @@ export class ChatOrchestratorService {
   constructor(
     private readonly agentRunner: AgentRunner,
     private readonly llm: LlmService,
-    private readonly skillSelector?: SkillSelector,
-    @Optional() private readonly skillPreflight?: SkillPreflightService,
+    @Optional() private readonly skillRegistry?: SkillRegistry,
     @Optional() private readonly contextGovernor?: ContextGovernor,
+    @Optional() private readonly config?: AppConfigService,
+    @Optional() private readonly settings?: AgentSettingsService,
   ) {}
 
   async askDetailed(
@@ -31,34 +33,28 @@ export class ChatOrchestratorService {
     _onCommentary?: (event: CommentaryEvent) => void,
     requestedSkillId?: string,
     callbacks?: ChatStreamCallbacks,
-    agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[] },
+    agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot },
   ): Promise<ChatRun> {
+    const configured = agentContext?.configurationSnapshot ?? await this.settings?.snapshot();
+    const agentConfig = configured?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION;
+    const configurationSnapshot = { ...(configured ?? { revision: agentConfigurationRevision(agentConfig), configurationVersion: 0, updatedAt: null, updatedBy: null }), configuration: effectiveAgentConfiguration(agentConfig) };
     const progressEvents: PublicProgressEvent[] = [];
     const emitProgress = (event: PublicProgressEvent) => {
       progressEvents.push(event);
       callbacks?.onProgress?.(event);
     };
-    const selected = this.skillSelector
-      ? this.skillSelector.select(question, requestedSkillId)
-      : { skill: questionAnsweringSkill, selectedBy: 'default' as const };
-    const preflight = this.skillPreflight
-      ? await this.skillPreflight.run(question, selected.skill)
-      : { hits: [], query: null, durationMs: 0 };
+    // Ordinary turns have no current/default Skill and no keyword routing.
+    // Retain explicit internal requests for real specialist guides only.
+    if (requestedSkillId && (!this.skillRegistry?.has(requestedSkillId) || !agentConfig.enabledSkills.includes(requestedSkillId))) throw new BadRequestException('Unknown or unavailable skill');
+    const initialSkills = requestedSkillId ? [this.skillRegistry!.get(requestedSkillId)] : [];
     const result = await this.agentRunner.run(
       {
         question,
+        configurationSnapshot,
         summary,
         recentHistory: history,
-        skill: selected.skill,
-        initialEvidence: preflight.hits,
-        preflight: {
-          query: preflight.query,
-          durationMs: preflight.durationMs,
-          hitCount: preflight.hits.length,
-          ...(preflight.retrievalMode ? { retrievalMode: preflight.retrievalMode } : {}),
-          ...(preflight.errorCode ? { errorCode: preflight.errorCode } : {}),
-        },
-        selectedBy: selected.selectedBy,
+        availableSkills: (this.skillRegistry?.summaries() ?? []).filter(skill => agentConfig.enabledSkills.includes(skill.id)),
+        initialSkills,
         conversationId: agentContext?.conversationId,
         traceId: agentContext?.traceId,
         priorTranscript: agentContext?.priorTranscript,
@@ -66,11 +62,15 @@ export class ChatOrchestratorService {
       { onContext, onProgress: emitProgress },
     );
     const hasToolProgress = progressEvents.some((event) => event.stage === 'tool');
+    result.contextSnapshot.agentConfigurationRevision = configurationSnapshot.revision;
+    result.contextSnapshot.agentConfigurationVersion = configurationSnapshot.configurationVersion;
     if (!result.result.refused && callbacks?.onAnswerDelta) {
       const answerOperationId = `${Date.now()}-answer`;
       if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-start`, operationId: answerOperationId, stage: 'answer', status: 'running', text: '资料已准备完成，正在整理回答…' });
       callbacks.onAnswerStarted?.({ citations: result.result.citations });
-      const answerSystemPrompt = '你是暖巢电器的最终回答生成器。只输出给用户看的简短中文回答，不要输出 JSON、Markdown、引用编号或内部过程。只能使用提供的草稿和事实，不能补充未提供的信息。';
+      const tone = { professional: '专业、清晰', friendly: '亲切、自然', concise: '简洁、直接' }[agentConfig.responseStyle.tone];
+      const detail = { brief: '优先简短回复', balanced: '根据问题复杂度适度展开', detailed: '必要时分项解释细节，避免无关展开' }[agentConfig.responseStyle.detail];
+      const answerSystemPrompt = `你是${agentConfig.identity.name}的最终回答生成器。${agentConfig.answerInstructions}\n回答风格：${tone}；${detail}。`;
       const answerUserPrompt = JSON.stringify({ question, draftAnswer: result.result.answer, citations: result.result.citations, context: { sources: result.contextSnapshot.sources ?? [], products: result.contextSnapshot.products ?? [] } });
       const answerBudget = this.contextGovernor?.inspect({
         systemPrompt: answerSystemPrompt,

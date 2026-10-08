@@ -16,6 +16,7 @@ type Base = { id: number; name: string; description: string; isDefault: boolean;
   archivedAt: string | null; createdAt: string; updatedAt: string; documentCount: number; readyDocumentCount?: number;
   draftConfig: Partial<Config>; activeIndexVersionId: number | null };
 type Profile = { id: number; name: string; enabled: boolean; config: { model: string; dimensions: number; provider: string } };
+type IndexVersion = { id: number; status: 'building' | 'ready' | 'failed'; config: Config; chunkCount: number; errorMessage: string | null; createdAt: string };
 type Chunk = { id: number; ordinal: number; headingPath: string; content: string; sourceStartLine: number; sourceEndLine: number };
 type Hit = { chunkId: number; documentId: number; documentTitle: string; originalFilename: string; headingPath: string; content: string; score: number; matchType?: string };
 type RecallResult = { hits: Hit[]; lexicalResults?: Hit[]; vectorResults?: Hit[]; retrievalMode?: string; vectorIndexedChunks?: number; durationMs?: number; embeddingCalls?: number; versionIds?: number[] };
@@ -30,6 +31,13 @@ const defaults: Config = { indexMode: 'economy', retrievalMode: 'fulltext', chun
 const bases = ref<Base[]>([]);
 const documents = ref<DocumentItem[]>([]);
 const profiles = ref<Profile[]>([]);
+const versions = ref<IndexVersion[]>([]);
+const settingsDirty = computed(() => (Object.keys(defaults) as (keyof Config)[])
+  .some(key => config.value[key] !== (current.value?.draftConfig[key] ?? defaults[key])));
+const buildingIndex = computed(() => versions.value.some(v => v.status === 'building'));
+const activeVersion = computed(() => versions.value.find(v => v.id === current.value?.activeIndexVersionId));
+const newestVersion = computed(() => versions.value[0]);
+const canReadEmbedding = computed(() => can('embedding_profiles.read') || can('embedding_profiles.manage'));
 const selectedId = ref<number | null>(null);
 const current = computed(() => bases.value.find((base) => base.id === selectedId.value));
 const config = ref<Config>({ ...defaults });
@@ -45,7 +53,6 @@ const uploadProgress = ref({ done: 0, total: 0 });
 const createStep = ref<1 | 2>(1);
 const createConfig = ref<Config>({ ...defaults });
 const processingConfig = ref<ProcessingConfig>({ chunkMode: 'general', separatorMode: 'auto', preserveHeading: true, chunkChars: 800, overlapChars: 60 });
-const profileDialog = ref(false);
 const previewDialog = ref(false);
 const previewTitle = ref('');
 const previewChunks = ref<Chunk[]>([]);
@@ -62,6 +69,7 @@ const files = ref<File[]>([]);
 const query = ref('');
 const topK = ref(5);
 const recallMode = ref<'fulltext' | 'vector' | 'hybrid'>('hybrid');
+const recallTarget = ref<'active' | 'draft'>('active');
 const recallResult = ref<RecallResult | null>(null);
 const listQuery = ref('');
 const listStatus = ref<KnowledgeBaseStatusFilter>('all');
@@ -70,8 +78,6 @@ const documentQuery = ref('');
 const documentStatusFilter = ref<DocumentStatusFilter>('all');
 const showArchivedDocuments = ref(false);
 const selectedDocuments = ref<number[]>([]);
-const profileForm = ref({ name: '', config: { provider: 'volcengine-multimodal', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
-  model: 'doubao-embedding-vision-251215', dimensions: 2048, maxInputChars: 8000, batchSize: 16, secretRef: 'default' } });
 
 const api = <T,>(path = '', method = 'GET', body?: unknown) => request<T>(`/knowledge-bases${path}`,
   { method, ...(body === undefined ? {} : { body: body instanceof FormData ? body : JSON.stringify(body) }) }, props.token);
@@ -122,6 +128,7 @@ async function loadDetails() {
   const base = await api<Base>(`/${selectedId.value}`);
   bases.value = bases.value.map((item) => item.id === base.id ? { ...item, ...base } : item);
   documents.value = await api<DocumentItem[]>(`/${selectedId.value}/documents?limit=100`);
+  versions.value = await api<IndexVersion[]>(`/${selectedId.value}/versions`);
   config.value = { ...defaults, ...base.draftConfig };
   topK.value = config.value.topK;
   recallMode.value = config.value.retrievalMode;
@@ -197,7 +204,14 @@ async function saveSettings() {
     value.embeddingProfileId = value.embeddingProfileId ?? profile.id;
   }
   if (value.indexMode === 'economy') value.embeddingProfileId = null;
-  await run(async () => { await api(`/${selectedId.value}/config`, 'PATCH', value); await loadDetails(); }, '检索与分段设置已保存。');
+  await run(async () => { await api(`/${selectedId.value}/config`, 'PATCH', value); await loadDetails(); }, '设置已保存。更换模型后请构建并应用新索引，原索引继续提供服务。');
+}
+async function buildIndex() {
+  await run(async () => { await api(`/${selectedId.value}/versions`, 'POST'); versions.value = await api<IndexVersion[]>(`/${selectedId.value}/versions`); }, '新索引已开始构建，完成后可应用。');
+}
+async function applyIndex(version: IndexVersion) {
+  if (version.status !== 'ready') return;
+  await run(async () => { await api(`/${selectedId.value}/versions/${version.id}/activate`, 'POST'); await loadDetails(); }, '新索引已应用，原索引仍然保留。');
 }
 async function uploadDocuments() {
   const selectedFiles = [...files.value];
@@ -300,18 +314,11 @@ async function downloadDocument(doc: DocumentItem) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 }
-async function saveProfile() {
-  await run(async () => {
-    await api('/embedding-profiles', 'POST', profileForm.value);
-    profiles.value = await api<Profile[]>('/embedding-profiles');
-    const profile = profiles.value.find((item) => item.name === profileForm.value.name);
-    if (profile) { config.value.indexMode = 'high_quality'; config.value.retrievalMode = 'hybrid'; config.value.embeddingProfileId = profile.id; }
-    profileDialog.value = false;
-  }, 'Embedding 模型配置已添加。');
-}
 async function recall() {
   await run(async () => {
-    recallResult.value = await api<RecallResult>(`/${selectedId.value}/recall-test`, 'POST', { query: query.value, topK: topK.value, retrievalMode: recallMode.value });
+    recallResult.value = current.value?.activeIndexVersionId && recallTarget.value === 'active'
+      ? await api<RecallResult>(`/${selectedId.value}/search?q=${encodeURIComponent(query.value)}&limit=${topK.value}`)
+      : await api<RecallResult>(`/${selectedId.value}/recall-test`, 'POST', { query: query.value, topK: topK.value, retrievalMode: recallMode.value });
   });
 }
 async function setKnowledgeBaseEnabled(enabled: boolean) {
@@ -319,9 +326,10 @@ async function setKnowledgeBaseEnabled(enabled: boolean) {
   await run(async () => { await api(`/${current.value!.id}`, 'PATCH', { enabledForChat: enabled }); await reload(); }, enabled ? '知识库已启用。' : '知识库已停用。');
 }
 async function requestArchiveBase() {
-  if (!current.value || current.value.isDefault) return;
-  pendingAction.value = { title: '归档知识库', description: `归档“${current.value.name}”后，该库不会再参与访客检索。`, run: async () => {
-    await run(async () => { await api(`/${current.value!.id}/archive`, 'POST'); await router.push('/admin/knowledge'); await reload(); }, '知识库已归档。');
+  const base = current.value;
+  if (!base || base.archivedAt || !canManage.value || busy.value) return;
+  pendingAction.value = { title: '归档知识库', description: `归档“${base.name}”后，该库不会再参与访客检索，文档和索引仍会保留。${base.isDefault ? '后续请在其他知识库中上传文档。' : ''}`, run: async () => {
+    await run(async () => { await api(`/${base.id}/archive`, 'POST'); await router.push('/admin/knowledge'); await reload(); }, '知识库已归档。');
     pendingAction.value = null;
   } };
 }
@@ -341,8 +349,12 @@ watch(() => config.value.indexMode, (mode) => {
 watch(() => route.path, (path) => { if (path === '/admin/knowledge') selectedId.value = null; });
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 async function refreshProcessing() {
-  if (!selectedId.value || busy.value || !processingCount.value) return;
-  try { documents.value = await api<DocumentItem[]>(`/${selectedId.value}/documents?limit=100`); }
+  if (!selectedId.value || busy.value || (!processingCount.value && !buildingIndex.value)) return;
+  const id = selectedId.value;
+  try {
+    if (processingCount.value) { const items = await api<DocumentItem[]>(`/${id}/documents?limit=100`); if (id === selectedId.value) documents.value = items; }
+    if (buildingIndex.value) { const items = await api<IndexVersion[]>(`/${id}/versions`); if (id === selectedId.value) versions.value = items; }
+  }
   catch { /* Keep the current view usable; manual refresh surfaces request errors. */ }
 }
 onMounted(() => { void reload(); refreshTimer = setInterval(() => void refreshProcessing(), 4000); document.addEventListener('click', closeActionMenu, true); });
@@ -351,7 +363,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 
 <template>
   <section class="kb-page">
-    <AdminPageHeader v-if="!current || route.path === '/admin/knowledge'" eyebrow="知识管理" title="知识库" description="组织业务资料，配置检索方式，并验证内容召回质量。">
+    <AdminPageHeader v-if="!current || route.path === '/admin/knowledge'" :title="route.params.baseId ? '知识库详情' : '知识库'" :back-to="route.params.baseId ? '/admin/knowledge' : undefined" back-label="返回知识库">
       <template #actions><button v-if="canManage" class="kb-primary" type="button" @click="openCreate"><Plus :size="16" /> 新建知识库</button></template>
     </AdminPageHeader>
     <ToastNotice :message="error || notice" :type="error ? 'error' : 'success'" @dismiss="error ? (error = '') : (notice = '')" />
@@ -381,7 +393,10 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 
     <template v-else>
       <template v-if="documentDetail">
-        <div class="kb-document-actions"><button class="kb-quiet" @click="router.push(`/admin/knowledge/${selectedId}/documents`)">返回文档</button><button v-if="!documentDetail.archivedAt && can('documents.reprocess') && ['pending','ready','failed','extracted'].includes(documentDetail.status)" class="kb-quiet" @click="reprocess([documentDetail.id])">重新解析</button></div>
+        <AdminPageHeader :title="documentDetail.title" :back-to="`/admin/knowledge/${selectedId}/documents`" back-label="返回文档列表">
+          <template #breadcrumb><div class="admin-page-header-breadcrumb kb-detail-path"><RouterLink to="/admin/knowledge">知识库</RouterLink><span aria-hidden="true">/</span><span>{{ current.name }}</span></div></template>
+          <template #actions><button v-if="!documentDetail.archivedAt && can('documents.reprocess') && ['pending','ready','failed','extracted'].includes(documentDetail.status)" class="kb-quiet" @click="reprocess([documentDetail.id])">重新解析</button></template>
+        </AdminPageHeader>
         <section class="kb-document-detail">
           <div class="kb-document-detail-meta"><span class="kb-file-type" :class="fileTypeClass(documentDetail)" role="img" :aria-label="`${fileType(documentDetail)} 文件`"><FileText :size="22" /></span><div><strong>{{ documentDetail.originalFilename }}</strong><p>{{ fileType(documentDetail) }} · {{ charCount(documentDetail) }} 字符 · {{ documentDetailChunks.length }} 个分段</p></div></div>
           <div v-if="!documentDetailChunks.length" class="kb-empty"><FileText :size="28" /><strong>暂无分段</strong><p>文档处理完成后，分段会显示在这里。</p></div>
@@ -389,7 +404,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
         </section>
       </template>
       <template v-else>
-      <AdminPageHeader class="kb-detail-header" :title="current.name">
+      <AdminPageHeader class="kb-detail-header" :title="current.name" back-to="/admin/knowledge" back-label="返回知识库">
         <template #badge><span class="kb-badge admin-page-header-badge" :class="current.archivedAt ? 'muted' : current.enabledForChat ? 'green' : 'gray'">{{ current.archivedAt ? '已归档' : current.enabledForChat ? '已启用' : '已停用' }}</span></template>
         <template #actions><button v-if="canManage" class="kb-quiet" @click="openEdit">编辑信息</button><button v-if="canManage && !current.archivedAt" class="kb-quiet" @click="setKnowledgeBaseEnabled(!current.enabledForChat)">{{ current.enabledForChat ? '停用知识库' : '启用知识库' }}</button><button v-if="canManage && !current.archivedAt" class="kb-danger-quiet" @click="requestArchiveBase">归档</button></template>
       </AdminPageHeader>
@@ -401,7 +416,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
           <label class="kb-archive-toggle"><input v-model="showArchivedDocuments" type="checkbox" role="switch" aria-label="显示已归档的文档" /><span class="kb-archive-track" aria-hidden="true"></span><span>显示已归档</span></label>
           <div class="kb-toolbar-spacer"></div><button v-if="selectedDocuments.length && can('documents.archive')" class="kb-quiet" @click="archiveSelected">归档所选（{{ selectedDocuments.length }}）</button><button v-if="selectedDocuments.length && can('documents.reprocess')" class="kb-quiet" @click="reprocess(selectedDocuments)">重新解析（{{ selectedDocuments.length }}）</button><button v-if="can('documents.upload') && !current.archivedAt" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button>
         </div>
-        <div v-if="processingCount" class="kb-processing-banner"><span class="kb-status-dot amber"></span><div><strong>{{ processingCount }} 份文档等待处理或正在处理中</strong><p>解析完成后会自动进入可检索状态，无需单独发布。</p></div></div>
+        <div v-if="processingCount" class="kb-processing-banner"><span class="kb-status-dot amber"></span><div><strong>{{ processingCount }} 份文档等待处理或正在处理中</strong><p>{{ current.activeIndexVersionId ? '解析完成后，请在设置中构建并应用新索引；现有在线索引继续服务。' : '解析完成后会自动进入可检索状态，无需单独发布。' }}</p></div></div>
         <div v-if="failedCount" class="kb-processing-banner failed"><span class="kb-status-dot red"></span><div><strong>{{ failedCount }} 份文档处理失败</strong><p>检查错误信息后，可对失败文档重新解析。</p></div></div>
         <div v-if="!visibleDocuments.length" class="kb-empty kb-empty-doc"><FileText :size="30" /><strong>{{ fileDocuments.length ? '没有符合条件的文档' : '还没有文档' }}</strong><p>{{ fileDocuments.length ? '调整搜索词、状态，或打开“显示已归档”。' : '上传 Markdown、DOCX 或可复制文字的 PDF，解析成功后会自动参与检索。' }}</p><button v-if="!fileDocuments.length && can('documents.upload') && !current.archivedAt" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button></div>
         <div v-else class="kb-table-wrap"><table class="kb-table kb-doc-table"><thead><tr><th class="check-cell"><input type="checkbox" :checked="allVisibleSelected" aria-label="选择所有文档" @change="toggleAll" /></th><th>文档名称</th><th>类型</th><th>字符数</th><th>分段数</th><th>状态</th><th>检索</th><th>更新时间</th><th>操作</th></tr></thead>
@@ -415,16 +430,22 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
         <form @submit.prevent="saveSettings">
           <fieldset :disabled="busy || !canManage || !!current.archivedAt">
           <div class="kb-setting-note">文档分段配置已移至上传和重新解析流程，知识库设置只负责索引质量、Embedding 模型与检索方式。</div>
-          <section class="kb-setting-group"><div><h3>Embedding 设置</h3><p>向量模型负责把文档片段和用户问题映射到同一语义空间。</p></div><div class="kb-setting-fields"><label>索引质量<select v-model="config.indexMode"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式只使用全文检索；高级模式支持向量和混合检索。</small></label><label v-if="config.indexMode === 'high_quality'">Embedding 模型<select v-model.number="config.embeddingProfileId"><option :value="null">选择已配置模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }} · {{ profile.config.dimensions }} 维</option></select><small v-if="currentProfile">当前：{{ currentProfile.name }}</small><small v-else-if="!profiles.some(item => item.enabled)">尚无可用模型配置，请先添加。</small></label><button v-if="canManage" class="kb-text-action" type="button" @click="profileDialog = true">{{ profiles.length ? '添加或管理模型配置' : '配置 Embedding 模型' }}</button></div></section>
+          <section class="kb-setting-group"><div><h3>Embedding 设置</h3><p>向量模型负责把文档片段和用户问题映射到同一语义空间。</p></div><div class="kb-setting-fields"><label>索引质量<select v-model="config.indexMode"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式只使用全文检索；高级模式支持向量和混合检索。</small></label><label v-if="config.indexMode === 'high_quality'">Embedding 模型<select v-model.number="config.embeddingProfileId"><option :value="null">选择已配置模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }} · {{ profile.config.dimensions }} 维</option></select><small v-if="currentProfile">待应用配置：{{ currentProfile.name }}</small><small v-else-if="!profiles.some(item => item.enabled)">尚无可用模型配置，请先添加。</small></label><RouterLink v-if="canReadEmbedding" class="kb-text-action" to="/admin/embedding-services">管理 Embedding 服务</RouterLink></div></section>
           <section class="kb-setting-group"><div><h3>检索设置</h3><p>控制召回算法、候选数量与相关度过滤。</p></div><div class="kb-setting-fields"><label>检索方式<select v-model="config.retrievalMode"><option value="fulltext">全文检索</option><template v-if="config.indexMode === 'high_quality'"><option value="vector">向量检索</option><option value="hybrid">混合检索</option></template></select><small>经济模式只提供全文检索；高级模式可选择向量或混合检索。</small></label><label>Top K<input v-model.number="config.topK" type="number" min="1" max="8" /><small>访客问答最多使用 8 个候选片段。</small></label><label>{{ config.retrievalMode === 'fulltext' ? '全文相关度阈值' : '相似度阈值' }}<input v-if="config.retrievalMode === 'fulltext'" v-model.number="config.lexicalThreshold" type="number" min="0" max="1" step="0.01" /><input v-else v-model.number="config.vectorThreshold" type="number" min="-1" max="1" step="0.05" /></label><label class="kb-disabled-option">重排模型<select disabled><option>暂未启用</option></select><small>后续版本开放。</small></label></div></section>
           </fieldset>
-          <div class="kb-settings-footer"><p>修改索引质量或检索方式后，已有文档可能需要重新建立索引。</p><button class="kb-primary" type="submit" :disabled="busy || !canManage || !!current.archivedAt">保存设置</button></div>
+          <div class="kb-settings-footer"><p>更换模型会保留旧索引。保存后，先构建新索引，再应用。</p><button class="kb-primary" type="submit" :disabled="busy || !canManage || !!current.archivedAt">保存设置</button></div>
         </form>
+        <section class="kb-index-versions" aria-label="索引版本">
+          <header><div><h3>索引版本</h3><p>{{ current.activeIndexVersionId ? '在线版本 #' + current.activeIndexVersionId + ' · ' + retrievalName(activeVersion?.config.retrievalMode ?? 'fulltext') : '当前使用文档即时索引' }}</p></div><button v-if="canManage && !current.archivedAt" class="ui-button" type="button" :disabled="busy || buildingIndex || settingsDirty || processingCount > 0 || !documents.some(d => !d.archivedAt && d.status === 'ready')" @click="buildIndex">{{ buildingIndex ? '正在构建…' : newestVersion?.status === 'failed' ? '重新构建索引' : '构建新索引' }}</button></header>
+          <p v-if="settingsDirty" class="kb-index-hint">请先保存设置，再构建索引。</p>
+          <p v-if="!versions.length" class="kb-index-hint">尚未创建版本，更换模型时会自动保留当前索引。</p>
+          <article v-for="version in versions.slice(0, 5)" :key="version.id"><div><strong>#{{ version.id }}</strong><span>{{ version.config.embeddingProfileId ? 'Embedding 配置 #' + version.config.embeddingProfileId : '全文索引' }}</span><small>{{ version.chunkCount }} 段 · {{ fmtDate(version.createdAt) }}</small><p v-if="version.status === 'failed'" role="alert">构建失败，请检查连接、维度和输入上限后重试。原索引未替换。</p></div><span class="kb-badge" :class="version.status === 'failed' ? 'failed' : version.status === 'building' ? 'processing' : 'ready'">{{ version.id === current.activeIndexVersionId ? '在线使用' : version.status === 'ready' ? '可应用' : version.status === 'building' ? '构建中' : '失败' }}</span><button v-if="canManage && !current.archivedAt && version.status === 'ready' && version.id !== current.activeIndexVersionId" class="ui-button" type="button" :disabled="busy" @click="applyIndex(version)">{{ version.id === newestVersion?.id ? '应用索引' : '切换到此版本' }}</button></article>
+        </section>
       </section>
 
       <section v-else class="kb-content kb-recall">
         <div class="kb-section-heading"><div><h2>召回测试</h2><p>仅验证知识库检索结果，不会生成 AI 回答。</p></div></div>
-        <form class="kb-recall-form" @submit.prevent="recall"><label>测试问题<textarea v-model.trim="query" required minlength="2" maxlength="200" rows="3" placeholder="例如：退货需要满足什么条件？" /></label><div class="kb-recall-controls"><label>检索方式<select v-model="recallMode"><option value="fulltext">全文检索</option><option value="vector">向量检索</option><option value="hybrid">混合检索</option></select></label><label>Top K<input v-model.number="topK" type="number" min="1" max="20" /></label><span class="kb-toolbar-spacer"></span><button class="kb-primary" :disabled="busy || query.trim().length < 2">{{ busy ? '检索中…' : '执行检索' }}</button></div></form>
+        <form class="kb-recall-form" @submit.prevent="recall"><label>测试问题<textarea v-model.trim="query" required minlength="2" maxlength="200" rows="3" placeholder="例如：退货需要满足什么条件？" /></label><div class="kb-recall-controls"><label v-if="current.activeIndexVersionId">测试范围<select v-model="recallTarget"><option value="active">在线索引</option><option value="draft">当前文档（待应用配置）</option></select></label><label v-if="!current.activeIndexVersionId || recallTarget === 'draft'">检索方式<select v-model="recallMode"><option value="fulltext">全文检索</option><option value="vector">向量检索</option><option value="hybrid">混合检索</option></select></label><label>Top K<input v-model.number="topK" type="number" min="1" max="20" /></label><span class="kb-toolbar-spacer"></span><button class="kb-primary" :disabled="busy || query.trim().length < 2">{{ busy ? '检索中…' : '执行检索' }}</button></div></form>
         <div v-if="recallResult" class="kb-recall-results"><div class="kb-recall-summary"><strong>{{ recallResult.hits.length }} 条召回结果</strong><span>{{ retrievalName(recallMode) }}</span><span>{{ recallResult.durationMs ?? '—' }} ms</span><span>向量索引 {{ recallResult.vectorIndexedChunks ?? 0 }} 段</span></div>
           <div v-if="!recallResult.hits.length" class="kb-empty kb-empty-doc"><strong>没有召回结果</strong><p>确认文档已处理完成，并尝试调整检索方式、分段或相似度阈值。</p></div>
           <article v-for="(hit, index) in recallResult.hits" :key="hit.chunkId" class="kb-hit"><div class="kb-hit-head"><span class="kb-hit-number">{{ String(index + 1).padStart(2, '0') }}</span><div><strong>{{ hit.documentTitle }}</strong><small>{{ hit.originalFilename }}<template v-if="hit.headingPath"> · {{ hit.headingPath }}</template></small></div><span class="kb-hit-score">{{ Number(hit.score).toFixed(3) }}</span></div><p>{{ hit.content }}</p><footer><span>分段 #{{ hit.chunkId }}</span><span>{{ hit.matchType || retrievalName(recallMode) }}</span></footer></article>
@@ -437,7 +458,7 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
     <UiDialog :open="dialog !== null" :title="dialog === 'create' ? '新建知识库' : dialog === 'edit' ? '编辑知识库' : '上传文档'" :description="dialog === 'upload' ? '支持 Markdown、DOCX 和可复制文字的 PDF，单个文件最大 2 MB。' : dialog === 'create' ? '创建后会进入知识库详情页，可继续导入文档。' : '更新知识库的名称和说明。'" @update:open="dialog = $event ? dialog : null">
       <form v-if="dialog === 'create' || dialog === 'edit'" class="kb-dialog-form" @submit.prevent="saveBase">
         <template v-if="dialog === 'edit' || createStep === 1"><label>知识库名称<input v-model.trim="name" class="ui-input" required maxlength="120" placeholder="例如：售后服务知识库" /></label><label>描述<textarea v-model.trim="description" class="ui-input" rows="3" maxlength="2000" placeholder="简要说明知识库包含的内容" /></label></template>
-        <template v-else><div class="kb-wizard-step"><span class="active">2</span><strong>索引设置</strong><small>决定知识库如何检索资料</small></div><label>索引质量<select v-model="createConfig.indexMode" class="ui-input"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式使用全文检索；高级模式可使用向量或混合检索。</small></label><label>检索方式<select v-model="createConfig.retrievalMode" class="ui-input"><option value="fulltext">全文检索</option><template v-if="createConfig.indexMode === 'high_quality'"><option value="vector">向量检索</option><option value="hybrid">混合检索</option></template></select></label><label v-if="createConfig.indexMode === 'high_quality'">Embedding 模型<select v-model.number="createConfig.embeddingProfileId" class="ui-input"><option :value="null">选择模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }}</option></select><small v-if="!profiles.some(item => item.enabled)">请先在设置中配置 Embedding 模型。</small></label><label>Top K<input v-model.number="createConfig.topK" class="ui-input" type="number" min="1" max="8" /></label></template>
+        <template v-else><div class="kb-wizard-step"><span class="active">2</span><strong>索引设置</strong><small>决定知识库如何检索资料</small></div><label>索引质量<select v-model="createConfig.indexMode" class="ui-input"><option value="economy">经济模式</option><option value="high_quality">高级模式</option></select><small>经济模式使用全文检索；高级模式可使用向量或混合检索。</small></label><label>检索方式<select v-model="createConfig.retrievalMode" class="ui-input"><option value="fulltext">全文检索</option><template v-if="createConfig.indexMode === 'high_quality'"><option value="vector">向量检索</option><option value="hybrid">混合检索</option></template></select></label><label v-if="createConfig.indexMode === 'high_quality'">Embedding 模型<select v-model.number="createConfig.embeddingProfileId" class="ui-input"><option :value="null">选择模型</option><option v-for="profile in profiles.filter(item => item.enabled)" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.config.model }}</option></select><small v-if="!profiles.some(item => item.enabled)">请先在「平台配置 → Embedding 服务」添加模型。</small></label><label>Top K<input v-model.number="createConfig.topK" class="ui-input" type="number" min="1" max="8" /></label></template>
         <footer><button type="button" class="ui-button" @click="dialog = null">取消</button><button v-if="dialog === 'create' && createStep === 2" type="button" class="ui-button" @click="createStep = 1">上一步</button><button class="ui-button ui-button-primary" :disabled="busy">{{ dialog === 'edit' ? '保存修改' : createStep === 1 ? '下一步' : '创建知识库' }}</button></footer>
       </form>
 <form v-else class="kb-dialog-form" @submit.prevent="uploadStep === 'select' ? uploadDocuments() : processUploadedDocuments()">
@@ -458,7 +479,6 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 <footer><button type="button" class="ui-button" :disabled="busy" @click="dialog = null">{{ uploadStep === 'select' ? '取消' : '稍后处理' }}</button><button class="ui-button ui-button-primary" :disabled="busy || (uploadStep === 'select' ? !files.length : !uploadedIds.length)">{{ busy ? '提交中…' : uploadStep === 'select' ? uploadedIds.length ? '重试剩余文件' : '上传并继续' : '确认并开始解析' }}</button></footer>
 </form>
     </UiDialog>
-    <UiDialog :open="profileDialog" title="Embedding 模型配置" description="配置引用部署环境密钥的模型连接；密钥不会显示或保存在浏览器中。" size="lg" @update:open="profileDialog = $event"><form class="kb-dialog-form" @submit.prevent="saveProfile"><label>配置名称<input v-model.trim="profileForm.name" class="ui-input" required maxlength="120" placeholder="例如：火山方舟 Embedding" /></label><label>Provider<input v-model.trim="profileForm.config.provider" class="ui-input" required /></label><label>Base URL<input v-model.trim="profileForm.config.baseUrl" class="ui-input" required /></label><label>模型 ID<input v-model.trim="profileForm.config.model" class="ui-input" required /></label><label>向量维度<input v-model.number="profileForm.config.dimensions" class="ui-input" type="number" min="1" required /></label><label>凭据引用<input v-model.trim="profileForm.config.secretRef" class="ui-input" required /><small>default 使用部署环境中的 EMBEDDING_API_KEY。</small></label><footer><button type="button" class="ui-button" @click="profileDialog = false">取消</button><button class="ui-button ui-button-primary" :disabled="busy">保存模型配置</button></footer></form></UiDialog>
     <UiDialog :open="previewDialog" :title="previewTitle" description="文档切分后的检索片段。" size="lg" @update:open="previewDialog = $event"><div class="kb-preview-list"><article v-for="chunk in previewChunks" :key="chunk.id"><header><strong>分段 {{ chunk.ordinal }}</strong><span>{{ chunk.headingPath || '正文' }}</span></header><p>{{ chunk.content }}</p><small>原文位置：{{ chunk.sourceStartLine }}–{{ chunk.sourceEndLine }}</small></article><p v-if="!previewChunks.length" class="kb-empty">该文档还没有可查看的分段。</p></div></UiDialog>
     <UiDialog :open="pendingAction !== null" :title="pendingAction?.title || '确认操作'" :description="pendingAction?.description" size="sm" @update:open="pendingAction = $event ? pendingAction : null"><div class="kb-confirm-actions"><button class="ui-button" @click="pendingAction = null">取消</button><button class="kb-danger-button" :disabled="busy" @click="pendingAction?.run()">确认</button></div></UiDialog>
     <UiDialog :open="reprocessIds.length > 0" title="重新解析文档" description="已载入文档保存的解析设置，修改后用于本次及后续解析。" @update:open="!$event && (reprocessIds = [])">
@@ -479,8 +499,18 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 </template>
 
 <style scoped>
+.kb-index-versions { margin-top:24px; padding-top:24px; border-top:1px solid #e5e9ef; }
+.kb-index-versions header, .kb-index-versions article { display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+.kb-index-versions h3 { margin:0; font-size:14px; color:#344054; }
+.kb-index-versions header p, .kb-index-hint { font-size:12px; color:#8490a0; line-height:1.7; margin:8px 0; }
+.kb-index-versions article { padding:14px 0; border-bottom:1px solid #edf0f5; font-size:12px; }
+.kb-index-versions article > div { flex:1; min-width:160px; }
+.kb-index-versions article strong { margin-right:12px; color:#344054; }
+.kb-index-versions article small { display:block; margin-top:6px; color:#8490a0; }
+.kb-index-versions article p { color:#b91c1c; margin:8px 0 0; line-height:1.7; }
 .kb-upload-confirmed{grid-column:1/-1;margin:0;color:#667085;font-size:13px;line-height:1.7}
 .kb-page{min-width:0;margin:0;padding:0;color:#172033}
+.kb-detail-path{min-width:0;flex-wrap:wrap}.kb-detail-path a{display:inline-flex;align-items:center;min-height:36px;border-radius:5px;color:#667085;text-decoration:none}.kb-detail-path a:hover{color:#2457e6}.kb-detail-path a:focus-visible{outline:2px solid #2457e6;outline-offset:4px}.kb-detail-path>span:last-child{overflow-wrap:anywhere}
 .kb-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 15px;border:1px solid #2457e6;border-radius:8px;background:#2457e6;color:#fff;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
 .kb-primary:hover{background:#1748ce}.kb-primary:disabled{opacity:.55;cursor:not-allowed}
 .kb-quiet,.kb-danger-quiet{min-height:38px;padding:0 13px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;color:#475467;font-size:13px;white-space:nowrap;cursor:pointer}

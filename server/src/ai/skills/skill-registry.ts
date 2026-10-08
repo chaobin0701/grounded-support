@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { SkillDefinition } from './skill.types';
+import type { SkillDefinition, SkillSummary } from './skill.types';
 
 export class DuplicateSkillError extends Error {
   constructor(id: string) {
@@ -33,4 +33,8 @@ export class SkillRegistry {
   has(id: string): boolean { return this.skills.has(id); }
 
   list(): SkillDefinition[] { return [...this.skills.values()]; }
+
+  summaries(): SkillSummary[] {
+    return this.list().map(({ id, name, version, description }) => ({ id, name, version, description }));
+  }
 }

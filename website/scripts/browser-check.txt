@@ -1,0 +1,99 @@
+async (page) => {
+  const base = 'http://localhost:8849';
+  const checks = [];
+  function check(condition, name) {
+    if (!condition) throw new Error(name);
+    checks.push(name);
+  }
+  const response = await page.request.get(`${base}/api/products`);
+  const products = await response.json();
+  check(response.ok() && products.length === 4, '当前接口返回四款产品');
+  await page.goto(`${base}/products`);
+  await page.locator('.product-card').last().waitFor();
+  const ids = await page.locator('.product-card').evaluateAll(nodes => nodes.map(n => decodeURIComponent(n.getAttribute('href').split('/').pop())));
+  check(JSON.stringify(ids) === JSON.stringify(products.map(p => p.id)), '网页目录与 API ID 一致');
+  for (const product of products) {
+    await page.goto(`${base}/products/${product.id}`);
+    await page.locator('.detail-copy h1').waitFor();
+    const text = await page.locator('.detail-page').innerText();
+    check(text.includes(product.name) && Object.values(product.specifications).every(value => text.includes(value)), `${product.name}详情与参数一致`);
+  }
+  for (const width of [375, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const path of ['/', '/products', '/products/midea-hft20zbj', '/about', '/support']) {
+      await page.goto(`${base}${path}`);
+      await page.locator('main h1').waitFor();
+      if (path === '/products') await page.locator('.product-card').last().waitFor();
+      if (path.startsWith('/products/')) await page.locator('.detail-copy h1').waitFor();
+      check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}px ${path}无水平溢出`);
+    }
+  }
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(`${base}/`);
+  await page.locator('.hero-photo img').waitFor();
+  await page.locator('.hero-photo img').evaluate(image => image.decode());
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'output/playwright/hexu-home-mobile.png' });
+  check(await page.evaluate(() => document.querySelector('.home-hero').getBoundingClientRect().bottom < innerHeight), '手机首屏品牌图文与操作均在首屏内');
+  await page.getByRole('button', { name: '打开导航' }).click();
+  check(await page.getByRole('navigation', { name: '移动端导航' }).isVisible(), '手机菜单可展开');
+  await page.getByRole('navigation', { name: '移动端导航' }).getByRole('link', { name: '产品中心' }).focus();
+  await page.keyboard.press('Escape');
+  check(await page.getByRole('button', { name: '打开导航' }).evaluate(n => n === document.activeElement), 'Escape关闭手机菜单并恢复焦点');
+  await page.goto(`${base}/support`);
+  await page.locator('.document-list a').last().waitFor();
+  const docs = await page.locator('.document-list a').evaluateAll(nodes => nodes.map(n => ({ href: n.href, filename: n.download })));
+  check(docs.length === 7, '服务页提供七份中文 Markdown');
+  for (const doc of docs) {
+    const data = await page.request.get(doc.href);
+    check(data.ok() && (await data.text()).startsWith('# '), `${doc.filename}实际内容可读取`);
+  }
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('.document-list a').first().click();
+  const download = await downloadPromise;
+  check(download.suggestedFilename() === '品牌介绍.md', '实际下载保留中文文件名');
+  await download.saveAs('output/playwright/品牌介绍.md');
+  await page.locator('.faq-section summary').first().click();
+  check(await page.locator('.faq-section details').first().getAttribute('open') !== null, '常见问题可展开');
+  await page.goto(`${base}/products?category=air&q=Pro`);
+  await page.locator('.product-card').waitFor();
+  check(await page.locator('.product-card').count() === 1, '筛选深链接还原到一款产品');
+  await page.goto(`${base}/products?q=完全不存在的商品`);
+  await page.getByRole('heading', { name: '没有找到匹配的产品' }).waitFor();
+  check(await page.locator('.product-card').count() === 0, '无匹配关键词展示空状态');
+  await page.route('**/api/products', route => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' }));
+  await page.goto(`${base}/products`);
+  await page.getByRole('alert').waitFor();
+  check(await page.locator('.product-card').count() === 0, '接口失败不展示假目录');
+  await page.unroute('**/api/products');
+  await page.getByRole('button', { name: '重新加载', exact: true }).click();
+  await page.locator('.product-card').last().waitFor();
+  check(await page.locator('.product-card').count() === products.length, '重试恢复真实目录');
+  await page.route('**/api/products', route => route.fulfill({ contentType: 'application/json', body: '[]' }));
+  await page.goto(`${base}/products`);
+  await page.getByRole('heading', { name: '没有找到匹配的产品' }).waitFor();
+  check(await page.locator('.product-card').count() === 0, '空 API 目录不使用静态产品替代');
+  await page.unroute('**/api/products');
+  await page.goto(`${base}/products/nonexistent-hexu-test`);
+  await page.getByRole('alert').waitFor();
+  check((await page.getByRole('alert').innerText()).includes('不存在或已下架'), '不存在的产品展示明确提示');
+  const unsafe = { ...products[0], description: '<p>保留介绍<strong>重点</strong></p><script>window.hexuXss=1</script><img src=x onerror="window.hexuXss=2"><a href="javascript:alert(1)">危险链接</a>', imageUrl: 'javascript:alert(1)', sourceUrl: 'javascript:alert(1)' };
+  await page.route(`**/api/products/${products[0].id}`, route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(unsafe) }));
+  await page.goto(`${base}/products/${products[0].id}`);
+  await page.locator('.rich-description').waitFor();
+  check(await page.locator('.rich-description strong').count() === 1, '富文本保留合法强调');
+  check(await page.locator('.rich-description script,.rich-description img,.rich-description a').count() === 0 && !await page.evaluate(() => window.hexuXss), '危险富文本被净化且未执行');
+  check(await page.getByRole('link', { name: '查看官方资料' }).count() === 0, '危险官方 URL 不生成链接');
+  check(await page.getByRole('img', { name: `${products[0].name}，图片暂不可用` }).isVisible(), '危险图片 URL 使用替代状态');
+  await page.unroute(`**/api/products/${products[0].id}`);
+  await page.goto(`${base}/does-not-exist`);
+  await page.getByRole('heading', { name: '这一页，暂时不在这里。' }).waitFor();
+  check(true, '未知路由显示中文 404');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(`${base}/`);
+  await page.locator('.hero-copy').waitFor();
+  check(await page.locator('.hero-copy').evaluate(n => getComputedStyle(n).animationName === 'none'), '减少动态效果关闭首屏动画');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  return { passed: checks.length, checks };
+}

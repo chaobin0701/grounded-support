@@ -160,7 +160,7 @@ onMounted(load);
 
 <template>
   <section class="model-services-page">
-    <AdminPageHeader eyebrow="平台配置" title="模型服务" description="管理 OpenAI Compatible 模型连接，为 Agent 选择当前使用的模型。">
+    <AdminPageHeader title="模型服务">
       <template #actions>
         <button type="button" class="ui-button" :disabled="loading" @click="load"><RefreshCw :size="15" :class="{ spinning: loading }" />刷新</button>
         <button v-if="props.canManage" type="button" class="ui-button ui-button-primary" @click="openCreate"><Plus :size="16" />添加配置</button>
@@ -169,7 +169,7 @@ onMounted(load);
 
     <div class="model-service-note">
       <ShieldCheck :size="17" />
-      <p>密钥在服务端加密保存。当前配置用于后续请求；向量模型在知识库设置中配置。</p>
+      <p>密钥在服务端加密保存。当前配置用于后续请求；向量模型在独立的 Embedding 服务中管理。</p>
     </div>
     <div v-if="loading && !profiles.length" class="model-service-empty" role="status"><LoaderCircle :size="22" class="spinning" /><p>正在加载模型配置…</p></div>
     <div v-else-if="!profiles.length" class="model-service-empty">
@@ -280,99 +280,5 @@ onMounted(load);
 </template>
 
 <style scoped>
-.model-services-page { min-width: 0; }
-.model-service-note { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 20px; color: #748094; font-size: 12px; line-height: 1.6; }
-.model-service-note svg { flex: none; margin-top: 1px; color: #64748b; }
-.model-service-note p { margin: 0; }
-.model-service-groups { display: grid; gap: 28px; }
-.model-group-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
-.model-group-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; }
-.model-group-heading h2 span { color: var(--muted); font-size: 12px; font-weight: 400; }
-.model-group-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
-.model-service-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; }
-.model-service-group-current .model-service-list { grid-template-columns: minmax(0, 1fr); }
-.model-service-group-current .model-service-card { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 32px; }
-.model-service-group-current .model-service-card.interactive { padding-right: 48px; }
-.model-service-group-current .model-card-chevron { position: absolute; right: 16px; top: calc(50% - 8px); margin: 0; }
-.model-service-group-current .model-service-card-head { flex: 1; min-width: min(100%, 280px); }
-.model-service-group-current .model-card-meta { flex: none; display: grid; justify-items: end; margin-top: 0; }
-.model-service-card { position: relative; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; transition: border-color .15s, background-color .15s; }
-.model-service-card.interactive { cursor: pointer; }
-.model-service-card.interactive:hover { border-color: #99b5fa; background: #fafcff; }
-.model-service-card.active { border-color: #c4d4fc; }
-.model-service-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.model-service-identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.model-service-logo { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 8px; background: #f8fafc; }
-.model-service-copy { min-width: 0; }
-.model-service-title { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.model-service-title h3 { margin: 0; color: #172033; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.model-service-copy p { margin: 5px 0 0; color: #748094; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.model-id { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }
-.model-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 5px; background: #f1f5f9; color: #64748b; font-size: 11px; white-space: nowrap; }
-.model-status.current { background: #edf8f1; color: #24774f; }
-.model-status.standby { background: #f1f5f9; color: var(--muted); }
-.model-text-action { min-height: 44px; padding: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
-.model-text-action:hover { color: #2457e6; }
-.model-service-empty { display: grid; justify-items: center; gap: 12px; padding: 72px 20px; border: 1px dashed var(--line); border-radius: 12px; color: #748094; font-size: 13px; }
-.model-service-empty h2 { margin: 0; color: #344054; font-size: 16px; font-weight: 600; }
-.model-service-empty p { margin: 0; text-align: center; }
-.model-profile-form { display: grid; gap: 24px; }
-.model-form-section { display: grid; gap: 12px; min-width: 0; }
-.model-form-section h2 { margin: 0; color: #344054; font-size: 13px; font-weight: 600; }
-.model-platform-locked { display: grid; justify-items: start; gap: 12px; padding: 15px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fafbfc; }
-.model-platform-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
-.model-platform-identity strong { color: #344054; font-size: 13px; font-weight: 600; }
-.model-platform-identity > span { display: inline-flex; align-items: center; gap: 5px; color: #64748b; font-size: 11px; }
-.model-platform-locked p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.7; }
-.model-replacement-note { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid #dce6fb; border-radius: 9px; background: #f5f8ff; }
-.model-replacement-note p { margin: 0; color: #475467; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
-.platform-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.platform-option { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 76px; padding: 14px 12px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; text-align: left; cursor: pointer; transition: border-color .15s, background-color .15s; }
-.platform-option:hover { border-color: #b6c6e2; background: #fafbfe; }
-.platform-option.selected { border-color: #3166f5; background: #f5f8ff; }
-.platform-option-copy { display: grid; gap: 5px; min-width: 0; }
-.platform-option strong { color: #344054; font-size: 12px; font-weight: 600; line-height: 1.4; }
-.platform-option small { color: #8a96a8; font-size: 10px; line-height: 1.4; }
-.platform-option-check { position: absolute; top: 6px; right: 6px; color: #3166f5; }
-.model-connection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.model-runtime-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.model-field { display: grid; align-content: start; gap: 8px; min-width: 0; }
-.model-field-wide { grid-column: 1 / -1; }
-.model-field small { color: #8a96a8; font-size: 11px; line-height: 1.5; }
-.model-field input[readonly] { background: #f8fafc; color: #64748b; }
-.model-runtime-section { padding-top: 20px; border-top: 1px solid #edf0f5; }
-.model-output-note { display: flex; align-items: center; gap: 7px; margin: 0; color: #8a96a8; font-size: 11px; line-height: 1.5; }
-.model-output-note svg { flex: none; }
-.model-form-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; padding-top: 18px; border-top: 1px solid #edf0f5; }
-.model-form-footer > span { display: inline-flex; align-items: center; gap: 6px; color: #8a96a8; font-size: 11px; }
-.model-form-footer > div { display: flex; gap: 8px; margin-left: auto; }
-.model-card-chevron { flex: none; margin-top: 9px; color: #94a3b8; }
-.model-card-meta { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 16px; margin-top: 14px; color: #64748b; font-size: 11px; }
-.model-card-meta code { margin-left: 5px; color: #475467; font-family: ui-monospace, monospace; }
-.model-profile-state { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.model-profile-state > div { display: flex; gap: 8px; }
-.model-text-action { display: inline-flex; align-items: center; gap: 5px; }
-.model-delete-action { display: inline-flex; align-items: center; gap: 6px; padding: 10px 0; color: #c24141; font-size: 12px; cursor: pointer; }
-.model-confirm-delete { border-color: #dc2626; background: #dc2626; color: #fff; }
-.model-confirm-delete:hover { border-color: #b91c1c; background: #b91c1c; }
-.model-connection-result { display: grid; justify-items: center; gap: 12px; padding: 18px 0; text-align: center; }
-.model-connection-result h3 { margin: 0; color: #172033; font-size: 17px; font-weight: 600; }
-.model-connection-result p { margin: 0; color: #64748b; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
-.model-connection-result blockquote { width: 100%; margin: 0; padding: 14px; border: 1px solid #dcf0e2; border-radius: 8px; background: #f2faf5; color: #28774d; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
-.result-success { color: #26845a; }.result-failure { color: #dc2626; }
-.model-result-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
-.model-delete-replacement { display: grid; gap: 14px; }.model-delete-replacement p { margin: 0; color: #64748b; font-size: 13px; line-height: 1.7; }
-.model-delete-error { margin-top: 12px; color: #b91c1c; font-size: 12px; }
-@media (max-width: 720px) {
-  .model-service-card { padding: 16px; }
-  .model-service-group-current .model-service-card { display: block; }
-  .model-service-group-current .model-service-card.interactive { padding-right: 16px; }
-  .model-service-group-current .model-card-chevron { position: static; margin-top: 9px; }
-  .model-service-group-current .model-card-meta { display: flex; justify-content: space-between; margin-top: 14px; }
-  .model-service-card-head { gap: 8px; }
-  .platform-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .model-connection-grid, .model-runtime-grid { grid-template-columns: minmax(0, 1fr); }
-  .model-profile-form { gap: 20px; }
-}
-@media (prefers-reduced-motion: reduce) { .platform-option, .model-service-card { transition: none; } .spinning { animation: none; } }
+@import './model-service.css';
 </style>

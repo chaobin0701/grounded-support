@@ -1,0 +1,28 @@
+{
+  "name": "hexu-corporate-website",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:once": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 8850 --strictPort",
+    "test": "node --experimental-strip-types --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "^1.47.0",
+    "dompurify": "^3.3.0",
+    "vue": "^3.5.42",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.9",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.0",
+    "vue-tsc": "^3.3.11"
+  }
+}

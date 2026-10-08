@@ -1,15 +1,18 @@
 import type { PreviousTurnDto } from '../../chat/chat.dto';
 import type { EventSink } from '../../channels/event-sink';
-import type { SkillDefinition } from '../skills/skill.types';
+import type { SkillDefinition, SkillSummary } from '../skills/skill.types';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import type { PublicProgressEvent } from '../../chat/chat.service';
+import type { AgentConfigurationSnapshot } from '../../config/agent-config';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 
 export type AgentInput = {
+  configurationSnapshot?: AgentConfigurationSnapshot;
   question: string;
   summary: string;
   recentHistory: PreviousTurnDto[];
-  skill?: SkillDefinition;
+  availableSkills?: SkillSummary[];
+  initialSkills?: SkillDefinition[];
   initialEvidence?: SearchHit[];
   preflight?: {
     query: string | null;
@@ -18,7 +21,6 @@ export type AgentInput = {
     retrievalMode?: string;
     errorCode?: string;
   };
-  selectedBy?: 'default' | 'explicit' | 'deterministic';
   conversationId?: string;
   traceId?: string;
   priorTranscript?: AgentTranscriptMessage[];

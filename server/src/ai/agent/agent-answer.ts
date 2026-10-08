@@ -2,7 +2,6 @@ import type { SearchHit } from '../../documents/fuse-search-results';
 import type { ChatAnswer } from '../../chat/chat.service';
 import { validateAnswer } from './citation-validation';
 import type { ProductDetail, ProductSummary } from '../tools/product-catalog/product-catalog.service';
-import type { SkillResponseMode } from '../skills/skill.types';
 
 export const REFUSAL = '无法确定，建议联系人工。';
 export const RECOVERY_REFUSAL = '我暂时没能读取到足够的资料，无法可靠回答这次问题。你可以换一种说法，或稍后再试。';
@@ -11,13 +10,17 @@ export function validateAgentAnswer(
   raw: string,
   hits: SearchHit[],
   products: Array<ProductSummary | ProductDetail>,
-  _responseMode: SkillResponseMode = 'grounded',
+  _responseMode = 'auto',
   _evidenceRequired = false,
 ): ChatAnswer {
   const refusal: ChatAnswer = { answer: REFUSAL, refused: true, citations: [] };
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    if (parsed.status === 'refused') return refusal;
+    if (parsed.status === 'refused') {
+      return typeof parsed.answer === 'string' && parsed.answer.trim() && parsed.answer.length <= 1200
+        ? { answer: parsed.answer.trim(), refused: true, citations: [] }
+        : refusal;
+    }
     if (parsed.status !== 'answered' || typeof parsed.answer !== 'string' || !parsed.answer.trim() || parsed.answer.length > 1200) return refusal;
     const citationIds = parsed.citationIds;
     const productIds = parsed.productIds;

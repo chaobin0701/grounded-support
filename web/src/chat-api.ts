@@ -27,6 +27,18 @@ export interface ProgressEvent {
 }
 
 export interface PreviousTurn { question: string; answer: string }
+export interface ChatPresentation { title: string; description: string; suggestedQuestions: string[] }
+
+export async function getChatPresentation(): Promise<ChatPresentation> {
+  const response = await fetch('/api/chat/presentation', { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw await responseError(response);
+  const data = await response.json() as ChatPresentation;
+  if (typeof data.title !== 'string' || typeof data.description !== 'string'
+    || !Array.isArray(data.suggestedQuestions) || !data.suggestedQuestions.every(item => typeof item === 'string')) {
+    throw new Error('Invalid chat presentation');
+  }
+  return data;
+}
 export interface ConversationItem {
   id: string;
   title: string;

@@ -1,21 +1,24 @@
 <script setup lang="ts">
+import { ArrowLeft } from '@lucide/vue';
+
 defineProps<{
-  eyebrow?: string;
   title: string;
-  description?: string;
+  backTo?: string;
+  backLabel?: string;
 }>();
 </script>
 
 <template>
   <header class="admin-page-header">
-    <div class="admin-page-header-copy">
+    <nav v-if="backTo || $slots.breadcrumb" class="admin-page-header-navigation" aria-label="页面导航">
+      <RouterLink v-if="backTo" :to="backTo" class="admin-page-header-back"><ArrowLeft :size="15" aria-hidden="true" />{{ backLabel || '返回列表' }}</RouterLink>
       <slot name="breadcrumb" />
-      <p v-if="eyebrow" class="admin-page-header-eyebrow">{{ eyebrow }}</p>
+    </nav>
+    <div class="admin-page-header-copy">
       <div class="admin-page-header-title-row">
         <h1>{{ title }}</h1>
         <slot name="badge" />
       </div>
-      <p v-if="description" class="admin-page-header-description">{{ description }}</p>
     </div>
     <div v-if="$slots.actions" class="admin-page-header-actions">
       <slot name="actions" />
@@ -25,27 +28,40 @@ defineProps<{
 
 <style scoped>
 .admin-page-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 24px;
   min-width: 0;
   margin: 0 0 24px;
-  padding: 0 0 22px;
+  padding: 0 0 18px;
   border-bottom: 1px solid #e5e9f0;
 }
 
-.admin-page-header-copy {
+.admin-page-header-copy { min-width: 0; }
+
+.admin-page-header-navigation {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 20px;
   min-width: 0;
 }
 
-.admin-page-header-eyebrow {
-  margin: 0 0 8px;
-  color: #718096;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .035em;
+.admin-page-header-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  border-radius: 5px;
+  color: #667085;
+  font-size: 13px;
+  text-decoration: none;
 }
+.admin-page-header-back svg { flex: none; }
+.admin-page-header-back:hover { color: #2457e6; }
+.admin-page-header-back:focus-visible { outline: 2px solid #2457e6; outline-offset: 4px; }
 
 .admin-page-header-title-row {
   display: flex;
@@ -65,36 +81,24 @@ defineProps<{
   overflow-wrap: anywhere;
 }
 
-.admin-page-header-description {
-  max-width: 760px;
-  margin: 9px 0 0;
-  color: #748094;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .admin-page-header-actions {
   display: flex;
-  flex: none;
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
-  padding-top: 20px;
 }
 
 :slotted(.admin-page-header-breadcrumb) {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 0 9px;
+  margin: 0;
   color: #8a96a8;
   font-size: 12px;
 }
 
-:slotted(.admin-page-header-badge) {
-  flex: none;
-}
+:slotted(.admin-page-header-badge) { flex: none; }
 
 .admin-page-header-actions > :slotted(*) {
   flex: 0 0 auto;
@@ -104,17 +108,12 @@ defineProps<{
 
 @media (max-width: 720px) {
   .admin-page-header {
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr);
     gap: 14px;
     margin-bottom: 20px;
     padding-bottom: 18px;
   }
-
-  .admin-page-header-actions {
-    width: 100%;
-    justify-content: flex-start;
-    padding-top: 0;
-  }
+  .admin-page-header-actions { width: 100%; justify-content: flex-start; }
+  .admin-page-header-back { min-height: 44px; }
 }
-
 </style>
