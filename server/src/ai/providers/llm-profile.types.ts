@@ -19,4 +19,4 @@ export type LlmProfileRecord = {
   isDefault: boolean;
 };
 
-export type LlmProfileView = Omit<LlmProfileRecord, 'apiKey'> & { hasApiKey: boolean };
+export type LlmProfileView = Omit<LlmProfileRecord, 'apiKey'> & { hasApiKey: boolean; apiKeyPreview: string | null };

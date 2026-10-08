@@ -6,6 +6,7 @@ import { SecretBox } from '../../security/secret-box';
 import { ProviderRegistry } from './provider-registry';
 import type { LlmProfileRecord, LlmProfileView } from './llm-profile.types';
 import { getLlmPlatformPreset, isLlmPlatformKey } from './llm-platforms';
+import { ProviderError } from './provider-errors';
 
 const profileInput = z.object({
   name: z.string().trim().min(1).max(120),
@@ -21,6 +22,9 @@ const profileInput = z.object({
 }).strict();
 
 type ProfileRow = Record<string, unknown>;
+type ConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
+const connectionTestInput = profileInput.extend({ profileId: z.number().int().positive().optional() });
+const deleteInput = z.object({ replacementId: z.number().int().positive().optional() }).strict();
 
 @Injectable()
 export class LlmProfileService {
@@ -82,13 +86,15 @@ export class LlmProfileService {
     if (parsed.data.supportsStreaming !== undefined) add('supports_streaming', parsed.data.supportsStreaming);
     assignments.push('updated_at = now()');
     const row = await this.database.transaction(async (client) => {
+      await client.query('LOCK TABLE llm_profiles IN SHARE ROW EXCLUSIVE MODE');
       const updated = await client.query<ProfileRow>(`UPDATE llm_profiles SET ${assignments.join(', ')} WHERE id = $1 RETURNING ${this.returningColumns()}`, values);
       const result = updated.rows[0];
+      if (!result) throw new NotFoundException('LLM profile not found');
       await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
         VALUES ($1, 'llm_profile.updated', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ fields: Object.keys(parsed.data) })]);
       return result;
     });
-    if (existing.isDefault) await this.activateRuntime(row);
+    if (row.is_default) await this.activateRuntime(row);
     return this.toView(row);
   }
 
@@ -97,6 +103,10 @@ export class LlmProfileService {
     if (!row) throw new NotFoundException('LLM profile not found');
     if (!row.enabled) throw new BadRequestException('Disabled profile cannot be activated');
     const active = await this.database.transaction(async (client) => {
+      await client.query('LOCK TABLE llm_profiles IN SHARE ROW EXCLUSIVE MODE');
+      const current = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [id]);
+      if (!current.rows[0]) throw new NotFoundException('LLM profile not found');
+      if (!current.rows[0].enabled) throw new BadRequestException('Disabled profile cannot be activated');
       await client.query('UPDATE llm_profiles SET is_default = FALSE, updated_at = now() WHERE is_default = TRUE');
       const updated = await client.query<ProfileRow>(`UPDATE llm_profiles SET is_default = TRUE, updated_at = now() WHERE id = $1 RETURNING ${this.returningColumns()}`, [id]);
       await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id)
@@ -108,23 +118,94 @@ export class LlmProfileService {
   }
 
   async setEnabled(actorId: number, id: number, enabled: boolean): Promise<LlmProfileView> {
-    const row = await this.find(id);
-    if (!row) throw new NotFoundException('LLM profile not found');
-    if (!enabled && row.isDefault) throw new BadRequestException('Activate another profile before disabling the default');
-    const updated = await this.database.query<ProfileRow>(`UPDATE llm_profiles SET enabled = $2, updated_at = now() WHERE id = $1 RETURNING ${this.returningColumns()}`, [id, enabled]);
-    await this.database.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
-      VALUES ($1, 'llm_profile.updated', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ enabled })]);
-    return this.toView(updated.rows[0]);
+    const updated = await this.database.transaction(async (client) => {
+      await client.query('LOCK TABLE llm_profiles IN SHARE ROW EXCLUSIVE MODE');
+      const current = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [id]);
+      if (!current.rows[0]) throw new NotFoundException('LLM profile not found');
+      if (!enabled && current.rows[0].is_default) throw new BadRequestException('请先切换当前模型，再停用这份配置');
+      const result = await client.query<ProfileRow>(`UPDATE llm_profiles SET enabled = $2, updated_at = now() WHERE id = $1 RETURNING ${this.returningColumns()}`, [id, enabled]);
+      await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
+        VALUES ($1, 'llm_profile.updated', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ enabled })]);
+      return result.rows[0];
+    });
+    return this.toView(updated);
   }
 
-  async test(id: number): Promise<{ ok: true; model: string; durationMs: number; responsePreview: string }> {
+  async remove(actorId: number, id: number, input: unknown = {}): Promise<{ deleted: true; activeProfileId: number | null }> {
+    const parsed = deleteInput.safeParse(input ?? {});
+    if (!parsed.success) throw new BadRequestException('Invalid replacement model profile');
+    const nextProfile = await this.database.transaction(async (client) => {
+      // Serialize default selection and deletion so the active profile cannot disappear mid-switch.
+      await client.query('LOCK TABLE llm_profiles IN SHARE ROW EXCLUSIVE MODE');
+      const existing = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [id]);
+      const row = existing.rows[0];
+      if (!row) throw new NotFoundException('模型配置不存在');
+      let replacement: LlmProfileRecord | null = null;
+      if (row.is_default) {
+        const replacementId = parsed.data.replacementId;
+        if (!replacementId || replacementId === id) throw new ConflictException('删除当前模型前，请选择另一份已启用的配置');
+        const next = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [replacementId]);
+        if (!next.rows[0] || !next.rows[0].enabled) throw new BadRequestException('替代模型不存在或尚未启用');
+        replacement = await this.hydrate(next.rows[0]);
+        await client.query('UPDATE llm_profiles SET is_default = FALSE, updated_at = now() WHERE id = $1', [id]);
+        await client.query('UPDATE llm_profiles SET is_default = TRUE, updated_at = now() WHERE id = $1', [replacementId]);
+        await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id)
+          VALUES ($1, 'llm_profile.activated', 'llm_profile', $2)`, [actorId, String(replacementId)]);
+      } else if (parsed.data.replacementId !== undefined) {
+        throw new BadRequestException('非当前配置不需要指定替代模型');
+      }
+      await client.query('DELETE FROM llm_profiles WHERE id = $1', [id]);
+      await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
+        VALUES ($1, 'llm_profile.deleted', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ name: row.name, model: row.model, replacementId: replacement?.id ?? null })]);
+      return replacement;
+    });
+    if (nextProfile) this.registry.activateProfile(nextProfile);
+    return { deleted: true, activeProfileId: nextProfile?.id ?? null };
+  }
+
+  async test(id: number): Promise<ConnectionTestResult> {
     const row = await this.find(id);
     if (!row) throw new NotFoundException('LLM profile not found');
-    const provider = this.registry.createFromProfile(await this.hydrate(row));
-    const response = await provider.chat({ model: String(row.model), messages: [{ role: 'user', content: '只回复：连接成功' }], maxTokens: 16 });
-    const responsePreview = response.content.trim().replace(/\s+/gu, ' ').slice(0, 160);
-    if (!responsePreview) throw new BadRequestException('模型返回为空，连接测试未完成');
-    return { ok: true, model: response.model, durationMs: response.durationMs, responsePreview };
+    return this.runConnectionTest(await this.hydrate(row));
+  }
+
+  async testConnection(input: unknown): Promise<ConnectionTestResult> {
+    const parsed = connectionTestInput.safeParse(input);
+    if (!parsed.success) throw new BadRequestException('请检查模型连接参数');
+    this.validateBaseUrl(parsed.data.platformKey, parsed.data.baseUrl);
+    let apiKey: string | undefined = parsed.data.apiKey ?? this.config.llm.apiKey;
+    if (parsed.data.profileId !== undefined) {
+      const row = await this.find(parsed.data.profileId);
+      if (!row) throw new NotFoundException('模型配置不存在');
+      if (!parsed.data.apiKey) apiKey = (await this.hydrate(row)).apiKey;
+    }
+    if (!apiKey) throw new BadRequestException('请填写 API Key');
+    return this.runConnectionTest({
+      ...parsed.data, id: parsed.data.profileId ?? 0, apiKey,
+      providerKey: 'openai-compatible', adapterType: 'openai-compatible',
+      structuredOutput: 'auto', enabled: true, isDefault: false,
+    });
+  }
+
+  private async runConnectionTest(profile: LlmProfileRecord): Promise<ConnectionTestResult> {
+    const provider = this.registry.createFromProfile(profile);
+    try {
+      const response = await provider.chat({ model: profile.model, messages: [{ role: 'user', content: '只回复：连接成功' }], maxTokens: 64 });
+      const responsePreview = response.content.trim().replace(/\s+/gu, ' ').slice(0, 160);
+      if (!responsePreview) throw new BadRequestException('模型返回为空，连接测试未完成');
+      return { ok: true, model: response.model, durationMs: response.durationMs, responsePreview };
+    } catch (error) {
+      if (!(error instanceof ProviderError)) throw error;
+      const messages: Record<string, string> = {
+        provider_authentication: '密钥无效或没有模型访问权限，请检查 API Key。',
+        provider_rate_limit: '模型服务限流或额度不足，请稍后重试。',
+        provider_timeout: '连接超时，请检查服务地址或调整请求超时。',
+        provider_model_not_found: '模型不存在或尚未开通，请检查模型 ID。',
+        provider_unavailable: '模型服务暂时不可用，请稍后重试。',
+        provider_invalid_response: '模型返回格式异常，连接测试未完成。',
+      };
+      throw new BadRequestException({ code: error.code, message: messages[error.code] ?? '模型连接测试失败，请检查配置。' });
+    }
   }
 
   private async find(id: number): Promise<ProfileRow | null> {
@@ -186,6 +267,9 @@ export class LlmProfileService {
   }
 
   private toView(row: ProfileRow): LlmProfileView {
-    return { ...this.toRecord(row), hasApiKey: Boolean(row.api_key_ciphertext) || Boolean(this.config.llm.apiKey) };
+    const key = typeof row.api_key_ciphertext === 'string' && row.api_key_ciphertext
+      ? this.secrets.decrypt(row.api_key_ciphertext) : this.config.llm.apiKey;
+    const apiKeyPreview = key ? (key.length >= 8 ? `${key.slice(0, 2)}***${key.slice(-2)}` : '********') : null;
+    return { ...this.toRecord(row), hasApiKey: Boolean(key), apiKeyPreview };
   }
 }

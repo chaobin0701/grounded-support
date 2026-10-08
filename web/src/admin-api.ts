@@ -105,7 +105,11 @@ export interface LlmProfileItem {
   enabled: boolean;
   isDefault: boolean;
   hasApiKey: boolean;
+  apiKeyPreview: string | null;
 }
+
+export type LlmProfileInput = Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'apiKeyPreview' | 'structuredOutput'> & { apiKey?: string };
+export type LlmConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
 
 export interface ChatTraceItem {
   id: string;
@@ -324,8 +328,9 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
   if (!response.ok) {
     let message = `请求失败（HTTP ${response.status}）`;
     try {
-      const body = await response.json() as { message?: string | string[] };
-      if (typeof body.message === 'string') message = body.message;
+      const body = await response.json() as { message?: string | string[]; error?: { message?: string } };
+      if (typeof body.error?.message === 'string') message = body.error.message;
+      else if (typeof body.message === 'string') message = body.message;
       else if (Array.isArray(body.message)) message = body.message.join('；');
     } catch { /* Keep the HTTP status if the server did not return JSON. */ }
     throw new AdminApiError(response.status, message);
@@ -369,9 +374,11 @@ export const adminApi = {
   conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}`, {}, token),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
   llmProfiles: (token: string) => request<LlmProfileItem[]>('/model-profiles/llm', {}, token),
-  createLlmProfile: (token: string, input: Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'structuredOutput'> & { apiKey?: string }) => request<LlmProfileItem>('/model-profiles/llm', { method: 'POST', body: JSON.stringify(input) }, token),
-  updateLlmProfile: (token: string, id: number, input: Partial<Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'structuredOutput'>> & { apiKey?: string }) => request<LlmProfileItem>(`/model-profiles/llm/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  createLlmProfile: (token: string, input: LlmProfileInput) => request<LlmProfileItem>('/model-profiles/llm', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateLlmProfile: (token: string, id: number, input: Partial<LlmProfileInput>) => request<LlmProfileItem>(`/model-profiles/llm/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  deleteLlmProfile: (token: string, id: number, replacementId?: number) => request<{ deleted: true; activeProfileId: number | null }>(`/model-profiles/llm/${id}`, { method: 'DELETE', body: JSON.stringify({ replacementId }) }, token),
   activateLlmProfile: (token: string, id: number) => request<LlmProfileItem>(`/model-profiles/llm/${id}/activate`, { method: 'POST' }, token),
   setLlmProfileStatus: (token: string, id: number, enabled: boolean) => request<LlmProfileItem>(`/model-profiles/llm/${id}/status`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
-  testLlmProfile: (token: string, id: number) => request<{ ok: true; model: string; durationMs: number; responsePreview: string }>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
+  testLlmProfile: (token: string, id: number) => request<LlmConnectionTestResult>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
+  testLlmConnection: (token: string, input: LlmProfileInput & { profileId?: number }) => request<LlmConnectionTestResult>('/model-profiles/llm/test', { method: 'POST', body: JSON.stringify(input) }, token),
 };

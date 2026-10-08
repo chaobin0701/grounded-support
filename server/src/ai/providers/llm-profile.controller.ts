@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { AdminAuthGuard } from '../../admin/admin-auth.guard';
 import { PermissionGuard } from '../../admin/permission.guard';
 import { RequirePermission } from '../../admin/permission.decorator';
@@ -18,9 +18,19 @@ export class LlmProfileController {
   @RequirePermission('model_profiles.manage')
   create(@Req() request: AdminRequest, @Body() body: unknown) { return this.profiles.create(request.admin!.id, body); }
 
+  @Post('test')
+  @RequirePermission('model_profiles.manage')
+  testConnection(@Body() body: unknown) { return this.profiles.testConnection(body); }
+
   @Patch(':id')
   @RequirePermission('model_profiles.manage')
   update(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Body() body: unknown) { return this.profiles.update(request.admin!.id, id, body); }
+
+  @Delete(':id')
+  @RequirePermission('model_profiles.manage')
+  remove(@Req() request: AdminRequest, @Param('id', ParseIntPipe) id: number, @Body() body: unknown) {
+    return this.profiles.remove(request.admin!.id, id, body);
+  }
 
   @Post(':id/activate')
   @RequirePermission('model_profiles.manage')

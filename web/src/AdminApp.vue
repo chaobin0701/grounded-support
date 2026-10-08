@@ -367,12 +367,14 @@ function auditActionLabel(action: string): string {
     'knowledge_base.configured': '更新索引配置', 'knowledge_index.build_requested': '请求构建索引', 'knowledge_index.activated': '启用索引版本',
     'embedding_profile.created': '添加 Embedding 配置', 'embedding_profile.updated': '更新 Embedding 配置', 'faq.saved': '保存 FAQ',
     'debug.inspected': '检查会话调试上下文',
+    'llm_profile.created': '添加模型配置', 'llm_profile.updated': '更新模型配置',
+    'llm_profile.activated': '切换当前模型', 'llm_profile.deleted': '删除模型配置',
   };
   return labels[action] ?? action;
 }
 
 function auditTargetLabel(targetType: string): string {
-  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
+  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', llm_profile: '模型配置', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
 }
 
 async function runConfirmation() {
@@ -426,7 +428,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
     </aside>
 
     <main class="admin-main">
-      <div class="admin-content">
+      <div class="admin-content" :class="{ 'admin-conversation-content': view === 'conversations' }">
         <ToastNotice :message="error || notice" :type="error ? 'error' : 'success'" @dismiss="error ? (error = '') : (notice = '')" />
 
         <section v-if="!availableViews.length" class="admin-empty"><h1>暂无可用权限</h1><p>请联系超级管理员分配角色。</p></section>
@@ -469,7 +471,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
           <p v-else class="admin-muted">当前账号没有查看资料列表的权限。</p>
         </section>
 
-        <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
+        <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" :can-debug="can('conversations.debug')" />
         <ModelServiceAdmin v-else-if="view === 'model-services'" :token="session.token" :can-manage="can('model_profiles.manage')" @notice="notice = $event" @error="error = $event" />
 
         <section v-else-if="view === 'admins'">

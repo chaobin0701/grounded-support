@@ -150,6 +150,7 @@
 .admin-top-identity { display: flex; align-items: center; gap: 8px; color: #74847a; }
 .admin-top-identity i { width: 7px; height: 7px; border-radius: 50%; background: #43a476; }
 .admin-content { width:100%; box-sizing:border-box; padding:28px clamp(22px,2.5vw,40px) 70px; }
+.admin-content.admin-conversation-content { height:100%; padding-bottom:28px; }
 .admin-heading { align-items: center; margin-bottom: 25px; }
 .admin-heading .section-label { margin-bottom: 8px; color: #6b8070; font-size: 11px; letter-spacing: .07em; }
 .admin-heading h1 { color: var(--ink); font-size: 30px; font-weight: 700; }
