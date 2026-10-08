@@ -6,6 +6,24 @@ export interface AdminMe {
   permissionCodes: string[];
 }
 
+export type DashboardRange = '24h' | '7d' | '30d';
+export interface DashboardOverview {
+  generatedAt: string;
+  range: { key: DashboardRange; since: string; until: string; timezone: 'Asia/Shanghai'; bucket: 'hour' | 'day' };
+  activity: null | {
+    requestCount: number; answeredCount: number; refusedCount: number; failedCount: number;
+    conversationCount: number; visitorCount: number; runningCount: number; expiredCount: number; failedRunCount: number;
+    averageDurationMs: number | null; p95DurationMs: number | null; totalTokens: number | null; tokenRecordedCount: number;
+    trend: { time: string; label: string; answered: number; refused: number; failed: number }[];
+    recentFailures: { traceId: string | null; conversationId: string | null; question: string; errorCode: string | null; status: 'failed' | 'expired'; createdAt: string }[];
+  };
+  knowledge: null | {
+    baseCount: number; enabledBaseCount: number; documentCount: number; readyCount: number; retrievableCount: number;
+    chunkCount: number; processingCount: number; failedCount: number;
+    recentFailures: { id: number; baseId: number; title: string; baseName: string; updatedAt: string }[];
+  };
+}
+
 export interface DocumentItem {
   id: number;
   title: string;
@@ -87,6 +105,29 @@ export interface AuditItem {
   details: Record<string, unknown>;
   createdAt: string;
 }
+
+export interface LlmProfileItem {
+  id: number;
+  name: string;
+  platformKey: 'volcengine' | 'openai' | 'deepseek' | 'custom';
+  providerKey: 'openai-compatible';
+  adapterType: 'openai-compatible';
+  baseUrl: string;
+  model: string;
+  timeoutMs: number;
+  contextWindowTokens: number;
+  maxOutputTokens: number;
+  structuredOutput: 'auto';
+  supportsToolCalls: boolean;
+  supportsStreaming: boolean;
+  enabled: boolean;
+  isDefault: boolean;
+  hasApiKey: boolean;
+  apiKeyPreview: string | null;
+}
+
+export type LlmProfileInput = Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'apiKeyPreview' | 'structuredOutput'> & { apiKey?: string };
+export type LlmConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
 
 export interface ChatTraceItem {
   id: string;
@@ -305,8 +346,9 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
   if (!response.ok) {
     let message = `请求失败（HTTP ${response.status}）`;
     try {
-      const body = await response.json() as { message?: string | string[] };
-      if (typeof body.message === 'string') message = body.message;
+      const body = await response.json() as { message?: string | string[]; error?: { message?: string } };
+      if (typeof body.error?.message === 'string') message = body.error.message;
+      else if (typeof body.message === 'string') message = body.message;
       else if (Array.isArray(body.message)) message = body.message.join('；');
     } catch { /* Keep the HTTP status if the server did not return JSON. */ }
     throw new AdminApiError(response.status, message);
@@ -315,6 +357,7 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
 }
 
 export const adminApi = {
+  dashboard: (token: string, range: DashboardRange) => request<DashboardOverview>(`/dashboard?range=${encodeURIComponent(range)}`, {}, token),
   login: (email: string, password: string) => request<{ accessToken: string; expiresIn: number }>('/auth/login', {
     method: 'POST', body: JSON.stringify({ email, password }),
   }),
@@ -349,4 +392,12 @@ export const adminApi = {
   debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
   conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}`, {}, token),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
+  llmProfiles: (token: string) => request<LlmProfileItem[]>('/model-profiles/llm', {}, token),
+  createLlmProfile: (token: string, input: LlmProfileInput) => request<LlmProfileItem>('/model-profiles/llm', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateLlmProfile: (token: string, id: number, input: Partial<LlmProfileInput>) => request<LlmProfileItem>(`/model-profiles/llm/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  deleteLlmProfile: (token: string, id: number, replacementId?: number) => request<{ deleted: true; activeProfileId: number | null }>(`/model-profiles/llm/${id}`, { method: 'DELETE', body: JSON.stringify({ replacementId }) }, token),
+  activateLlmProfile: (token: string, id: number) => request<LlmProfileItem>(`/model-profiles/llm/${id}/activate`, { method: 'POST' }, token),
+  setLlmProfileStatus: (token: string, id: number, enabled: boolean) => request<LlmProfileItem>(`/model-profiles/llm/${id}/status`, { method: 'PATCH', body: JSON.stringify({ enabled }) }, token),
+  testLlmProfile: (token: string, id: number) => request<LlmConnectionTestResult>(`/model-profiles/llm/${id}/test`, { method: 'POST' }, token),
+  testLlmConnection: (token: string, input: LlmProfileInput & { profileId?: number }) => request<LlmConnectionTestResult>('/model-profiles/llm/test', { method: 'POST', body: JSON.stringify(input) }, token),
 };

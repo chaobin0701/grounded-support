@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 
-export const adminSections = ['dashboard', 'knowledge', 'products', 'conversations', 'admins', 'roles', 'audit'] as const;
+export const adminSections = ['dashboard', 'knowledge', 'products', 'conversations', 'model-services', 'admins', 'roles', 'audit'] as const;
 
 const routeSurface = { template: '<span />' };
 
@@ -26,7 +26,7 @@ export const router = createRouter({
     } },
     { path: '/admin/knowledge/:baseId(\\d+)/documents/:documentId(\\d+)', name: 'admin-knowledge-document', component: routeSurface },
     { path: '/admin/knowledge/:baseId(\\d+)/:subview(documents|settings|recall-test)', name: 'admin-knowledge-subview', component: routeSurface },
-    { path: '/admin/:section(dashboard|knowledge|products|conversations|admins|roles|audit)', name: 'admin-section', component: routeSurface },
+    { path: '/admin/:section(dashboard|knowledge|products|conversations|model-services|admins|roles|audit)', name: 'admin-section', component: routeSurface },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 });

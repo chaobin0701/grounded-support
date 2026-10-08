@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
 const DEFAULT_LLM_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3';
+const DEFAULT_LLM_ALLOWED_BASE_URLS = [
+  DEFAULT_LLM_BASE_URL,
+  'https://api.openai.com/v1',
+  'https://api.deepseek.com/v1',
+];
 const DEFAULT_LLM_MODEL = 'deepseek-v4-1-flash-260910';
 const DEFAULT_LLM_TIMEOUT_MS = 20_000;
 const DEFAULT_LLM_CONTEXT_WINDOW_TOKENS = 32_000;
@@ -28,6 +33,7 @@ export const configSchema = z.object({
     audience: z.string().trim().min(1).default('grounded-support-admin'),
     expiresInSeconds: z.coerce.number().int().min(60).max(86_400).default(900),
   }).default({ secret: '', issuer: 'grounded-support', audience: 'grounded-support-admin', expiresInSeconds: 900 }),
+  modelConfigEncryptionKey: z.string().default(''),
   security: z.object({
     trustProxy: z.coerce.number().int().min(0).max(10).default(DEFAULT_TRUST_PROXY),
     allowedOrigins: z.array(z.string().url()).default([]),
@@ -68,6 +74,7 @@ export const configSchema = z.object({
     contextWindowTokens: z.coerce.number().int().min(1_024).max(1_000_000).default(DEFAULT_LLM_CONTEXT_WINDOW_TOKENS),
     maxOutputTokens: z.coerce.number().int().min(128).max(32_000).default(DEFAULT_LLM_MAX_OUTPUT_TOKENS),
     structuredOutput: z.enum(['auto', 'required', 'disabled']).default('auto'),
+    allowedBaseUrls: z.array(z.string().url()).default(DEFAULT_LLM_ALLOWED_BASE_URLS),
   }).default({
     provider: 'openai-compatible',
     apiKey: '',
@@ -77,6 +84,7 @@ export const configSchema = z.object({
     contextWindowTokens: DEFAULT_LLM_CONTEXT_WINDOW_TOKENS,
     maxOutputTokens: DEFAULT_LLM_MAX_OUTPUT_TOKENS,
     structuredOutput: 'auto',
+    allowedBaseUrls: DEFAULT_LLM_ALLOWED_BASE_URLS,
   }),
 });
 
@@ -102,6 +110,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       audience: env.JWT_AUDIENCE,
       expiresInSeconds: env.JWT_EXPIRES_IN_SECONDS,
     },
+    modelConfigEncryptionKey: env.MODEL_CONFIG_ENCRYPTION_KEY?.trim(),
     security: {
       trustProxy: env.TRUST_PROXY,
       allowedOrigins: env.ALLOWED_ORIGINS?.split(',').map((value) => value.trim()).filter(Boolean),
@@ -129,6 +138,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       contextWindowTokens: env.LLM_CONTEXT_WINDOW_TOKENS,
       maxOutputTokens: env.LLM_MAX_OUTPUT_TOKENS,
       structuredOutput: env.LLM_STRUCTURED_OUTPUT,
+      allowedBaseUrls: env.LLM_ALLOWED_BASE_URLS?.split(',').map((value) => value.trim()).filter(Boolean),
     },
   });
   if (!parsed.success) {
@@ -140,6 +150,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       'jwt.issuer': 'JWT_ISSUER',
       'jwt.audience': 'JWT_AUDIENCE',
       'jwt.expiresInSeconds': 'JWT_EXPIRES_IN_SECONDS',
+      modelConfigEncryptionKey: 'MODEL_CONFIG_ENCRYPTION_KEY',
       'security.trustProxy': 'TRUST_PROXY',
       'security.allowedOrigins': 'ALLOWED_ORIGINS',
       'security.chatWindowMs': 'CHAT_RATE_WINDOW_MS',
@@ -161,6 +172,7 @@ export function readConfigEnvironment(env: NodeJS.ProcessEnv = process.env): App
       'llm.contextWindowTokens': 'LLM_CONTEXT_WINDOW_TOKENS',
       'llm.maxOutputTokens': 'LLM_MAX_OUTPUT_TOKENS',
       'llm.structuredOutput': 'LLM_STRUCTURED_OUTPUT',
+      'llm.allowedBaseUrls': 'LLM_ALLOWED_BASE_URLS',
     };
     const details = parsed.error.issues
       .map((issue) => `${names[issue.path.join('.')] ?? (issue.path.join('.') || 'config')} ${issue.message}`)

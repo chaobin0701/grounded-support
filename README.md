@@ -33,6 +33,18 @@ API 与 Worker 使用同一份 `server/` 代码和镜像，分别运行；两者
 4. 运行 `docker compose ps`，确认 `postgres`、`api`、`worker`、`web` 均在运行。
 5. 需要查看后台进程时运行 `docker compose logs -f worker`。
 
+### 本地热更新开发模式
+
+如果只想开发前后台而不反复构建 Docker，可以只启动数据库，并使用常驻监督进程：
+
+```bash
+node scripts/dev-supervisor.mjs
+```
+
+开发页面固定在 `http://localhost:8848`。Vite 会热更新 `web/src`，TypeScript watch 会重新编译 `server/src`，API 和 Worker 由监督进程保持在线；进程退出后会自动重启，并每 10 秒检查一次 `http://localhost:3000/api/health`。停止时按 `Ctrl+C`，不会删除数据库容器或数据卷。
+
+首次运行前确保 `server/node_modules` 和 `web/node_modules` 已安装。该模式会自动执行数据库迁移，并停止 Docker 中的 API、Worker 和 Web 容器；需要恢复完整 Docker 验收时运行 `docker compose up --build -d`，访问 `http://localhost:8081`。
+
 本机数据库映射到 `localhost:5433`，供数据库客户端连接；容器之间通过服务名 `postgres:5432` 通信。API 不直接暴露到主机，由 Web 容器代理 `/api/`。
 
 停止服务：`docker compose down`。数据库使用命名卷保存；不要使用 `down -v`，除非明确要清空本地数据。

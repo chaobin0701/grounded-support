@@ -4,8 +4,9 @@ import { SecurityRateLimitService } from '../dist/security/security-rate-limit.s
 import { normalizeError } from '../dist/security/error-response.js';
 import { redact } from '../dist/security/redaction.js';
 
-test('security limiter keeps state across calls and returns a stable error body', async () => {
-  const limiter = new SecurityRateLimitService();
+test('security limiter enforces configured limits across calls and returns a stable error body', async () => {
+  // Exercise a small explicit threshold rather than tying this test to deployment defaults.
+  const limiter = new SecurityRateLimitService({ security: { chatWindowLimit: 10, documentUploadLimit: 10 } });
   for (let i = 0; i < 10; i += 1) await limiter.run('chat', 'visitor', async () => 'ok');
   await assert.rejects(() => limiter.run('chat', 'visitor', async () => 'no'), (error) => {
     assert.equal(error.getStatus(), 429);

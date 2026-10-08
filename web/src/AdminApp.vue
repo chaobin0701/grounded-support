@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Boxes, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
+import { Boxes, Cpu, Database, LayoutDashboard, MessageSquareText, ScrollText, Search, ShieldCheck, Users } from '@lucide/vue';
 import type { Component } from 'vue';
-import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type ChatTraceItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
+import { adminApi, AdminApiError, type AdminItem, type AdminMe, type AuditItem, type DocumentChunk, type DocumentDetail, type DocumentItem, type PermissionItem, type RoleItem } from './admin-api';
 import { clearAdminSession, loadAdminSession, loadAdminView, saveAdminSession, saveAdminView } from './admin-session';
+import { groupAdminNavigation } from './admin-navigation';
 import './admin.css';
 import KnowledgeBaseAdmin from './KnowledgeBaseAdmin.vue';
 import AdminDashboard from './AdminDashboard.vue';
@@ -13,8 +14,9 @@ import ConversationTraceAdmin from './ConversationTraceAdmin.vue';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
+import ModelServiceAdmin from './ModelServiceAdmin.vue';
 
-type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'admins' | 'roles' | 'audit';
+type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversations' | 'model-services' | 'admins' | 'roles' | 'audit';
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
@@ -44,14 +46,13 @@ const selectedAdminId = ref<number | null>(null);
 const selectedRoleId = ref<number | null>(null);
 const permissions = ref<PermissionItem[]>([]);
 const audits = ref<AuditItem[]>([]);
-const chatTraces = ref<ChatTraceItem[]>([]);
 const newAdmin = ref({ email: '', displayName: '', password: '', roleIds: [] as number[] });
 const editingRoleIds = ref<number[]>([]);
 const roleForm = ref({ id: null as number | null, code: '', name: '', permissionCodes: [] as string[] });
 const selectedAdmin = computed(() => admins.value.find((item) => item.id === selectedAdminId.value) ?? null);
 const selectedRole = computed(() => roles.value.find((item) => item.id === selectedRoleId.value) ?? null);
 const permissionGroups = computed(() => {
-  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', audit: '操作记录' };
+  const labels: Record<string, string> = { admins: '管理员', roles: '角色权限', documents: '资料', knowledge_bases: '知识库', conversations: '对话', model_profiles: '模型服务', audit: '操作记录' };
   const grouped = new Map<string, PermissionItem[]>();
   for (const permission of permissions.value) {
     const key = permission.code.split('.')[0] ?? 'other';
@@ -65,6 +66,7 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'knowledge', label: '知识库', icon: Database, permissions: ['documents.read', 'knowledge_bases.manage'] },
   { id: 'products', label: '产品管理', icon: Boxes, permissions: ['knowledge_bases.manage'] },
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
+  { id: 'model-services', label: '模型服务', icon: Cpu, permissions: ['model_profiles.read', 'model_profiles.manage'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },
   { id: 'audit', label: '操作记录', icon: ScrollText, permissions: ['audit.read'] },
@@ -76,6 +78,7 @@ function viewFromRoute(): View | null {
   return null;
 }
 const availableViews = computed(() => views.filter((item) => item.permissions.some(can)));
+const navigation = computed(() => groupAdminNavigation(availableViews.value));
 const quickSearchMatches = computed(() => {
   const keyword = adminQuickSearch.value.trim().toLowerCase();
   return keyword ? availableViews.value.filter((item) => item.label.toLowerCase().includes(keyword)) : availableViews.value;
@@ -137,7 +140,6 @@ function signOut() {
   admins.value = [];
   roles.value = [];
   audits.value = [];
-  chatTraces.value = [];
   error.value = '';
   notice.value = '';
   void router.replace('/admin');
@@ -182,12 +184,6 @@ async function refresh() {
       view.value = first.id;
     }
     if (view.value === 'documents' && can('documents.read')) documents.value = await adminApi.documents(token, documentOffset.value);
-    if (view.value === 'dashboard') {
-      const jobs: Promise<unknown>[] = [];
-      if (can('documents.read')) jobs.push(adminApi.documents(token, 0).then((items) => { documents.value = items; }));
-      if (can('conversations.read')) jobs.push(adminApi.chatTraces(token).then((items) => { chatTraces.value = items; }));
-      await Promise.all(jobs);
-    }
     if (view.value === 'admins') {
       [admins.value, roles.value] = await Promise.all([adminApi.admins(token), adminApi.roles(token)]);
       if (selectedAdminId.value === null) selectedAdminId.value = admins.value[0]?.id ?? null;
@@ -197,7 +193,6 @@ async function refresh() {
       if (selectedRoleId.value === null) selectedRoleId.value = roles.value[0]?.id ?? null;
     }
     if (view.value === 'audit') audits.value = await adminApi.audit(token);
-    if (view.value === 'conversations' && can('conversations.read')) chatTraces.value = await adminApi.chatTraces(token);
   } catch (cause) {
     error.value = describeError(cause);
   } finally {
@@ -365,12 +360,14 @@ function auditActionLabel(action: string): string {
     'knowledge_base.configured': '更新索引配置', 'knowledge_index.build_requested': '请求构建索引', 'knowledge_index.activated': '启用索引版本',
     'embedding_profile.created': '添加 Embedding 配置', 'embedding_profile.updated': '更新 Embedding 配置', 'faq.saved': '保存 FAQ',
     'debug.inspected': '检查会话调试上下文',
+    'llm_profile.created': '添加模型配置', 'llm_profile.updated': '更新模型配置',
+    'llm_profile.activated': '切换当前模型', 'llm_profile.deleted': '删除模型配置',
   };
   return labels[action] ?? action;
 }
 
 function auditTargetLabel(targetType: string): string {
-  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
+  return ({ admin: '管理员', role: '角色', document: '资料', knowledge_base: '知识库', knowledge_index: '知识索引', embedding_profile: 'Embedding 配置', llm_profile: '模型配置', debug_inspection: '调试检查' } as Record<string, string>)[targetType] ?? targetType;
 }
 
 async function runConfirmation() {
@@ -417,19 +414,24 @@ function sourceLocation(filename: string, start: number, end: number): string {
     </header>
     <aside class="admin-sidebar">
       <nav aria-label="管理导航">
-        <p class="admin-nav-label">工作区</p>
-        <RouterLink v-for="item in availableViews" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></RouterLink>
+        <RouterLink v-for="item in navigation.root" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></RouterLink>
+        <section v-for="group in navigation.groups" :key="group.id" class="admin-nav-group" :aria-labelledby="`admin-nav-${group.id}`">
+          <p :id="`admin-nav-${group.id}`" class="admin-nav-label">{{ group.label }}</p>
+          <div class="admin-nav-items">
+            <RouterLink v-for="item in group.items" :key="item.id" :to="`/admin/${item.id}`" :class="{ active: view === item.id }" :aria-current="view === item.id ? 'page' : undefined"><component :is="item.icon" :size="17" /><span>{{ item.label }}</span></RouterLink>
+          </div>
+        </section>
       </nav>
       <div class="admin-sidebar-bottom"><a href="/">访客页面 ↗</a><button type="button" @click="signOut">退出登录</button></div>
     </aside>
 
     <main class="admin-main">
-      <div class="admin-content">
+      <div class="admin-content" :class="{ 'admin-conversation-content': view === 'conversations' }">
         <ToastNotice :message="error || notice" :type="error ? 'error' : 'success'" @dismiss="error ? (error = '') : (notice = '')" />
 
         <section v-if="!availableViews.length" class="admin-empty"><h1>暂无可用权限</h1><p>请联系超级管理员分配角色。</p></section>
 
-        <AdminDashboard v-else-if="view === 'dashboard'" :display-name="session.me.displayName" :document-count="documents.length" :conversation-count="chatTraces.length" />
+        <AdminDashboard v-else-if="view === 'dashboard'" :token="session.token" />
         <KnowledgeBaseAdmin v-else-if="view === 'knowledge'" :token="session.token" :permissions="session.me.permissionCodes" />
         <ProductCatalogAdmin v-else-if="view === 'products'" :token="session.token" />
         <section v-else-if="view === 'documents'">
@@ -467,7 +469,8 @@ function sourceLocation(filename: string, start: number, end: number): string {
           <p v-else class="admin-muted">当前账号没有查看资料列表的权限。</p>
         </section>
 
-        <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" />
+        <ConversationTraceAdmin v-else-if="view === 'conversations'" :token="session.token" :can-debug="can('conversations.debug')" />
+        <ModelServiceAdmin v-else-if="view === 'model-services'" :token="session.token" :can-manage="can('model_profiles.manage')" @notice="notice = $event" @error="error = $event" />
 
         <section v-else-if="view === 'admins'">
           <AdminPageHeader eyebrow="账号管理" title="管理员" description="创建账号、分配角色和停用账号；实际授权始终由后端校验。">

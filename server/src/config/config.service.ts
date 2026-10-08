@@ -17,6 +17,10 @@ export class AppConfigService {
     return this.config.llm;
   }
 
+  get modelConfigEncryptionKey(): string {
+    return this.config.modelConfigEncryptionKey;
+  }
+
   get databaseUrl(): string {
     return this.config.databaseUrl;
   }

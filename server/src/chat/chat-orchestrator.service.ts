@@ -97,7 +97,7 @@ export class ChatOrchestratorService {
         id: `answer-${modelCalls.length + 1}`,
         purpose: 'answer',
         model: streamed.model,
-        request: { messages: [{ role: 'system', content: answerSystemPrompt }, { role: 'user', content: answerUserPrompt }], temperature: 0.1, maxTokens: 1200 },
+        request: { messages: [{ role: 'system', content: answerSystemPrompt }, { role: 'user', content: answerUserPrompt }], temperature: 0.1, maxTokens: this.llm.maxOutputTokens },
         response: { content: streamed.content, finishReason: streamed.finishReason, inputTokens: streamed.inputTokens, outputTokens: streamed.outputTokens, totalTokens: streamed.totalTokens },
         durationMs: streamed.durationMs,
         attempts: streamed.attempts,

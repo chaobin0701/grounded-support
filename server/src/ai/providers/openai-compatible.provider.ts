@@ -20,6 +20,8 @@ export interface OpenAICompatibleProviderOptions {
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  maxOutputTokens?: number;
+  contextWindowTokens?: number;
   supportedModels?: readonly string[];
   /** `auto` retries without response_format only when the endpoint rejects it. */
   structuredOutput?: 'auto' | 'required' | 'disabled';
@@ -42,8 +44,10 @@ export class OpenAICompatibleProvider implements LlmProvider {
   private readonly apiKey: string;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  readonly maxOutputTokens: number | undefined;
+  readonly contextWindowTokens: number | undefined;
   private readonly supportedModels: readonly string[];
-  private readonly structuredOutput: NonNullable<OpenAICompatibleProviderOptions['structuredOutput']>;
+  readonly structuredOutput: NonNullable<OpenAICompatibleProviderOptions['structuredOutput']>;
   private readonly logger = new Logger(OpenAICompatibleProvider.name);
 
   constructor(options: OpenAICompatibleProviderOptions) {
@@ -51,13 +55,18 @@ export class OpenAICompatibleProvider implements LlmProvider {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.model = options.model;
     this.timeoutMs = options.timeoutMs;
-    this.supportedModels = options.supportedModels ?? SUPPORTED_LLM_MODELS;
+    this.maxOutputTokens = options.maxOutputTokens;
+    this.contextWindowTokens = options.contextWindowTokens;
+    // OpenAI-compatible endpoints expose model identifiers configured by the
+    // account.  Keep an optional allow-list for deployments that need one, but
+    // do not impose a built-in list on user-managed profiles.
+    this.supportedModels = options.supportedModels ?? [];
     this.structuredOutput = options.structuredOutput ?? 'auto';
   }
 
   async chat(request: LlmRequest): Promise<LlmResponse> {
     if (!this.apiKey) throw new ProviderAuthenticationError();
-    if (!this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
+    if (this.supportedModels.length > 0 && !this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
     const started = Date.now();
     let response: Response;
     let payload: RawResponse;
@@ -166,7 +175,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
 
   async *stream(request: LlmRequest): AsyncIterable<LlmStreamEvent> {
     if (!this.apiKey) throw new ProviderAuthenticationError();
-    if (!this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
+    if (this.supportedModels.length > 0 && !this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {

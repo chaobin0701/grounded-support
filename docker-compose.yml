@@ -36,6 +36,7 @@ services:
       JWT_ISSUER: ${JWT_ISSUER:-grounded-support}
       JWT_AUDIENCE: ${JWT_AUDIENCE:-grounded-support-admin}
       JWT_EXPIRES_IN_SECONDS: ${JWT_EXPIRES_IN_SECONDS:-900}
+      MODEL_CONFIG_ENCRYPTION_KEY: ${MODEL_CONFIG_ENCRYPTION_KEY:-}
       UPLOAD_ROOT: ${UPLOAD_ROOT:-/data/uploads}
       TRUST_PROXY: ${TRUST_PROXY:-1}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:8081}
@@ -59,6 +60,7 @@ services:
       LLM_CONTEXT_WINDOW_TOKENS: ${LLM_CONTEXT_WINDOW_TOKENS:-32000}
       LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-1200}
       LLM_STRUCTURED_OUTPUT: ${LLM_STRUCTURED_OUTPUT:-auto}
+      LLM_ALLOWED_BASE_URLS: ${LLM_ALLOWED_BASE_URLS:-https://ark.cn-beijing.volces.com/api/v3,https://api.openai.com/v1,https://api.deepseek.com/v1}
       PORT: "3000"
     volumes:
       - uploads:/data/uploads

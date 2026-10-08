@@ -9,6 +9,8 @@ import { PermissionGuard } from './permission.guard';
 import { DatabaseService } from '../database.service';
 import { AppConfigService } from '../config/config.service';
 import { AdminProductController } from './admin-product.controller';
+import { AdminDashboardController } from './admin-dashboard.controller';
+import { AdminDashboardService } from './admin-dashboard.service';
 
 @Module({
   imports: [JwtModule.registerAsync({
@@ -22,8 +24,8 @@ import { AdminProductController } from './admin-product.controller';
       };
     },
   })],
-  controllers: [AdminAuthController, AdminManagementController, AdminProductController],
-  providers: [DatabaseService, AdminAuthService, AdminManagementService, AdminAuthGuard, PermissionGuard],
+  controllers: [AdminAuthController, AdminManagementController, AdminProductController, AdminDashboardController],
+  providers: [DatabaseService, AdminAuthService, AdminManagementService, AdminAuthGuard, PermissionGuard, AdminDashboardService],
   exports: [JwtModule, DatabaseService, AdminAuthGuard, PermissionGuard],
 })
 export class AdminModule {}
