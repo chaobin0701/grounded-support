@@ -11,25 +11,39 @@ const row = (id, extra = {}) => ({ id, name: `profile ${id}`, platform_key: 'vol
 const input = { name: 'unsaved configuration', platformKey: 'volcengine', baseUrl, model: 'unsaved-model', timeoutMs: 45000, contextWindowTokens: 64000, maxOutputTokens: 2048 };
 
 function fixture(rows, options = {}) {
-  const calls = []; const activated = []; const sent = [];
+  const calls = []; const activated = []; const sent = []; const decrypted = []; const encrypted = [];
   let state = structuredClone(rows);
   const query = async (sql, values = []) => {
     calls.push({ sql, values });
     if (sql.includes('SELECT id::int')) return { rows: sql.includes('WHERE id = $1') ? state.filter(item => item.id === values[0]) : state };
+    if (sql.startsWith('INSERT INTO llm_profiles')) {
+      const item = row(Math.max(0, ...state.map(item => item.id)) + 1, {
+        name: values[0], platform_key: values[1], base_url: values[2], model: values[3], api_key_ciphertext: values[4],
+        timeout_ms: values[5], context_window_tokens: values[6], max_output_tokens: values[7],
+        supports_tool_calls: values[9], supports_streaming: values[10],
+      });
+      state.push(item); return { rows: [item] };
+    }
     if (sql.startsWith('DELETE FROM llm_profiles')) { state = state.filter(item => item.id !== values[0]); return { rows: [] }; }
     if (sql.startsWith('UPDATE llm_profiles SET is_default')) {
-      state.forEach(item => { if (sql.includes('WHERE is_default') ? item.is_default : item.id === values[0]) item.is_default = sql.includes('= TRUE'); });
+      state.forEach(item => { if (sql.includes('WHERE is_default') ? item.is_default : item.id === values[0]) item.is_default = sql.startsWith('UPDATE llm_profiles SET is_default = TRUE'); });
       return { rows: state.filter(item => item.id === values[0]) };
     }
     if (sql.startsWith('UPDATE llm_profiles SET enabled')) { const item = state.find(item => item.id === values[0]); item.enabled = values[1]; return { rows: [item] }; }
-    if (sql.startsWith('UPDATE llm_profiles SET')) { const item = state.find(item => item.id === values[0]); if (sql.includes('name = $2')) item.name = values[1]; return { rows: item ? [item] : [] }; }
+    if (sql.startsWith('UPDATE llm_profiles SET')) {
+      const item = state.find(item => item.id === values[0]);
+      if (item) for (const [,column,parameter] of sql.matchAll(/(\w+) = \$(\d+)/g)) {
+        if (column !== 'id') item[column] = values[Number(parameter) - 1];
+      }
+      return { rows: item ? [item] : [] };
+    }
     return { rows: [] };
   };
   const database = { query, transaction: async action => { const backup = structuredClone(state); try { return await action({ query }); } catch (error) { state = backup; throw error; } } };
-  const config = { llm: { allowedBaseUrls: [baseUrl], apiKey: options.environmentKey } };
-  const secrets = { encrypt: value => `encrypted:${value}`, decrypt: () => options.savedKey ?? '12-secret-api-key-89' };
+  const config = { llm: { allowedBaseUrls: options.allowedBaseUrls ?? [baseUrl], apiKey: options.environmentKey } };
+  const secrets = { encrypt: value => { encrypted.push(value); return `encrypted:${value}`; }, decrypt: value => { decrypted.push(value); return value.startsWith('encrypted:') ? value.slice('encrypted:'.length) : options.savedKey ?? '12-secret-api-key-89'; } };
   const registry = { activateProfile: value => activated.push(value), createFromProfile: profile => { sent.push(profile); return { chat: async request => { sent.push(request); if (options.providerError) throw options.providerError; return { content: options.content ?? '连接成功', model: profile.model, durationMs: 45 }; } }; } };
-  return { service: new LlmProfileService(database, config, secrets, registry), calls, activated, sent, state: () => state };
+  return { service: new LlmProfileService(database, config, secrets, registry), calls, activated, sent, decrypted, encrypted, state: () => state };
 }
 
 test('profile views include only masked key preview, never secrets or ciphertext', async () => {
@@ -94,6 +108,64 @@ test('updating current profile refreshes runtime, using database is_default fiel
   const f = fixture([row(1, { is_default: true })]);
   await f.service.update(7, 1, { name: 'updated' });
   assert.equal(f.activated[0].name, 'updated');
+});
+test('created platform is immutable for current, inactive and disabled configurations', async () => {
+  const platforms = { volcengine: baseUrl, openai: 'https://api.openai.com/v1', deepseek: 'https://api.deepseek.com/v1', custom: 'https://compatible.example/v1' };
+  for (const [savedPlatform, savedUrl] of Object.entries(platforms)) {
+    for (const [nextPlatform, nextUrl] of Object.entries(platforms)) {
+      if (savedPlatform === nextPlatform) continue;
+      for (const flags of [{is_default: true}, {is_default: false}, {enabled: false}]) {
+        const f = fixture([row(1, {...flags, platform_key: savedPlatform, base_url: savedUrl})], {allowedBaseUrls: Object.values(platforms)});
+        await assert.rejects(f.service.update(7, 1, {platformKey: nextPlatform, baseUrl: nextUrl, apiKey: 'new-key'}), error => error.getStatus() === 400 && error.message.includes('不可修改平台'));
+        assert.equal(f.state()[0].platform_key, savedPlatform);
+        assert.ok(f.calls.every(call => call.sql.startsWith('SELECT')));
+        assert.equal(f.encrypted.length, 0); assert.equal(f.decrypted.length, 0); assert.equal(f.activated.length, 0);
+      }
+    }
+  }
+});
+test('same-platform edits and omitted platform keys remain supported without writing platform_key', async () => {
+  const f = fixture([row(1, {is_default: true})]);
+  await f.service.update(7, 1, {platformKey: 'volcengine', model: 'new-model', timeoutMs: 45000, apiKey: 'new-own-key'});
+  assert.equal(f.state()[0].platform_key, 'volcengine'); assert.equal(f.state()[0].model, 'new-model');
+  assert.equal(f.activated[0].apiKey, 'new-own-key');
+  assert.ok(!f.calls.some(call => /UPDATE llm_profiles SET .*platform_key\s*=/.test(call.sql)));
+  const fields = JSON.parse(f.calls.find(call => call.sql.includes('llm_profile.updated')).values[2]).fields;
+  assert.ok(!fields.includes('platformKey'));
+  await f.service.update(7, 1, {name: 'renamed'});
+  assert.equal(f.state()[0].name, 'renamed'); assert.equal(f.state()[0].platform_key, 'volcengine');
+});
+test('partial edits do not apply creation defaults, and empty updates are rejected', async () => {
+  const f = fixture([row(1, {timeout_ms: 60000, context_window_tokens: 128000, max_output_tokens: 8192, supports_tool_calls: false, supports_streaming: false})]);
+  await f.service.update(7, 1, {name: 'name-only'});
+  const saved = f.state()[0];
+  assert.equal(saved.platform_key, 'volcengine'); assert.equal(saved.timeout_ms, 60000);
+  assert.equal(saved.context_window_tokens, 128000); assert.equal(saved.max_output_tokens, 8192);
+  assert.equal(saved.supports_tool_calls, false); assert.equal(saved.supports_streaming, false);
+  const writes = f.calls.filter(call => call.sql.startsWith('UPDATE llm_profiles'));
+  assert.equal(writes.length, 1); assert.ok(!writes[0].sql.includes('timeout_ms ='));
+  for (const input of [{}, {platformKey: 'unsupported'}, {extra: 'unsupported'}]) {
+    await assert.rejects(f.service.update(7, 1, input), error => error.getStatus() === 400);
+  }
+});
+test('editing connection tests cannot borrow an existing key for another platform', async () => {
+  for (const apiKey of [undefined, 'explicit-test-key']) {
+    const f = fixture([row(1)], {allowedBaseUrls: [baseUrl, 'https://api.deepseek.com/v1']});
+    await assert.rejects(f.service.testConnection({...input, profileId: 1, platformKey: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey}), /不可修改平台/);
+    assert.equal(f.sent.length, 0); assert.equal(f.decrypted.length, 0); assert.equal(f.activated.length, 0);
+  }
+});
+test('new-platform replacement is a distinct record; activation keeps the original unchanged', async () => {
+  const f = fixture([row(1, {is_default: true})], {allowedBaseUrls: [baseUrl, 'https://api.deepseek.com/v1']});
+  const created = await f.service.create(7, {...input, platformKey: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', apiKey: 'deepseek-own-key'});
+  assert.equal(created.platformKey, 'deepseek'); assert.equal(created.isDefault, false);
+  assert.equal(f.state()[0].is_default, true);
+  await f.service.activate(7, created.id);
+  assert.equal(f.state().length, 2); assert.equal(f.state()[0].platform_key, 'volcengine');
+  assert.equal(f.state()[0].is_default, false); assert.equal(f.state()[1].is_default, true);
+  assert.equal(f.activated[0].apiKey, 'deepseek-own-key');
+  assert.ok(!f.calls.some(call => call.sql.startsWith('DELETE')));
+  assert.ok(!JSON.stringify(f.calls.filter(call => call.sql.includes('audit_logs'))).includes('deepseek-own-key'));
 });
 test('test and delete endpoints retain model management permission', () => {
   for (const method of ['testConnection', 'test', 'remove', 'update']) assert.deepEqual(Reflect.getMetadata(PERMISSION_KEY, LlmProfileController.prototype[method]), ['model_profiles.manage']);

@@ -21,6 +21,17 @@ const profileInput = z.object({
   supportsStreaming: z.boolean().default(true),
 }).strict();
 
+// PATCH must not apply creation defaults to omitted fields (Zod defaults otherwise
+// survive partial()). A name-only edit must preserve platform and runtime settings.
+const profileUpdateInput = profileInput.partial().extend({
+  platformKey: profileInput.shape.platformKey.removeDefault().optional(),
+  timeoutMs: profileInput.shape.timeoutMs.removeDefault().optional(),
+  contextWindowTokens: profileInput.shape.contextWindowTokens.removeDefault().optional(),
+  maxOutputTokens: profileInput.shape.maxOutputTokens.removeDefault().optional(),
+  supportsToolCalls: profileInput.shape.supportsToolCalls.removeDefault().optional(),
+  supportsStreaming: profileInput.shape.supportsStreaming.removeDefault().optional(),
+});
+
 type ProfileRow = Record<string, unknown>;
 type ConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
 const connectionTestInput = profileInput.extend({ profileId: z.number().int().positive().optional() });
@@ -66,16 +77,16 @@ export class LlmProfileService {
   }
 
   async update(actorId: number, id: number, input: unknown): Promise<LlmProfileView> {
-    const parsed = profileInput.partial().safeParse(input);
+    const parsed = profileUpdateInput.safeParse(input);
     if (!parsed.success || Object.keys(parsed.data).length === 0) throw new BadRequestException('No valid profile fields');
     const existing = await this.find(id);
     if (!existing) throw new NotFoundException('LLM profile not found');
-    if (parsed.data.baseUrl || parsed.data.platformKey) this.validateBaseUrl(parsed.data.platformKey ?? (isLlmPlatformKey(existing.platform_key) ? existing.platform_key : 'custom'), parsed.data.baseUrl ?? String(existing.base_url ?? ''));
+    const platformKey = this.fixedPlatform(existing, parsed.data.platformKey);
+    if (parsed.data.baseUrl !== undefined) this.validateBaseUrl(platformKey, parsed.data.baseUrl);
     const values: unknown[] = [id];
     const assignments: string[] = [];
     const add = (column: string, value: unknown) => { values.push(value); assignments.push(`${column} = $${values.length}`); };
     if (parsed.data.name !== undefined) add('name', parsed.data.name);
-    if (parsed.data.platformKey !== undefined) add('platform_key', parsed.data.platformKey);
     if (parsed.data.baseUrl !== undefined) add('base_url', parsed.data.baseUrl);
     if (parsed.data.model !== undefined) add('model', parsed.data.model);
     if (parsed.data.apiKey !== undefined) add('api_key_ciphertext', this.secrets.encrypt(parsed.data.apiKey));
@@ -91,7 +102,7 @@ export class LlmProfileService {
       const result = updated.rows[0];
       if (!result) throw new NotFoundException('LLM profile not found');
       await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
-        VALUES ($1, 'llm_profile.updated', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ fields: Object.keys(parsed.data) })]);
+        VALUES ($1, 'llm_profile.updated', 'llm_profile', $2, $3)`, [actorId, String(id), JSON.stringify({ fields: Object.keys(parsed.data).filter(field => field !== 'platformKey') })]);
       return result;
     });
     if (row.is_default) await this.activateRuntime(row);
@@ -177,6 +188,7 @@ export class LlmProfileService {
     if (parsed.data.profileId !== undefined) {
       const row = await this.find(parsed.data.profileId);
       if (!row) throw new NotFoundException('模型配置不存在');
+      this.fixedPlatform(row, parsed.data.platformKey);
       if (!parsed.data.apiKey) apiKey = (await this.hydrate(row)).apiKey;
     }
     if (!apiKey) throw new BadRequestException('请填写 API Key');
@@ -222,6 +234,14 @@ export class LlmProfileService {
   }
 
   private async activateRuntime(row: ProfileRow): Promise<void> { this.registry.activateProfile(await this.hydrate(row)); }
+
+  private fixedPlatform(row: ProfileRow, requested: string | undefined): string {
+    const platform = isLlmPlatformKey(row.platform_key) ? row.platform_key : 'custom';
+    if (requested !== undefined && requested !== platform) {
+      throw new BadRequestException('配置创建后不可修改平台，请新建配置并设为当前使用');
+    }
+    return platform;
+  }
 
   private validateBaseUrl(platformKey: string, value: string): void {
     if (!isLlmPlatformKey(platformKey)) throw new BadRequestException('Invalid model platform');

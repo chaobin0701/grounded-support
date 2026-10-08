@@ -3,6 +3,7 @@ import { Database, FileText, Plus, Search, Settings2, Upload } from '@lucide/vue
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { request, type DocumentItem } from './admin-api';
+import { filterKnowledgeBases, filterKnowledgeDocuments, type KnowledgeBaseStatusFilter, type DocumentStatusFilter } from './knowledge-list-filters';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
@@ -63,46 +64,30 @@ const topK = ref(5);
 const recallMode = ref<'fulltext' | 'vector' | 'hybrid'>('hybrid');
 const recallResult = ref<RecallResult | null>(null);
 const listQuery = ref('');
-const listStatus = ref<'all' | 'enabled' | 'disabled' | 'archived'>('all');
+const listStatus = ref<KnowledgeBaseStatusFilter>('all');
+const showArchivedBases = ref(false);
 const documentQuery = ref('');
-const documentStatusFilter = ref<'all' | 'processing' | 'ready' | 'failed' | 'archived'>('all');
+const documentStatusFilter = ref<DocumentStatusFilter>('all');
+const showArchivedDocuments = ref(false);
 const selectedDocuments = ref<number[]>([]);
 const profileForm = ref({ name: '', config: { provider: 'volcengine-multimodal', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
   model: 'doubao-embedding-vision-251215', dimensions: 2048, maxInputChars: 8000, batchSize: 16, secretRef: 'default' } });
 
 const api = <T,>(path = '', method = 'GET', body?: unknown) => request<T>(`/knowledge-bases${path}`,
   { method, ...(body === undefined ? {} : { body: body instanceof FormData ? body : JSON.stringify(body) }) }, props.token);
-const activeDocuments = computed(() => documents.value.filter((doc) => !doc.archivedAt && doc.sourceType !== 'faq'));
+const fileDocuments = computed(() => documents.value.filter((doc) => doc.sourceType !== 'faq'));
+const activeDocuments = computed(() => fileDocuments.value.filter((doc) => !doc.archivedAt));
 const readyCount = computed(() => activeDocuments.value.filter((doc) => doc.status === 'ready' && doc.enabledForRetrieval !== false).length);
 const processingCount = computed(() => activeDocuments.value.filter((doc) => ['pending', 'queued', 'processing'].includes(doc.status)).length);
 const failedCount = computed(() => activeDocuments.value.filter((doc) => doc.status === 'failed').length);
-const visibleDocuments = computed(() => {
-  const keyword = documentQuery.value.trim().toLocaleLowerCase();
-  return documents.value.filter((doc) => {
-    if (doc.sourceType === 'faq') return false;
-    const statusMatch = documentStatusFilter.value === 'all'
-      || (documentStatusFilter.value === 'archived' && !!doc.archivedAt)
-      || (documentStatusFilter.value === 'ready' && !doc.archivedAt && doc.status === 'ready')
-      || (documentStatusFilter.value === 'failed' && !doc.archivedAt && doc.status === 'failed')
-      || (documentStatusFilter.value === 'processing' && !doc.archivedAt && ['pending', 'queued', 'processing'].includes(doc.status));
-    const queryMatch = !keyword || `${doc.title} ${doc.originalFilename}`.toLocaleLowerCase().includes(keyword);
-    return statusMatch && queryMatch;
-  }).sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt)
-    || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-});
+const visibleDocuments = computed(() => filterKnowledgeDocuments(documents.value, documentQuery.value, documentStatusFilter.value, showArchivedDocuments.value));
 const allVisibleSelected = computed(() => visibleDocuments.value.filter((doc) => !doc.archivedAt).length > 0
   && visibleDocuments.value.filter((doc) => !doc.archivedAt).every((doc) => selectedDocuments.value.includes(doc.id)));
-const filteredBases = computed(() => {
-  const keyword = listQuery.value.trim().toLocaleLowerCase();
-  return bases.value.filter((base) => {
-    const textMatch = !keyword || `${base.name} ${base.description}`.toLocaleLowerCase().includes(keyword);
-    const statusMatch = listStatus.value === 'all'
-      || (listStatus.value === 'archived' && !!base.archivedAt)
-      || (listStatus.value === 'enabled' && !base.archivedAt && base.enabledForChat)
-      || (listStatus.value === 'disabled' && !base.archivedAt && !base.enabledForChat);
-    return textMatch && statusMatch;
-  }).sort((a, b) => Number(!!a.archivedAt) - Number(!!b.archivedAt)
-    || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+const filteredBases = computed(() => filterKnowledgeBases(bases.value, listQuery.value, listStatus.value, showArchivedBases.value));
+watch(visibleDocuments, (visible) => {
+  const selectableIds = new Set(visible.filter(doc => !doc.archivedAt).map(doc => doc.id));
+  selectedDocuments.value = selectedDocuments.value.filter(id => selectableIds.has(id));
+  if (openActionId.value !== null && !visible.some(doc => doc.id === openActionId.value)) openActionId.value = null;
 });
 const currentProfile = computed(() => profiles.value.find((profile) => profile.id === config.value.embeddingProfileId));
 const currentRouteTab = (raw: unknown): View => raw === 'settings' || raw === 'index' || raw === 'config'
@@ -374,12 +359,13 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
     <template v-if="route.path === '/admin/knowledge' || !current">
       <div class="kb-toolbar">
         <label class="kb-search"><Search :size="16" /><input v-model="listQuery" placeholder="搜索知识库名称或描述" /></label>
-        <select v-model="listStatus" aria-label="筛选知识库"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option><option value="archived">已归档</option></select>
+        <select v-model="listStatus" aria-label="筛选知识库"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已停用</option></select>
+        <label class="kb-archive-toggle"><input v-model="showArchivedBases" type="checkbox" role="switch" aria-label="显示已归档的知识库" /><span class="kb-archive-track" aria-hidden="true"></span><span>显示已归档</span></label>
         <span class="kb-result-count">{{ filteredBases.length }} 个知识库</span>
         <button type="button" class="kb-quiet" :disabled="loading" @click="refresh">刷新</button>
       </div>
       <div v-if="loading && !bases.length" class="kb-empty">正在读取知识库…</div>
-      <div v-else-if="!filteredBases.length" class="kb-empty"><strong>{{ bases.length ? '没有匹配的知识库' : '还没有知识库' }}</strong><p>{{ bases.length ? '试试其他搜索词或状态筛选。' : '创建知识库后，再上传第一份资料。' }}</p><button v-if="!bases.length && canManage" class="kb-primary" @click="openCreate"><Plus :size="16" /> 新建知识库</button></div>
+      <div v-else-if="!filteredBases.length" class="kb-empty"><strong>{{ bases.length ? '没有匹配的知识库' : '还没有知识库' }}</strong><p>{{ bases.length ? '调整搜索词、状态，或打开“显示已归档”。' : '创建知识库后，再上传第一份资料。' }}</p><button v-if="!bases.length && canManage" class="kb-primary" @click="openCreate"><Plus :size="16" /> 新建知识库</button></div>
       <div v-else class="kb-table-wrap">
         <table class="kb-table"><thead><tr><th>知识库</th><th>文档</th><th>索引状态</th><th>检索策略</th><th>最近更新</th><th></th></tr></thead>
           <tbody><tr v-for="base in filteredBases" :key="base.id" class="kb-base-row" @click="openBase(base.id)">
@@ -411,12 +397,13 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 
       <section v-if="view === 'documents'" class="kb-content">
         <div class="kb-stat-row"><div><span>文档总数</span><strong>{{ activeDocuments.length }}</strong></div><div><span>可检索</span><strong>{{ readyCount }}</strong></div><div><span>处理中</span><strong>{{ processingCount }}</strong></div><div><span>处理失败</span><strong>{{ failedCount }}</strong></div></div>
-        <div class="kb-doc-toolbar"><label class="kb-search"><Search :size="16" /><input v-model="documentQuery" placeholder="搜索文档名称" /></label><select v-model="documentStatusFilter" aria-label="文档状态"><option value="all">全部状态</option><option value="processing">处理中</option><option value="ready">可检索</option><option value="failed">处理失败</option><option value="archived">已归档</option></select>
+        <div class="kb-doc-toolbar"><label class="kb-search"><Search :size="16" /><input v-model="documentQuery" placeholder="搜索文档名称" /></label><select v-model="documentStatusFilter" aria-label="文档状态"><option value="all">全部状态</option><option value="processing">处理中</option><option value="ready">可检索</option><option value="failed">处理失败</option></select>
+          <label class="kb-archive-toggle"><input v-model="showArchivedDocuments" type="checkbox" role="switch" aria-label="显示已归档的文档" /><span class="kb-archive-track" aria-hidden="true"></span><span>显示已归档</span></label>
           <div class="kb-toolbar-spacer"></div><button v-if="selectedDocuments.length && can('documents.archive')" class="kb-quiet" @click="archiveSelected">归档所选（{{ selectedDocuments.length }}）</button><button v-if="selectedDocuments.length && can('documents.reprocess')" class="kb-quiet" @click="reprocess(selectedDocuments)">重新解析（{{ selectedDocuments.length }}）</button><button v-if="can('documents.upload') && !current.archivedAt" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button>
         </div>
         <div v-if="processingCount" class="kb-processing-banner"><span class="kb-status-dot amber"></span><div><strong>{{ processingCount }} 份文档等待处理或正在处理中</strong><p>解析完成后会自动进入可检索状态，无需单独发布。</p></div></div>
         <div v-if="failedCount" class="kb-processing-banner failed"><span class="kb-status-dot red"></span><div><strong>{{ failedCount }} 份文档处理失败</strong><p>检查错误信息后，可对失败文档重新解析。</p></div></div>
-        <div v-if="!visibleDocuments.length" class="kb-empty kb-empty-doc"><FileText :size="30" /><strong>{{ activeDocuments.length ? '没有符合条件的文档' : '还没有文档' }}</strong><p>{{ activeDocuments.length ? '调整搜索词或状态筛选。' : '上传 Markdown、DOCX 或可复制文字的 PDF，解析成功后会自动参与检索。' }}</p><button v-if="!activeDocuments.length && can('documents.upload')" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button></div>
+        <div v-if="!visibleDocuments.length" class="kb-empty kb-empty-doc"><FileText :size="30" /><strong>{{ fileDocuments.length ? '没有符合条件的文档' : '还没有文档' }}</strong><p>{{ fileDocuments.length ? '调整搜索词、状态，或打开“显示已归档”。' : '上传 Markdown、DOCX 或可复制文字的 PDF，解析成功后会自动参与检索。' }}</p><button v-if="!fileDocuments.length && can('documents.upload') && !current.archivedAt" class="kb-primary" @click="openUpload"><Upload :size="16" /> 上传文档</button></div>
         <div v-else class="kb-table-wrap"><table class="kb-table kb-doc-table"><thead><tr><th class="check-cell"><input type="checkbox" :checked="allVisibleSelected" aria-label="选择所有文档" @change="toggleAll" /></th><th>文档名称</th><th>类型</th><th>字符数</th><th>分段数</th><th>状态</th><th>检索</th><th>更新时间</th><th>操作</th></tr></thead>
           <tbody><tr v-for="doc in visibleDocuments" :key="doc.id" class="kb-document-row" @click="openDocument(doc.id)"><td class="check-cell" @click.stop><input v-if="!doc.archivedAt" v-model="selectedDocuments" type="checkbox" :value="doc.id" :aria-label="`选择 ${doc.title}`" /></td><td><div class="kb-doc-name"><span class="kb-file-type" :class="fileTypeClass(doc)" role="img" :aria-label="`${fileType(doc)} 文件`"><FileText :size="18" :stroke-width="1.8" /></span><span><strong>{{ doc.title }}</strong><small>{{ doc.originalFilename }}</small><small v-if="doc.errorMessage" class="kb-doc-error">{{ doc.errorMessage }}</small></span></div></td>
             <td>{{ fileType(doc) }}</td><td>{{ charCount(doc) }}</td><td>{{ chunkCount(doc) }}</td><td><span class="kb-badge" :class="doc.archivedAt ? 'muted' : doc.enabledForRetrieval === false ? 'disabled' : statusClass(doc)"><i class="kb-status-dot"></i>{{ doc.archivedAt ? '已归档' : doc.enabledForRetrieval === false ? '已停用' : statusLabel(doc) }}</span></td><td @click.stop><label v-if="!doc.archivedAt && can('documents.archive')" class="kb-switch" :class="{ on: doc.enabledForRetrieval !== false }" :aria-label="doc.enabledForRetrieval !== false ? '停用检索' : '启用检索'"><input type="checkbox" :checked="doc.enabledForRetrieval !== false" @change="toggleDocumentEnabled(doc)" /><span></span></label><span v-else class="kb-muted-dash">—</span></td><td>{{ fmtDate(doc.updatedAt) }}</td><td @click.stop><div class="kb-action-menu" @keydown.esc="openActionId = null"><button class="kb-menu-trigger" aria-label="文档操作" :aria-expanded="openActionId === doc.id" @click="toggleActionMenu(doc.id)">•••</button><div v-if="openActionId === doc.id" class="kb-action-menu-panel" @click="openActionId = null"><button @click="openDocument(doc.id)">查看详情</button><button v-if="!doc.archivedAt && can('documents.reprocess') && ['pending','ready','failed','extracted'].includes(doc.status)" @click="reprocess([doc.id])">重新解析</button><button v-if="can('documents.archive')" @click="toggleDocumentArchive(doc)">{{ doc.archivedAt ? '取消归档' : '归档' }}</button><button v-if="!doc.archivedAt" @click="downloadDocument(doc)">下载原文件</button></div></div></td>
@@ -493,13 +480,22 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 
 <style scoped>
 .kb-upload-confirmed{grid-column:1/-1;margin:0;color:#667085;font-size:13px;line-height:1.7}
-.kb-page{max-width:1440px;margin:0 auto;padding:0 0 56px;color:#172033}
+.kb-page{min-width:0;margin:0;padding:0;color:#172033}
 .kb-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 15px;border:1px solid #2457e6;border-radius:8px;background:#2457e6;color:#fff;font-size:13px;font-weight:600;white-space:nowrap;cursor:pointer}
 .kb-primary:hover{background:#1748ce}.kb-primary:disabled{opacity:.55;cursor:not-allowed}
 .kb-quiet,.kb-danger-quiet{min-height:38px;padding:0 13px;border:1px solid #dfe5ed;border-radius:8px;background:#fff;color:#475467;font-size:13px;white-space:nowrap;cursor:pointer}
 .kb-danger-quiet{border-color:#f2d1d0;color:#b42318}
-.kb-toolbar,.kb-doc-toolbar{display:flex;align-items:center;gap:12px;margin:22px 0;padding:13px 0}
-.kb-toolbar select,.kb-doc-toolbar select,.kb-recall-controls select,.kb-setting-fields select,.kb-setting-fields input,.kb-recall-form textarea{min-height:40px;padding:0 11px;border:1px solid #dfe4ec;border-radius:8px;background:#fff;color:#344054;font:inherit;font-size:13px}
+.kb-toolbar,.kb-doc-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:0 0 18px;padding:0}
+.kb-toolbar select,.kb-doc-toolbar select,.kb-recall-controls select,.kb-setting-fields select,.kb-setting-fields input,.kb-recall-form textarea{min-height:40px;padding:0 11px;border:1px solid #dfe4ec;border-radius:8px;background-color:#fff;color:#344054;font:inherit;font-size:13px}
+.kb-page select:not([multiple]){padding-right:38px;cursor:pointer}
+.kb-toolbar select,.kb-doc-toolbar select{min-width:140px;flex:none}
+.kb-archive-toggle{position:relative;display:inline-flex;align-items:center;gap:8px;min-height:40px;padding:0 4px;color:#475467;font-size:13px;font-weight:400;white-space:nowrap;cursor:pointer;flex:none}
+.kb-archive-toggle input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.kb-archive-track{position:relative;display:block;width:34px;height:20px;flex:none;border-radius:12px;background:#b6c0ce;transition:background-color .16s ease}
+.kb-archive-track::after{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #18223020;content:'';transition:transform .16s ease}
+.kb-archive-toggle input:checked + .kb-archive-track{background:#2457e6}
+.kb-archive-toggle input:checked + .kb-archive-track::after{transform:translateX(14px)}
+.kb-archive-toggle input:focus-visible + .kb-archive-track{outline:2px solid #2457e6;outline-offset:3px}
 .kb-search{display:flex;align-items:center;gap:9px;width:min(390px,100%);height:40px;padding:0 12px;border:1px solid #dfe4ec;border-radius:8px;background:#fff;color:#8290a2}
 .kb-search input{width:100%;min-width:0;border:0;outline:0;color:#344054;font:inherit;font-size:13px}
 .kb-result-count{margin-left:auto;color:#8490a0;font-size:12px;white-space:nowrap}
@@ -528,8 +524,9 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 .kb-dialog-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}.kb-dialog-form>label{display:grid;gap:7px;color:#475467;font-size:12px;font-weight:600}.kb-dialog-form>label:has(textarea),.kb-dialog-form>footer,.kb-upload-zone{grid-column:1/-1}.kb-dialog-form textarea{resize:vertical}.kb-dialog-form footer,.kb-confirm-actions{display:flex;justify-content:flex-end;gap:9px;grid-column:1/-1;padding-top:14px;border-top:1px solid #edf0f4}.kb-upload-zone{position:relative;display:grid;justify-items:center;gap:8px;padding:32px 16px;border:1px dashed #bac5d5;border-radius:10px;background:#fafbfc;text-align:center;cursor:pointer}.kb-upload-zone input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.kb-upload-zone strong{color:#344054;font-size:13px}.kb-upload-zone small{color:#8a96a8;font-size:10px}.kb-upload-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:11px;background:#eff3ff;color:#2457e6}.kb-file-list{grid-column:1/-1;max-height:190px;overflow:auto;margin:0;padding:0;list-style:none;border:1px solid #e8ebf0;border-radius:8px}.kb-file-list li{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid #eef0f3;color:#667085;font-size:11px}.kb-file-list li:last-child{border:0}.kb-file-list li span{overflow:hidden;flex:1;color:#344054;text-overflow:ellipsis;white-space:nowrap}.kb-file-list li small{color:#98a2b3}.kb-preview-list{max-height:65vh;overflow:auto}.kb-preview-list article{padding:15px 0;border-bottom:1px solid #e9ecf1}.kb-preview-list header{display:flex;gap:12px;color:#344054;font-size:12px}.kb-preview-list header span{color:#8090a3}.kb-preview-list p{margin:10px 0;color:#475467;font-size:12px;line-height:1.8;white-space:pre-wrap}.kb-preview-list small{color:#8a96a8;font-size:10px}.kb-confirm-actions .kb-danger-button{min-height:38px;padding:0 15px;border:1px solid #b42318;border-radius:8px;background:#b42318;color:#fff}.ui-input{box-sizing:border-box;width:100%;min-height:39px;padding:8px 10px;border:1px solid #dfe4ec;border-radius:7px;color:#344054;font:inherit;font-size:13px}.kb-page button:focus-visible,.kb-page input:focus-visible,.kb-page select:focus-visible,.kb-page textarea:focus-visible{outline:3px solid #d8e2ff;outline-offset:1px}
 
 .kb-heading-option>span{display:flex;align-items:center;gap:8px;color:#475467;font-size:12px;font-weight:600}.kb-heading-option input{width:15px;min-height:15px;margin:0;accent-color:#2457e6}
-@media(max-width:900px){.kb-page{padding:0 0 42px}.kb-setting-group{grid-template-columns:1fr;gap:16px}.kb-stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.kb-detail-actions{flex-wrap:wrap}.kb-doc-table{min-width:980px}}
-@media(max-width:620px){.kb-page{padding:0 0 34px}.kb-toolbar,.kb-doc-toolbar{align-items:stretch}.kb-toolbar{flex-wrap:wrap}.kb-toolbar .kb-search{flex:1 1 100%;width:100%;box-sizing:border-box}.kb-doc-toolbar .kb-search{width:100%;box-sizing:border-box}.kb-toolbar select{flex:0 0 145px}.kb-result-count{margin-left:auto}.kb-tabs{gap:20px}.kb-stat-row{gap:8px}.kb-stat-row>div{min-height:57px;padding:0 11px}.kb-stat-row strong{font-size:17px}.kb-setting-fields,.kb-dialog-form{grid-template-columns:1fr}.kb-dialog-form>label,.kb-dialog-form>footer,.kb-upload-zone{grid-column:1}.kb-settings-footer{align-items:flex-start;flex-direction:column}.kb-recall-controls{align-items:stretch;flex-wrap:wrap}.kb-recall-controls .kb-toolbar-spacer{display:none}.kb-recall-controls .kb-primary{width:100%}.kb-recall-summary{align-items:flex-start;flex-wrap:wrap;gap:8px 12px}.kb-hit{padding:13px}.kb-recall-placeholder{padding:35px 18px}}
+@media(max-width:900px){.kb-setting-group{grid-template-columns:1fr;gap:16px}.kb-stat-row{grid-template-columns:repeat(2,minmax(0,1fr))}.kb-detail-actions{flex-wrap:wrap}.kb-doc-table{min-width:980px}}
+@media(max-width:620px){.kb-toolbar,.kb-doc-toolbar{align-items:stretch}.kb-toolbar .kb-search,.kb-doc-toolbar .kb-search{flex:1 1 100%;width:100%;box-sizing:border-box}.kb-toolbar select,.kb-doc-toolbar select{flex:0 0 145px}.kb-archive-toggle{min-height:44px}.kb-toolbar-spacer{display:none}.kb-result-count{margin-left:auto}.kb-tabs{gap:20px}.kb-stat-row{gap:8px}.kb-stat-row>div{min-height:57px;padding:0 11px}.kb-stat-row strong{font-size:17px}.kb-setting-fields,.kb-dialog-form{grid-template-columns:1fr}.kb-dialog-form>label,.kb-dialog-form>footer,.kb-upload-zone{grid-column:1}.kb-settings-footer{align-items:flex-start;flex-direction:column}.kb-recall-controls{align-items:stretch;flex-wrap:wrap}.kb-recall-controls .kb-toolbar-spacer{display:none}.kb-recall-controls .kb-primary{width:100%}.kb-recall-summary{align-items:flex-start;flex-wrap:wrap;gap:8px 12px}.kb-hit{padding:13px}.kb-recall-placeholder{padding:35px 18px}}
+@media(prefers-reduced-motion:reduce){.kb-archive-track,.kb-archive-track::after{transition:none}}
 
 .kb-page :deep(.kb-detail-header) { align-items: center; margin-bottom: 0; padding-bottom: 16px; }
 .kb-page :deep(.kb-detail-header .admin-page-header-actions) { align-items: center; padding-top: 0; }
@@ -537,6 +534,8 @@ onUnmounted(() => { if (refreshTimer) clearInterval(refreshTimer); document.remo
 .kb-tabs { margin-top: 0; }
 @media(max-width:900px){.kb-table-wrap{overflow:auto}.kb-table{min-width:760px}}
 .kb-badge.ready{background:#edf8f1;color:#21834e}
+.kb-switch{position:relative}
+.kb-switch input:focus-visible + span{outline:2px solid #2457e6;outline-offset:3px}
 .kb-action-menu{position:relative}.kb-action-menu .kb-menu-trigger{display:grid;place-items:center;width:32px;height:32px;border:1px solid #e1e6ee;border-radius:8px;background:#fff;color:#667085;cursor:pointer;list-style:none}.kb-action-menu .kb-menu-trigger::-webkit-details-marker{display:none}.kb-action-menu-panel{position:absolute;z-index:10;right:0;top:37px;display:grid;min-width:138px;padding:5px;border:1px solid #e5e9f0;border-radius:9px;background:#fff;box-shadow:0 10px 26px rgba(23,32,51,.14)}.kb-action-menu-panel button{padding:9px 11px;border:0;border-radius:5px;background:transparent;color:#475467;text-align:left;cursor:pointer}.kb-action-menu-panel button:hover{background:#eff4ff;color:#2457e6}
 .kb-switch{display:inline-flex;align-items:center;gap:7px;cursor:pointer}.kb-switch input{position:absolute;width:1px;height:1px;opacity:0}.kb-switch span{position:relative;display:inline-block;width:34px;height:20px;border-radius:10px;background:#cbd3df;transition:.18s}.kb-switch span::after{position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #18223035;content:'';transition:.18s}.kb-switch.on span{background:#29a46a}.kb-switch.on span::after{transform:translateX(14px)}.kb-switch em{color:#687588;font-size:11px;font-style:normal}.kb-muted-dash{color:#a3adba}
 .kb-document-detail{padding-top:20px}.kb-document-detail-meta{display:flex;align-items:center;gap:16px;padding:17px 0;border-bottom:1px solid #e7eaf0}.kb-document-detail-meta>div:not(.kb-document-detail-status){flex:1;min-width:0}.kb-document-detail-meta p{margin:5px 0 0;color:#8490a0;font-size:12px}.kb-document-detail-status{display:flex;align-items:center;gap:14px}.kb-document-detail-toolbar{display:flex;align-items:center;justify-content:space-between;margin:25px 0 14px}.kb-document-detail-toolbar h2{margin:0;color:#25324a;font-size:16px}.kb-document-detail-toolbar p{margin:5px 0 0;color:#8a96a8;font-size:11px}.kb-document-chunk{position:relative;margin:12px 0;padding:18px 20px;border:1px solid #e5e9ef;border-radius:10px;background:#fff}.kb-document-chunk header{display:flex;align-items:center;gap:12px;padding-bottom:11px;border-bottom:1px solid #f0f2f5;font-size:12px;color:#7b8798}.kb-document-chunk header strong{color:#526078}.kb-document-chunk header span{color:#687588}.kb-document-chunk header small{margin-left:auto;color:#a0a9b6;font-size:10px}.kb-document-chunk p{margin:14px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;color:#344054;font-size:13px;line-height:1.85}

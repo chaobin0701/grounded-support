@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
-import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, Play, PlugZap, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from '@lucide/vue';
+import { computed, nextTick, onMounted, ref } from 'vue';
+import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, LockKeyhole, Play, PlugZap, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from '@lucide/vue';
 import { adminApi, type LlmConnectionTestResult, type LlmProfileItem } from './admin-api';
 import { modelPlatforms, modelPlatformOptions, type ModelPlatformKey } from './model-platforms';
+import { groupModelProfiles, modelProfileStatus } from './model-profile-presentation';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import ModelPlatformLogo from './ui/ModelPlatformLogo.vue';
 import UiDialog from './ui/UiDialog.vue';
@@ -10,10 +11,12 @@ import UiDialog from './ui/UiDialog.vue';
 const props = defineProps<{ token: string; canManage: boolean }>();
 const emit = defineEmits<{ notice: [message: string]; error: [message: string] }>();
 const profiles = ref<LlmProfileItem[]>([]);
+const profileGroups = computed(() => groupModelProfiles(profiles.value));
 const loading = ref(false);
 const saving = ref(false);
 const dialogOpen = ref(false);
 const editingId = ref<number | null>(null);
+const replacingProfile = ref<Pick<LlmProfileItem, 'id' | 'name' | 'isDefault'> | null>(null);
 const formElement = ref<HTMLFormElement | null>(null);
 const testing = ref(false);
 const resultDialogOpen = ref(false);
@@ -43,8 +46,10 @@ const form = ref({
 function resetForm() {
   form.value = { name: '火山引擎主模型', platformKey: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'deepseek-v4-1-flash-260910', apiKey: '', timeoutMs: 20000, contextWindowTokens: 32000, maxOutputTokens: 1200, supportsToolCalls: true, supportsStreaming: true };
   editingId.value = null;
+  replacingProfile.value = null;
 }
 function edit(profile: LlmProfileItem) {
+  replacingProfile.value = null;
   editingId.value = profile.id;
   form.value = { name: profile.name, platformKey: profile.platformKey, baseUrl: profile.baseUrl, model: profile.model, apiKey: '', timeoutMs: profile.timeoutMs, contextWindowTokens: profile.contextWindowTokens, maxOutputTokens: profile.maxOutputTokens, supportsToolCalls: profile.supportsToolCalls, supportsStreaming: profile.supportsStreaming };
   dialogOpen.value = true;
@@ -57,13 +62,30 @@ async function load() {
 }
 async function save() {
   if (working.value) return;
+  const creating = editingId.value === null;
+  const replacement = replacingProfile.value;
   saving.value = true;
   try {
     const input = { ...form.value, ...(form.value.apiKey.trim() ? {} : { apiKey: undefined }) };
-    if (editingId.value === null) await adminApi.createLlmProfile(props.token, input);
-    else await adminApi.updateLlmProfile(props.token, editingId.value, input);
+    if (creating) {
+      const created = await adminApi.createLlmProfile(props.token, input);
+      if (replacement?.isDefault) {
+        // Creation and activation are separate requests. On activation failure,
+        // open the saved record so retrying cannot create duplicate configurations.
+        try { await adminApi.activateLlmProfile(props.token, created.id); }
+        catch (cause) {
+          await load();
+          edit(created);
+          emit('error', `新配置已保存，但切换未完成：${cause instanceof Error ? cause.message : '请重试'}。可点击“设为当前”重试，原配置未删除。`);
+          return;
+        }
+      }
+    } else {
+      const { platformKey: _platformKey, ...changes } = input;
+      await adminApi.updateLlmProfile(props.token, editingId.value!, changes);
+    }
     dialogOpen.value = false;
-    emit('notice', editingId.value === null ? '模型配置已创建' : '模型配置已更新');
+    emit('notice', replacement?.isDefault ? '新配置已创建并设为当前，原配置已保留' : creating ? '模型配置已创建' : '模型配置已更新');
     await load();
   } catch (cause) { emit('error', cause instanceof Error ? cause.message : '保存失败'); }
   finally { saving.value = false; }
@@ -76,7 +98,7 @@ async function activate(profile: LlmProfileItem) {
 }
 async function toggle(profile: LlmProfileItem) {
   actionBusy.value = true;
-  try { await adminApi.setLlmProfileStatus(props.token, profile.id, !profile.enabled); await load(); }
+  try { await adminApi.setLlmProfileStatus(props.token, profile.id, !profile.enabled); emit('notice', profile.enabled ? '配置已停用' : '配置已恢复为备用，当前模型未变'); await load(); }
   catch (cause) { emit('error', cause instanceof Error ? cause.message : '状态更新失败'); }
   finally { actionBusy.value = false; }
 }
@@ -114,8 +136,16 @@ async function removeProfile() {
   } catch (cause) { deleteError.value = cause instanceof Error ? cause.message : '删除失败'; }
   finally { deleting.value = false; }
 }
-function openCreate() { resetForm(); dialogOpen.value = true; }
+function openCreate() { if (working.value) return; resetForm(); dialogOpen.value = true; }
+function openReplacement() {
+  const profile = selectedProfile.value;
+  if (!profile || working.value) return;
+  openCreate();
+  replacingProfile.value = { id: profile.id, name: profile.name, isDefault: profile.isDefault };
+  void nextTick(() => formElement.value?.querySelector<HTMLButtonElement>('.platform-option')?.focus());
+}
 function selectPlatform(key: ModelPlatformKey) {
+  if (editingId.value !== null || working.value) return;
   if (form.value.platformKey === key) return;
   form.value.platformKey = key;
   const preset = modelPlatforms[key];
@@ -146,35 +176,49 @@ onMounted(load);
       <h2>还没有模型配置</h2><p>添加模型连接后，可将其设为 Agent 当前使用的模型。</p>
       <button v-if="props.canManage" class="ui-button ui-button-primary" type="button" @click="openCreate"><Plus :size="16" />添加第一个配置</button>
     </div>
-    <div v-else class="model-service-list">
-      <component :is="props.canManage ? 'button' : 'article'" v-for="profile in profiles" :key="profile.id" :type="props.canManage ? 'button' : undefined" class="model-service-card" :class="{ active: profile.isDefault, interactive: props.canManage }" :aria-label="props.canManage ? `配置：${profile.name}` : undefined" @click="props.canManage && edit(profile)">
-        <div class="model-service-card-head">
-          <div class="model-service-identity">
-            <div class="model-service-logo"><ModelPlatformLogo :platform="profile.platformKey" :size="23" /></div>
-            <div class="model-service-copy">
-              <div class="model-service-title"><h2>{{ profile.name }}</h2><span v-if="profile.isDefault" class="model-status current"><CheckCircle2 :size="13" />当前使用</span><span v-else class="model-status" :class="profile.enabled ? 'enabled' : 'disabled'">{{ profile.enabled ? '已启用' : '已停用' }}</span></div>
-              <p>{{ modelPlatforms[profile.platformKey].label }}<span aria-hidden="true"> · </span><span class="model-id">{{ profile.model }}</span></p>
+    <div v-else class="model-service-groups">
+      <section v-for="group in profileGroups" :key="group.key" class="model-service-group" :class="{ 'model-service-group-current': group.key === 'current' }" :aria-labelledby="`model-group-${group.key}`">
+        <header class="model-group-heading"><h2 :id="`model-group-${group.key}`">{{ group.title }}<span v-if="group.key === 'other'">{{ group.profiles.length }}</span></h2><p>{{ group.description }}</p></header>
+        <div class="model-service-list">
+          <component :is="props.canManage ? 'button' : 'article'" v-for="profile in group.profiles" :key="profile.id" :type="props.canManage ? 'button' : undefined" class="model-service-card" :class="{ active: profile.isDefault, interactive: props.canManage }" :aria-label="props.canManage ? `配置：${profile.name}` : undefined" @click="props.canManage && edit(profile)">
+            <div class="model-service-card-head">
+              <div class="model-service-identity">
+                <div class="model-service-logo"><ModelPlatformLogo :platform="profile.platformKey" :size="23" /></div>
+                <div class="model-service-copy">
+                  <div class="model-service-title"><h3>{{ profile.name }}</h3><span class="model-status" :class="modelProfileStatus(profile).key"><CheckCircle2 v-if="profile.isDefault" :size="13" />{{ modelProfileStatus(profile).label }}</span></div>
+                  <p>{{ modelPlatforms[profile.platformKey].label }}<span aria-hidden="true"> · </span><span class="model-id">{{ profile.model }}</span></p>
+                </div>
+              </div>
+              <ChevronRight v-if="props.canManage" :size="16" class="model-card-chevron" />
             </div>
-          </div>
-          <ChevronRight v-if="props.canManage" :size="16" class="model-card-chevron" />
+            <div class="model-card-meta">
+              <span>密钥 <code>{{ profile.apiKeyPreview || (profile.hasApiKey ? '********' : '未配置') }}</code></span>
+              <span :title="`上下文 ${profile.contextWindowTokens.toLocaleString()} / 最大输出 ${profile.maxOutputTokens.toLocaleString()} tokens`">{{ profile.timeoutMs / 1000 }}s 超时 · {{ profile.contextWindowTokens.toLocaleString() }} tokens</span>
+            </div>
+          </component>
         </div>
-        <div class="model-card-meta">
-          <span>密钥 <code>{{ profile.apiKeyPreview || (profile.hasApiKey ? '********' : '未配置') }}</code></span>
-          <span :title="`上下文 ${profile.contextWindowTokens.toLocaleString()} / 最大输出 ${profile.maxOutputTokens.toLocaleString()} tokens`">{{ profile.timeoutMs / 1000 }}s 超时 · {{ profile.contextWindowTokens.toLocaleString() }} tokens</span>
-        </div>
-      </component>
+      </section>
     </div>
 
-    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="editingId === null ? '添加模型服务' : '编辑模型服务'" description="选择服务平台，填写模型连接与运行参数。" size="lg" @update:open="dialogOpen = $event">
+    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="editingId === null ? '添加模型服务' : '编辑模型服务'" :description="editingId === null ? '选择服务平台，填写模型连接与运行参数。' : '平台创建后固定，可修改模型连接与运行参数。'" size="lg" @update:open="dialogOpen = $event">
       <form ref="formElement" class="model-profile-form" @submit.prevent="save">
         <div v-if="selectedProfile" class="model-profile-state">
-          <span class="model-status" :class="selectedProfile.isDefault || selectedProfile.enabled ? 'current' : 'disabled'">{{ selectedProfile.isDefault ? '当前使用' : selectedProfile.enabled ? '已启用' : '已停用' }}</span>
-          <div v-if="!selectedProfile.isDefault"><button v-if="selectedProfile.enabled" type="button" class="model-text-action" :disabled="working" @click="activate(selectedProfile)"><Play :size="13" />设为当前</button><button type="button" class="model-text-action" :disabled="working" @click="toggle(selectedProfile)">{{ selectedProfile.enabled ? '停用配置' : '启用配置' }}</button></div>
+          <span class="model-status" :class="modelProfileStatus(selectedProfile).key">{{ modelProfileStatus(selectedProfile).label }}</span>
+          <div v-if="!selectedProfile.isDefault"><button v-if="selectedProfile.enabled" type="button" class="model-text-action" :disabled="working" @click="activate(selectedProfile)"><Play :size="13" />设为当前</button><button type="button" class="model-text-action" :disabled="working" @click="toggle(selectedProfile)">{{ selectedProfile.enabled ? '停用配置' : '恢复为备用' }}</button></div>
+        </div>
+        <div v-if="replacingProfile" class="model-replacement-note" role="note">
+          <p>正在为「{{ replacingProfile.name }}」新建替代配置。</p>
+          <p>{{ replacingProfile.isDefault ? '保存后将设为当前使用，原配置保留。' : '原配置保留；新配置保存后，可在配置中点击“设为当前”。' }} 请填写新平台的密钥，原密钥不会复制。</p>
         </div>
         <section class="model-form-section" aria-labelledby="model-platform-heading">
-          <h2 id="model-platform-heading">选择平台</h2>
-          <div class="platform-options" role="group" aria-labelledby="model-platform-heading">
-            <button v-for="item in modelPlatformOptions" :key="item.key" type="button" class="platform-option" :class="{ selected: form.platformKey === item.key }" :aria-pressed="form.platformKey === item.key" @click="selectPlatform(item.key)">
+          <h2 id="model-platform-heading">{{ editingId === null ? '选择平台' : '服务平台' }}</h2>
+          <div v-if="editingId !== null" class="model-platform-locked">
+            <div class="model-platform-identity"><ModelPlatformLogo :platform="form.platformKey" :size="25" /><strong>{{ modelPlatforms[form.platformKey].label }}</strong><span><LockKeyhole :size="12" />平台已固定</span></div>
+            <p>创建后不可修改平台。需要更换时，请新建配置并替换当前模型。</p>
+            <button type="button" class="ui-button" :disabled="working" @click="openReplacement"><Plus :size="14" />新建替代配置</button>
+          </div>
+          <div v-else class="platform-options" role="group" aria-labelledby="model-platform-heading">
+            <button v-for="item in modelPlatformOptions" :key="item.key" type="button" class="platform-option" :disabled="working" :class="{ selected: form.platformKey === item.key }" :aria-pressed="form.platformKey === item.key" @click="selectPlatform(item.key)">
               <ModelPlatformLogo :platform="item.key" :size="25" />
               <span class="platform-option-copy"><strong>{{ item.label }}</strong><small>{{ item.description }}</small></span>
               <Check v-if="form.platformKey === item.key" class="platform-option-check" :size="14" />
@@ -189,10 +233,10 @@ onMounted(load);
             <label class="model-field"><span class="ui-label">模型 ID</span><input v-model.trim="form.model" class="ui-input" required maxlength="200" :placeholder="modelPlatforms[form.platformKey].model || '输入平台提供的模型 ID'" spellcheck="false" /></label>
             <label class="model-field model-field-wide">
               <span class="ui-label">Base URL</span><input v-model.trim="form.baseUrl" class="ui-input" type="url" required placeholder="https://api.example.com/v1" :readonly="form.platformKey !== 'custom'" spellcheck="false" />
-              <small>{{ form.platformKey === 'custom' ? '使用已加入 LLM_ALLOWED_BASE_URLS 的 HTTPS 地址。' : '已自动填写平台地址；自定义地址请选择“其他兼容平台”。' }}</small>
+              <small>{{ form.platformKey === 'custom' ? '使用已加入 LLM_ALLOWED_BASE_URLS 的 HTTPS 地址。' : editingId === null ? '已自动填写平台地址；自定义地址请选择“其他兼容平台”。' : '平台地址已固定；更换平台请新建替代配置。' }}</small>
             </label>
             <label class="model-field model-field-wide">
-              <span class="ui-label">API Key</span><input v-model="form.apiKey" class="ui-input" type="password" autocomplete="new-password" :placeholder="editingId === null ? '输入服务密钥' : '留空则保留原密钥'" />
+              <span class="ui-label">API Key</span><input v-model="form.apiKey" class="ui-input" type="password" autocomplete="new-password" :required="!!replacingProfile" :placeholder="editingId === null ? '输入服务密钥' : '留空则保留原密钥'" />
             </label>
           </div>
         </section>
@@ -209,7 +253,7 @@ onMounted(load);
 
         <footer class="model-form-footer">
           <button v-if="selectedProfile" type="button" class="model-delete-action" :disabled="working" @click="requestDelete"><Trash2 :size="15" />删除配置</button>
-          <div><button type="button" class="ui-button" :disabled="working" @click="testConnection"><LoaderCircle v-if="testing" :size="15" class="spinning" /><PlugZap v-else :size="15" />测试连接</button><button type="button" class="ui-button" :disabled="working" @click="dialogOpen = false">取消</button><button class="ui-button ui-button-primary" type="submit" :disabled="working"><LoaderCircle v-if="saving" :size="15" class="spinning" />{{ saving ? '保存中…' : '保存配置' }}</button></div>
+          <div><button type="button" class="ui-button" :disabled="working" @click="testConnection"><LoaderCircle v-if="testing" :size="15" class="spinning" /><PlugZap v-else :size="15" />测试连接</button><button type="button" class="ui-button" :disabled="working" @click="dialogOpen = false">取消</button><button class="ui-button ui-button-primary" type="submit" :disabled="working"><LoaderCircle v-if="saving" :size="15" class="spinning" />{{ saving ? '保存中…' : replacingProfile?.isDefault ? '创建并设为当前' : '保存配置' }}</button></div>
         </footer>
       </form>
     </UiDialog>
@@ -226,8 +270,8 @@ onMounted(load);
     <UiDialog v-model:open="deleteDialogOpen" title="删除模型配置" :description="`确定删除「${selectedProfile?.name || ''}」？此操作不可撤销。`" size="md" :layer="60">
       <div v-if="selectedProfile?.isDefault" class="model-delete-replacement">
         <p>这是当前使用的模型。请选择替代配置，系统会切换后删除。</p>
-        <label v-if="replacementProfiles.length" class="model-field"><span class="ui-label">切换到</span><select v-model="replacementId" class="ui-input"><option :value="null">请选择已启用的模型</option><option v-for="profile in replacementProfiles" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.model }}</option></select></label>
-        <p v-else>暂无其他已启用配置，请先添加或启用另一份配置。</p>
+        <label v-if="replacementProfiles.length" class="model-field"><span class="ui-label">切换到</span><select v-model="replacementId" class="ui-input"><option :value="null">请选择备用模型</option><option v-for="profile in replacementProfiles" :key="profile.id" :value="profile.id">{{ profile.name }} · {{ profile.model }}</option></select></label>
+        <p v-else>暂无备用配置，请先添加或恢复另一份配置。</p>
       </div>
       <p v-if="deleteError" class="model-delete-error" role="alert">{{ deleteError }}</p>
       <div class="model-result-footer"><button type="button" class="ui-button" :disabled="deleting" @click="deleteDialogOpen = false">取消</button><button type="button" class="ui-button model-confirm-delete" :disabled="working || (!!selectedProfile?.isDefault && !replacementId)" @click="removeProfile"><LoaderCircle v-if="deleting" :size="15" class="spinning" />{{ deleting ? '删除中…' : selectedProfile?.isDefault ? '切换并删除' : '确认删除' }}</button></div>
@@ -240,8 +284,19 @@ onMounted(load);
 .model-service-note { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 20px; color: #748094; font-size: 12px; line-height: 1.6; }
 .model-service-note svg { flex: none; margin-top: 1px; color: #64748b; }
 .model-service-note p { margin: 0; }
+.model-service-groups { display: grid; gap: 28px; }
+.model-group-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; }
+.model-group-heading h2 { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--ink); font-size: 14px; font-weight: 600; }
+.model-group-heading h2 span { color: var(--muted); font-size: 12px; font-weight: 400; }
+.model-group-heading p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
 .model-service-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; }
-.model-service-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; transition: border-color .15s, background-color .15s; }
+.model-service-group-current .model-service-list { grid-template-columns: minmax(0, 1fr); }
+.model-service-group-current .model-service-card { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 32px; }
+.model-service-group-current .model-service-card.interactive { padding-right: 48px; }
+.model-service-group-current .model-card-chevron { position: absolute; right: 16px; top: calc(50% - 8px); margin: 0; }
+.model-service-group-current .model-service-card-head { flex: 1; min-width: min(100%, 280px); }
+.model-service-group-current .model-card-meta { flex: none; display: grid; justify-items: end; margin-top: 0; }
+.model-service-card { position: relative; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; transition: border-color .15s, background-color .15s; }
 .model-service-card.interactive { cursor: pointer; }
 .model-service-card.interactive:hover { border-color: #99b5fa; background: #fafcff; }
 .model-service-card.active { border-color: #c4d4fc; }
@@ -250,12 +305,13 @@ onMounted(load);
 .model-service-logo { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: 8px; background: #f8fafc; }
 .model-service-copy { min-width: 0; }
 .model-service-title { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
-.model-service-title h2 { margin: 0; color: #172033; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.model-service-title h3 { margin: 0; color: #172033; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
 .model-service-copy p { margin: 5px 0 0; color: #748094; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .model-id { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 11px; }
 .model-status { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 5px; background: #f1f5f9; color: #64748b; font-size: 11px; white-space: nowrap; }
-.model-status.current, .model-status.enabled { background: #edf8f1; color: #26845a; }
-.model-text-action { padding: 8px; color: #748094; font-size: 12px; cursor: pointer; }
+.model-status.current { background: #edf8f1; color: #24774f; }
+.model-status.standby { background: #f1f5f9; color: var(--muted); }
+.model-text-action { min-height: 44px; padding: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
 .model-text-action:hover { color: #2457e6; }
 .model-service-empty { display: grid; justify-items: center; gap: 12px; padding: 72px 20px; border: 1px dashed var(--line); border-radius: 12px; color: #748094; font-size: 13px; }
 .model-service-empty h2 { margin: 0; color: #344054; font-size: 16px; font-weight: 600; }
@@ -263,6 +319,13 @@ onMounted(load);
 .model-profile-form { display: grid; gap: 24px; }
 .model-form-section { display: grid; gap: 12px; min-width: 0; }
 .model-form-section h2 { margin: 0; color: #344054; font-size: 13px; font-weight: 600; }
+.model-platform-locked { display: grid; justify-items: start; gap: 12px; padding: 15px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fafbfc; }
+.model-platform-identity { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.model-platform-identity strong { color: #344054; font-size: 13px; font-weight: 600; }
+.model-platform-identity > span { display: inline-flex; align-items: center; gap: 5px; color: #64748b; font-size: 11px; }
+.model-platform-locked p { margin: 0; color: #64748b; font-size: 12px; line-height: 1.7; }
+.model-replacement-note { display: grid; gap: 5px; padding: 13px 15px; border: 1px solid #dce6fb; border-radius: 9px; background: #f5f8ff; }
+.model-replacement-note p { margin: 0; color: #475467; font-size: 12px; line-height: 1.7; overflow-wrap: anywhere; }
 .platform-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .platform-option { position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 76px; padding: 14px 12px; border: 1px solid #e2e8f0; border-radius: 9px; background: #fff; text-align: left; cursor: pointer; transition: border-color .15s, background-color .15s; }
 .platform-option:hover { border-color: #b6c6e2; background: #fafbfe; }
@@ -302,10 +365,14 @@ onMounted(load);
 .model-delete-error { margin-top: 12px; color: #b91c1c; font-size: 12px; }
 @media (max-width: 720px) {
   .model-service-card { padding: 16px; }
+  .model-service-group-current .model-service-card { display: block; }
+  .model-service-group-current .model-service-card.interactive { padding-right: 16px; }
+  .model-service-group-current .model-card-chevron { position: static; margin-top: 9px; }
+  .model-service-group-current .model-card-meta { display: flex; justify-content: space-between; margin-top: 14px; }
   .model-service-card-head { gap: 8px; }
   .platform-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .model-connection-grid, .model-runtime-grid { grid-template-columns: minmax(0, 1fr); }
   .model-profile-form { gap: 20px; }
 }
-@media (prefers-reduced-motion: reduce) { .platform-option { transition: none; } .spinning { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .platform-option, .model-service-card { transition: none; } .spinning { animation: none; } }
 </style>

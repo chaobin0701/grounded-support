@@ -6,6 +6,24 @@ export interface AdminMe {
   permissionCodes: string[];
 }
 
+export type DashboardRange = '24h' | '7d' | '30d';
+export interface DashboardOverview {
+  generatedAt: string;
+  range: { key: DashboardRange; since: string; until: string; timezone: 'Asia/Shanghai'; bucket: 'hour' | 'day' };
+  activity: null | {
+    requestCount: number; answeredCount: number; refusedCount: number; failedCount: number;
+    conversationCount: number; visitorCount: number; runningCount: number; expiredCount: number; failedRunCount: number;
+    averageDurationMs: number | null; p95DurationMs: number | null; totalTokens: number | null; tokenRecordedCount: number;
+    trend: { time: string; label: string; answered: number; refused: number; failed: number }[];
+    recentFailures: { traceId: string | null; conversationId: string | null; question: string; errorCode: string | null; status: 'failed' | 'expired'; createdAt: string }[];
+  };
+  knowledge: null | {
+    baseCount: number; enabledBaseCount: number; documentCount: number; readyCount: number; retrievableCount: number;
+    chunkCount: number; processingCount: number; failedCount: number;
+    recentFailures: { id: number; baseId: number; title: string; baseName: string; updatedAt: string }[];
+  };
+}
+
 export interface DocumentItem {
   id: number;
   title: string;
@@ -339,6 +357,7 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
 }
 
 export const adminApi = {
+  dashboard: (token: string, range: DashboardRange) => request<DashboardOverview>(`/dashboard?range=${encodeURIComponent(range)}`, {}, token),
   login: (email: string, password: string) => request<{ accessToken: string; expiresIn: number }>('/auth/login', {
     method: 'POST', body: JSON.stringify({ email, password }),
   }),
