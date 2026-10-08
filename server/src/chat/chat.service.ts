@@ -4,6 +4,8 @@ import { PreviousTurnDto } from './chat.dto';
 import { ChatOrchestratorService } from './chat-orchestrator.service';
 import type { AgentTranscriptMessage } from './agent-transcript';
 import type { AgentConfigurationSnapshot } from '../config/agent-config';
+import type { RequestContext } from './request-context';
+export type ChatAgentContext = { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot; requestContext?: RequestContext; priorProducts?: unknown[] };
 export { validateAnswer } from '../ai/agent/citation-validation';
 
 export type Citation = Pick<SearchHit, 'chunkId' | 'documentId' | 'documentTitle' | 'originalFilename' | 'sourceStartLine' | 'sourceEndLine'>;
@@ -26,6 +28,7 @@ export type ChatStreamCallbacks = {
   onAnswerStarted?: (metadata: { citations: Citation[] }) => void;
   onAnswerDelta?: (text: string) => void;
   onProgress?: (event: PublicProgressEvent) => void;
+  onCommentary?: (event: CommentaryEvent) => void;
 };
 export type ChatRun = {
   traceId?: string;
@@ -52,7 +55,7 @@ export class ChatService {
     return (await this.askDetailed(question, history)).result;
   }
 
-  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string, callbacks?: ChatStreamCallbacks, agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot }): Promise<ChatRun> {
+  async askDetailed(question: string, history: PreviousTurnDto[] = [], summary = '', onContext?: (context: Record<string, unknown>) => void, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, requestedSkillId?: string, callbacks?: ChatStreamCallbacks, agentContext?: ChatAgentContext): Promise<ChatRun> {
     return this.orchestrator.askDetailed(question, history, summary, onContext, onStep, onCommentary, requestedSkillId, callbacks, agentContext);
   }
 

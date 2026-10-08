@@ -19,7 +19,6 @@ test('configuration applies safe defaults without requiring an LLM key', () => {
     timeoutMs: 20000,
     contextWindowTokens: 32000,
     maxOutputTokens: 1200,
-    structuredOutput: 'auto',
     allowedBaseUrls: ['https://ark.cn-beijing.volces.com/api/v3', 'https://api.openai.com/v1', 'https://api.deepseek.com/v1'],
   });
 });
@@ -45,10 +44,8 @@ test('configuration parses explicit security boundaries', () => {
   assert.equal(config.llm.contextWindowTokens, 32000);
 });
 
-test('configuration controls structured planner output compatibility', () => {
-  assert.equal(readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'disabled' }).llm.structuredOutput, 'disabled');
-  assert.equal(readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'required' }).llm.structuredOutput, 'required');
-  assert.throws(() => readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: 'unsupported' }), /LLM_STRUCTURED_OUTPUT/);
+test('obsolete environment flags cannot disable the fixed model response contract', () => {
+  for (const value of ['disabled', 'auto', 'required', 'unsupported']) assert.equal(readConfigEnvironment({ LLM_STRUCTURED_OUTPUT: value }).llm.structuredOutput, undefined);
 });
 
 test('configuration rejects invalid provider URL and timeout without exposing secrets', () => {

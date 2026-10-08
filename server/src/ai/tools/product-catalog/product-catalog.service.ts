@@ -3,7 +3,7 @@ import { DatabaseService } from '../../../database.service';
 import { Product, ProductSummary } from './product-catalog.data';
 
 export type { Product, ProductSummary } from './product-catalog.data';
-export type ProductDetail = Product;
+export type ProductDetail = Product & { revision?: string };
 
 type CatalogRow = {
   id: string;
@@ -17,6 +17,7 @@ type CatalogRow = {
   image_url: string | null;
   source_url: string | null;
   specifications: unknown;
+  revision?: string;
 };
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -25,7 +26,7 @@ function isStringRecord(value: unknown): value is Record<string, string> {
     && Object.values(value).every((item) => typeof item === 'string');
 }
 
-function toProduct(row: CatalogRow): Product {
+function toProduct(row: CatalogRow): ProductDetail {
   return {
     id: row.id,
     brand: row.brand,
@@ -38,6 +39,7 @@ function toProduct(row: CatalogRow): Product {
     imageUrl: row.image_url,
     sourceUrl: row.source_url,
     specifications: isStringRecord(row.specifications) ? row.specifications : {},
+    ...(row.revision ? { revision: row.revision } : {}),
   };
 }
 
@@ -104,15 +106,32 @@ export class ProductCatalogService {
     return result.rows.map(toProduct);
   }
 
-  async getProductDetail(productId: string): Promise<Product | null> {
+  async getProductDetail(productId: string): Promise<ProductDetail | null> {
     const result = await this.database.query<CatalogRow>(`
       SELECT id, brand, name, category_id, category_name, summary, description,
-             suggested_price, image_url, source_url, specifications
+             suggested_price, image_url, source_url, specifications, updated_at::text AS revision
       FROM catalog_products
       WHERE id = $1 AND enabled = TRUE
       LIMIT 1
     `, [productId]);
     const row = result.rows[0];
     return row ? toProduct(row) : null;
+  }
+
+  async revisions(ids: string[]): Promise<Map<string, string>> {
+    const result = await this.database.query<{ id: string; revision: string }>(
+      'SELECT id, updated_at::text AS revision FROM catalog_products WHERE id = ANY($1::text[]) AND enabled = TRUE', [ids],
+    );
+    return new Map(result.rows.map(row => [row.id, row.revision]));
+  }
+
+  async getProductDetails(ids: string[]): Promise<ProductDetail[]> {
+    const result = await this.database.query<CatalogRow>(`
+      SELECT id, brand, name, category_id, category_name, summary, description,
+             suggested_price, image_url, source_url, specifications, updated_at::text AS revision
+      FROM catalog_products WHERE id = ANY($1::text[]) AND enabled = TRUE`, [ids],
+    );
+    const byId = new Map(result.rows.map(row => [row.id, toProduct(row)]));
+    return ids.flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
   }
 }

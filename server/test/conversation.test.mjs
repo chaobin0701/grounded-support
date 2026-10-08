@@ -1,6 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ConversationService } from '../dist/chat/conversation.service.js';
+import { BadGatewayException } from '@nestjs/common';
+
+test('protocol failures persist a failed trace/run, not an assistant refusal, and release the busy lock', async () => {
+  const statements = [];
+  const db = { query: async (sql, values = []) => {
+    statements.push({ sql, values });
+    if (sql.includes('UPDATE conversations SET busy_until = now()')) return { rows: [{ busyUntil: 'busy-1' }], rowCount: 1 };
+    if (sql.includes('INSERT INTO conversation_runs')) return { rows: [{ id: 'run-1' }] };
+    return { rows: [] };
+  } };
+  const error = new BadGatewayException({ code: 'model_protocol_error', message: '模型响应格式异常，请稍后重试。' });
+  const service = new ConversationService(db, { askDetailed: async (_q, _h, _s, onContext) => { onContext({ modelCalls: [{ response: { inputTokens: 111, outputTokens: 222, totalTokens: 333 } }] }); throw error; } }, { model: 'test' });
+  service.get = async () => ({ id: 'conversation' });
+  service.snapshot = async () => ({ summary: '', history: [], agentTranscript: [], priorProducts: [], recentMessages: [] });
+  await assert.rejects(service.ask('owner', 'conversation', '介绍产品', undefined, undefined, 'request-1'), failure => failure === error);
+  const trace = statements.find(item => item.sql.includes('INSERT INTO chat_traces'));
+  assert.ok(trace); assert.ok(trace.values.includes('model_protocol_error')); assert.ok(trace.values.includes('failed'));
+  for (const tokens of [111, 222, 333]) assert.ok(trace.values.includes(tokens));
+  assert.ok(!statements.some(item => item.sql.includes('INSERT INTO conversation_messages')));
+  assert.ok(statements.some(item => item.sql.startsWith('UPDATE conversations SET busy_until = NULL')));
+});
 
 test('anonymous browser cookie resumes one identity without storing its plaintext token', async () => {
   const sessions = new Map();

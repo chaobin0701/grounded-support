@@ -13,6 +13,38 @@ const hit = {
   ordinal: 0, headingPath: '退货条件', content: '七天内可申请退货。', sourceStartLine: 2, sourceEndLine: 4, score: 0.86,
 };
 
+test('public operation descriptions precede tool execution and never expose model content, arguments or results', async t => {
+  for (const protocol of ['native']) {
+    for (const [name, text] of [['list_product_categories', '正在查看产品分类'], ['list_products', '正在查看产品目录'], ['get_product_detail', '正在读取产品详细规格']]) {
+      await t.test(`${protocol}: ${name}`, async () => {
+        const events = [], order = [];
+        const arguments_ = { productId: 'PRIVATE_PRODUCT_ID', query: 'PRIVATE_QUERY' };
+        const replies = [
+          { content: 'PRIVATE_MODEL_CONTENT', toolCalls: [{ id: 'call1', name, arguments: arguments_ }] },
+          { content: JSON.stringify({ type: 'final', status: 'answered', answer: '查询完成。', citationIds: [], productIds: [] }), toolCalls: [] },
+        ];
+        const llm = { model: 'test-model', completeDetailed: async () => ({ ...replies.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 }) };
+        const tool = { name, description: 'test', inputSchema: { safeParse: input => ({ success: true, data: input }) }, execute: async () => {
+          assert.equal(events.length, 1);
+          assert.equal(events[0].status, 'running');
+          assert.equal(events[0].text, text);
+          order.push('execute');
+          return { success: true, content: 'PRIVATE_TOOL_RESULT', data: {} };
+        } };
+        const execution = new ToolExecutionService({ get: () => tool, list: () => [tool] }, new ToolPolicy());
+        const builder = new ContextBuilder();
+        const runner = new AgentRunner(new AgentLoop(llm, builder, execution), builder);
+        const result = await runner.run({ question: '产品资料是什么？', summary: '', recentHistory: [] }, { onProgress: event => { events.push(event); order.push(event.status); } });
+        assert.equal(result.result.refused, false);
+        assert.deepEqual(order, ['running', 'execute', 'completed']);
+        assert.equal(events[0].operationId, events[1].operationId);
+        assert.equal(typeof events[1].durationMs, 'number'); // Backend diagnostics remain available.
+        assert.doesNotMatch(JSON.stringify(events), /PRIVATE_/);
+      });
+    }
+  }
+});
+
 test('knowledge search tool separates model content from backend evidence data', async () => {
   let requestedTopK = null;
   const search = {
@@ -35,10 +67,10 @@ test('knowledge search tool separates model content from backend evidence data',
 });
 
 test('agent refuses repeated identical tool calls instead of looping', async () => {
-  const toolCall = JSON.stringify({ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } });
+  let nextCallId = 0;
   const llm = {
     model: 'test-model',
-    completeDetailed: async () => ({ content: toolCall, model: 'test-model', inputTokens: null, outputTokens: null, totalTokens: null }),
+    completeDetailed: async () => ({ content: '', toolCalls: [{ id: `search-${nextCallId++}`, name: 'search_knowledge', arguments: { query: '退货政策' } }], model: 'test-model', inputTokens: null, outputTokens: null, totalTokens: null }),
   };
   const tool = {
     name: 'search_knowledge',
@@ -58,12 +90,12 @@ test('agent refuses repeated identical tool calls instead of looping', async () 
 
 test('agent runner returns a normalized result after a tool step', async () => {
   const responses = [
-    JSON.stringify({ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } }),
-    JSON.stringify({ type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }),
+    { content: '', toolCalls: [{ id: 'search-1', name: 'search_knowledge', arguments: { query: '退货政策' } }] },
+    { content: JSON.stringify({ type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }), toolCalls: [] },
   ];
   const llm = {
     model: 'test-model',
-    completeDetailed: async () => ({ content: responses.shift(), model: 'test-model', inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
+    completeDetailed: async () => ({ ...responses.shift(), model: 'test-model', inputTokens: 10, outputTokens: 5, totalTokens: 15 }),
   };
   const tool = {
     name: 'search_knowledge',
@@ -118,17 +150,17 @@ test('agent executes provider-native tool calls and preserves the call id', asyn
   assert.equal(result.result.refused, false);
   assert.equal(result.toolCalls[0].name, 'search_knowledge');
   assert.equal(result.contextSnapshot.agentTranscript.find((item) => item.role === 'tool').toolCallId, 'call-native-1');
-  assert.deepEqual(result.contextSnapshot.plannerParseModes, ['native', 'json']);
+  assert.deepEqual(result.contextSnapshot.plannerParseModes, ['native', 'final']);
 });
 
 test('agent can recover from a tool failure on the next planner round', async () => {
   const responses = [
-    JSON.stringify({ type: 'tool', name: 'get_product_detail', arguments: { productId: 'known-product' } }),
-    JSON.stringify({ type: 'final', status: 'answered', answer: '我已经找到产品目录中的基础信息。', citationIds: [], productIds: [] }),
+    { content: '', toolCalls: [{ id: 'detail-1', name: 'get_product_detail', arguments: { productId: 'known-product' } }] },
+    { content: JSON.stringify({ type: 'final', status: 'answered', answer: '我已经找到产品目录中的基础信息。', citationIds: [], productIds: [] }), toolCalls: [] },
   ];
   const llm = {
     model: 'test-model',
-    completeDetailed: async () => ({ content: responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
+    completeDetailed: async () => ({ ...responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 }),
   };
   const tool = {
     name: 'get_product_detail',

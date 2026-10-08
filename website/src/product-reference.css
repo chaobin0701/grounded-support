@@ -1,0 +1,101 @@
+/* Product attachment UI: one light list, anchored above the composer toolbar.
+   It overlays content; only the result list scrolls, never the surrounding page. */
+.chat-product-picker { min-width: 0; }
+.chat-inline-editor { position: relative; display: block; width: 100%; min-width: 0; min-height: 24px; height: 24px; max-height: min(240px, 35dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 24px; padding: 0; background: transparent; color: var(--ink); outline: none; }
+.chat-inline-editor[data-empty="true"]::before { content: attr(data-placeholder); position: absolute; inset: 0 auto auto 0; color: var(--muted); opacity: 0.75; pointer-events: none; }
+.chat-inline-editor .chat-inline-product { vertical-align: middle; user-select: all; cursor: grab; }
+.chat-inline-editor .chat-inline-product:active { cursor: grabbing; }
+.chat-inline-product { display: inline-flex; align-items: center; vertical-align: middle; gap: 5px; max-width: calc(100% - 8px); min-width: 0; min-height: 24px; padding: 0 8px; margin-inline: 4px; border: 0; border-radius: 4px; background: var(--mint); color: var(--brand); font: inherit; line-height: inherit; }
+.chat-inline-product > svg { width: 1em; height: 1em; flex-shrink: 0; }
+.chat-inline-product > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chat-user-text-segment { vertical-align: middle; }
+.chat-product-trigger {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  position: relative;
+}
+.chat-product-trigger::after { content: ""; position: absolute; inset: -6px 0; }
+.chat-product-trigger kbd { font: inherit; opacity: 0.65; }
+.chat-product-trigger:hover:not(:disabled),
+.chat-product-trigger[aria-expanded="true"] { background: var(--mint); color: var(--brand); }
+.chat-product-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-product-popover {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100%);
+  max-height: 340px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 8px 28px #202b281a;
+}
+.chat-product-popover > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 0 14px;
+  min-height: 44px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--ink);
+}
+.chat-product-close { display: grid; place-items: center; width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+.chat-product-search { display: flex; gap: 8px; align-items: center; padding: 0 14px; min-height: 44px; flex-shrink: 0; border-block: 1px solid var(--line); color: var(--muted); }
+.chat-product-search input { width: 100%; min-width: 0; min-height: 44px; border: 0; background: transparent; color: var(--ink); font: inherit; font-size: 13px; }
+.chat-product-search input:focus-visible { outline: 2px solid var(--brand); outline-offset: -3px; }
+.chat-product-query { margin: 0; padding: 0 14px 8px; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.chat-product-options { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 6px; }
+.chat-product-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 64px;
+  padding: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font: inherit;
+}
+.chat-product-option.highlighted { background: var(--mint); }
+.chat-product-option:disabled { color: var(--muted); cursor: default; }
+.chat-product-option .product-image { width: 40px; height: 40px; flex-shrink: 0; border-radius: 4px; }
+.chat-product-option .image-placeholder { gap: 0; }
+.chat-product-option .image-placeholder svg { width: 18px; height: 18px; }
+.chat-product-option .image-placeholder span { display: none; }
+.chat-product-option-copy { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+.chat-product-option-copy strong { font-size: 13px; font-weight: 500; line-height: 1.6; overflow-wrap: anywhere; }
+.chat-product-option-copy small { font-size: 11px; color: var(--muted); }
+.chat-product-added { display: flex; align-items: center; gap: 3px; flex-shrink: 0; font-size: 11px; color: var(--brand); }
+.chat-product-status { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; padding: 14px; font-size: 13px; color: var(--muted); }
+.chat-product-status button { min-height: 44px; padding: 0 8px; background: none; border: 0; color: var(--brand); }
+.chat-product-popover > footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.product-reference-enter-active,
+.product-reference-leave-active { transition: opacity 0.12s, transform 0.12s; }
+.product-reference-enter-from,
+.product-reference-leave-to { opacity: 0; transform: translateY(4px); }
+@media (max-width: 600px) {
+  .chat-toolbar { gap: 4px; flex-wrap: wrap; }
+  .chat-toolbar .chat-new, .chat-history-trigger { padding-inline: 6px; }
+  .chat-product-trigger kbd, .chat-product-key-hint { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .product-reference-enter-active, .product-reference-leave-active { transition: none; }
+}

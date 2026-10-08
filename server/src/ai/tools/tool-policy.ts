@@ -15,6 +15,7 @@ export type ToolExecutionState = {
   maxToolCalls?: number;
   timeoutMs?: number;
   maxResultChars?: number;
+  productResults?: Map<string, ToolResult>;
 };
 
 export type ToolPolicyFailure = 'tool_call_limit_exceeded' | 'duplicate_tool_call' | 'invalid_arguments' | 'tool_not_allowed';
@@ -32,7 +33,7 @@ export class ToolPolicy {
   get maxResultChars() { return this.config?.agent.runtime.maxToolResultChars ?? DEFAULT_MAX_RESULT_CHARS; }
 
   createState(options: { allowedTools?: readonly string[]; maxToolCalls?: number; timeoutMs?: number; maxResultChars?: number } = {}): ToolExecutionState {
-    return { callCount: 0, seenCalls: new Set<string>(), allowedTools: options.allowedTools ? new Set(options.allowedTools) : undefined, maxToolCalls: options.maxToolCalls, timeoutMs: options.timeoutMs, maxResultChars: options.maxResultChars };
+    return { callCount: 0, seenCalls: new Set<string>(), productResults: new Map(), allowedTools: options.allowedTools ? new Set(options.allowedTools) : undefined, maxToolCalls: options.maxToolCalls, timeoutMs: options.timeoutMs, maxResultChars: options.maxResultChars };
   }
 
   beforeCall(state: ToolExecutionState, name: string, args: Record<string, unknown>): ToolPolicyFailure | null {

@@ -1,7 +1,7 @@
 const groupDefinitions = [
   { id: 'business', label: '业务管理', views: ['conversations', 'knowledge', 'products'] },
-  { id: 'platform', label: '平台配置', views: ['agent-config', 'model-services', 'embedding-services'] },
-  { id: 'system', label: '系统管理', views: ['admins', 'roles', 'audit'] },
+  { id: 'platform', label: '平台配置', views: ['agent-config', 'model-services', 'embedding-services', 'integrations'] },
+  { id: 'system', label: '系统管理', views: ['admins', 'roles'] },
 ] as const;
 
 // Only group already-authorized entries. Selection never changes their order.

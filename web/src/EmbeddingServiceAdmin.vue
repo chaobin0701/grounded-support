@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { Check, CheckCircle2, ChevronRight, Database, ExternalLink, LoaderCircle, LockKeyhole, PlugZap, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from '@lucide/vue';
+import { Check, CheckCircle2, ChevronRight, Database, ExternalLink, LoaderCircle, LockKeyhole, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
 import { adminApi, type EmbeddingConnectionResult, type EmbeddingPlatform, type EmbeddingPlatformPreset, type EmbeddingProfileInput, type EmbeddingProfileItem, type EmbeddingUsage } from './admin-api';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import ModelPlatformLogo from './ui/ModelPlatformLogo.vue';
@@ -125,7 +125,6 @@ onUnmounted(() => { mounted = false; loadSequence++; usageSequence++; form.value
         <button v-if="canManage" class="ui-button ui-button-primary" type="button" :disabled="loading || !platforms.length || working" @click="create"><Plus :size="16" />添加配置</button>
       </template>
     </AdminPageHeader>
-    <div class="model-service-note"><ShieldCheck :size="17" /><p>统一管理文档与查询的向量模型。每个知识库单独选择配置，更换模型后需构建并应用新索引；密钥更换无需重建。</p></div>
     <div v-if="loadError" class="embedding-error" role="alert">{{ loadError }}<button type="button" class="ui-button" @click="load">重试</button></div>
     <div v-if="loading && !profiles.length" class="model-service-empty" role="status"><LoaderCircle :size="22" class="spinning" /><p>正在加载 Embedding 配置…</p></div>
     <div v-else-if="!loadError && !profiles.length" class="model-service-empty"><Database :size="28" /><h2>还没有 Embedding 配置</h2><p>添加并测试连接后，在知识库设置中选择使用。经济模式不需要向量模型。</p></div>

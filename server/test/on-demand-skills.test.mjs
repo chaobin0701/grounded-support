@@ -3,7 +3,6 @@ import test from 'node:test';
 import { z } from 'zod';
 import { AgentLoop } from '../dist/ai/agent/agent-loop.js';
 import { AgentRunner } from '../dist/ai/agent/agent-runner.js';
-import { parsePlannerOutput } from '../dist/ai/agent/planner-output.js';
 import { validateAgentAnswer } from '../dist/ai/agent/agent-answer.js';
 import { SkillRegistry } from '../dist/ai/skills/skill-registry.js';
 import { productConsultationSkill } from '../dist/ai/skills/built-in/product-consultation.skill.js';
@@ -145,14 +144,6 @@ test('a repeated question can reuse prior tool facts without reloading or per-tu
   assert.equal(result.result.refused, false);
   assert.deepEqual(result.toolCalls, []);
   assert.deepEqual(result.loadedSkills, []);
-});
-
-test('load_skill also works through existing JSON and DSML fallbacks', () => {
-  for (const source of [JSON.stringify({ type: 'tool', name: 'load_skill', arguments: { skillId: 'product_consultation' } }), '<｜｜DSML｜｜invoke name="load_skill"><｜｜DSML｜｜parameter name="skillId">product_consultation</｜｜DSML｜｜parameter></｜｜DSML｜｜invoke>']) {
-    const parsed = parsePlannerOutput(source);
-    assert.equal(parsed.toolCalls[0].name, 'load_skill');
-    assert.equal(parsed.toolCalls[0].arguments.skillId, 'product_consultation');
-  }
 });
 
 test('model refusal explanation survives format-only validation', () => {

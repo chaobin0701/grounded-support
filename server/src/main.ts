@@ -7,6 +7,7 @@ import { AppConfigService } from './config/config.service';
 import { HttpExceptionFilter } from './security/http-exception.filter';
 import { RequestContextMiddleware } from './security/request-context.middleware';
 import { RequestLoggerMiddleware } from './security/request-logger.middleware';
+import { IntegrationService } from './integrations/integration.service';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -14,7 +15,12 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('json', { limit: '512kb' });
   const config = app.get(AppConfigService);
   app.getHttpAdapter().getInstance().set('trust proxy', config.security.trustProxy);
-  app.enableCors({ origin: config.security.allowedOrigins.length ? config.security.allowedOrigins : false, credentials: true });
+  const access = app.get(IntegrationService);
+  app.enableCors({ origin: (origin, callback) => {
+    if (!origin) return callback(null, false);
+    if (config.security.allowedOrigins.includes(origin)) return callback(null, true);
+    void access.allowedOrigin(origin).then(allowed => callback(null, allowed)).catch(() => callback(null, false));
+  }, credentials: true, exposedHeaders: ['Retry-After', 'X-Request-ID'] });
   app.setGlobalPrefix('api');
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
   app.useGlobalFilters(new HttpExceptionFilter());

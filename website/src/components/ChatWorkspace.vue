@@ -1,49 +1,61 @@
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onBeforeUnmount,
-  onMounted,
-  ref,
-  watch,
-} from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import {
   ArrowDown,
   ArrowUp,
   Bot,
-  ChevronDown,
   Copy,
-  FileText,
   LoaderCircle,
-  MoreHorizontal,
   Plus,
-  Trash2,
+  UserRound,
 } from "@lucide/vue";
 import { chat } from "../chat/service";
 import ChatProgress from "./ChatProgress.vue";
+import ChatHistoryMenu from "./ChatHistoryMenu.vue";
+import ChatMarkdown from "./ChatMarkdown.vue";
+import ChatWelcome from "./ChatWelcome.vue";
+import ChatQuota from "./ChatQuota.vue";
+import ProductReferencePicker from "./ProductReferencePicker.vue";
+import InlineComposer from "./InlineComposer.vue";
+import UserMessageContent from "./UserMessageContent.vue";
+import type { ProductSelection } from "../chat/product-reference";
+import { clipboardText, encodeDocument, messageDocument, serializeMessageDocument, type InlineDocument } from "../chat/inline-document";
+import { progressStatus, progressSteps } from "../chat/progress";
+import ChatCommentary from "./ChatCommentary.vue";
 const props = defineProps<{ mode: "widget" | "full" }>();
 const { state } = chat;
 const list = ref<HTMLElement | null>(null);
-const composer = ref<HTMLTextAreaElement | null>(null);
+const composer = ref<InstanceType<typeof InlineComposer> | null>(null);
+const productPicker = ref<InstanceType<typeof ProductReferencePicker> | null>(null);
+const encodedDraft = computed(() => encodeDocument({ text: state.draft, products: state.products }));
+// Validate the outgoing text, including product names, not the editor's bare text.
+const readableDraft = computed(() => serializeMessageDocument({ text: state.draft, products: state.products }).question);
+const composerArea = ref<HTMLElement | null>(null);
+const compactComposer = ref(true);
+const composerHeight = ref(160);
+let composerObserver: ResizeObserver | undefined;
+let composerWidth = 0;
+function fitComposer() {
+  if (!composer.value) return;
+  composer.value.measure();
+}
+watch(() => state.draft, () => {
+  fitComposer();
+  void follow();
+}, { flush: "post" });
+watch(() => JSON.stringify(state.products), fitComposer, { flush: "post" });
 const following = ref(true);
-const openMenuId = ref<string | null>(null);
 const busy = computed(() => chat.busy());
 const currentTitle = computed(
   () =>
     state.conversations.find((item) => item.id === state.activeId)?.title ||
     "新会话",
 );
-const simpleStatus = computed(() =>
-  state.recovering
-    ? "正在恢复上一轮回答…"
-    : state.progress.some(
-          (event) => event.stage === "tool" && event.status === "running",
-        )
-      ? "正在查询产品资料…"
-      : state.progress.some((event) => event.stage === "tool")
-        ? "正在整理回答…"
-        : "正在生成回答…",
-);
+const simpleStatus = computed(() => {
+  if (state.recovering) return "正在恢复上一轮回答…";
+  return progressStatus(state.progress, Boolean(state.partialAnswer));
+});
+const hasProcessSteps = computed(() => progressSteps(state.progress).length > 0);
 async function follow(force = false) {
   await nextTick();
   if (list.value && (force || following.value))
@@ -56,38 +68,39 @@ function onScroll() {
       80;
 }
 function send() {
+  if (productPicker.value?.opened) {
+    state.notice = "请先选择产品，或按 Esc 关闭产品列表后发送。";
+    return;
+  }
   following.value = true;
   void chat.send();
 }
 function keyboard(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return;
+  if (productPicker.value?.keyboard(event)) return;
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     send();
   }
 }
-function edit(event: Event) {
-  chat.setDraft((event.target as HTMLTextAreaElement).value);
+function syncProductCommand(caret: { value: string; selectionStart: number; selectionEnd: number; composing: boolean }) {
+  productPicker.value?.syncInput(caret, caret.composing);
+}
+function edit(document: InlineDocument) { chat.setComposer(document.text, document.products); }
+function attachProduct(selection: ProductSelection) {
+  composer.value?.insertProduct(selection);
 }
 function newConversation() {
   if (chat.newConversation()) {
+    productPicker.value?.close();
     following.value = true;
     composer.value?.focus();
   }
 }
-function toggleMenu(id: string) {
-  openMenuId.value = openMenuId.value === id ? null : id;
-}
-function closeMenu() {
-  openMenuId.value = null;
-}
-async function remove(id: string) {
-  closeMenu();
-  await chat.removeConversation(id);
-}
-async function copy(text: string) {
+async function copy(text: string, kind = "回答") {
   try {
     await navigator.clipboard.writeText(text);
-    state.notice = "已复制回答";
+    state.notice = `已复制${kind}`;
   } catch {
     state.notice = "复制失败，请手动选择内容。";
   }
@@ -99,21 +112,6 @@ async function reloadList() {
   } catch {
     state.error = "历史会话暂时无法加载，请稍后重试。";
   }
-}
-function select(event: Event) {
-  const id = (event.target as HTMLSelectElement).value;
-  if (id) void chat.openConversation(id);
-  else newConversation();
-}
-function time(value: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? ""
-    : new Intl.DateTimeFormat("zh-CN", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).format(date);
 }
 watch(
   () => [
@@ -130,116 +128,39 @@ watch(
 watch(
   () => state.activeId,
   () => {
+    productPicker.value?.close();
     following.value = true;
     void follow(true);
   },
 );
 onMounted(() => {
+  const initialized = state.ready;
   void chat.initialize().then(() => follow(true));
-  window.addEventListener("click", closeMenu);
+  if (initialized) void chat.refreshQuota();
+  fitComposer();
+  if (composerArea.value) {
+    composerObserver = new ResizeObserver(([entry]) => {
+      if (!entry || !composerArea.value) return;
+      if (entry.contentRect.width !== composerWidth) {
+        composerWidth = entry.contentRect.width;
+        fitComposer();
+      }
+      composerHeight.value = composerArea.value.getBoundingClientRect().height;
+      void follow();
+    });
+    composerObserver.observe(composerArea.value);
+  }
+  window.addEventListener("resize", fitComposer);
 });
-onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
+onBeforeUnmount(() => {
+  composerObserver?.disconnect();
+  window.removeEventListener("resize", fitComposer);
+});
 </script>
 
 <template>
-  <div class="chat-workspace" :class="`chat-workspace--${mode}`">
-    <aside v-if="mode === 'full'" class="chat-history" aria-label="历史会话">
-      <button
-        class="button button-primary chat-new"
-        type="button"
-        :disabled="busy"
-        @click="newConversation"
-      >
-        <Plus :size="17" />新建会话
-      </button>
-      <div class="chat-history-heading">
-        <span>最近会话</span
-        ><button type="button" :disabled="busy" @click="reloadList">
-          刷新
-        </button>
-      </div>
-      <div class="chat-history-list">
-        <p v-if="!state.conversations.length" class="chat-history-empty">
-          {{ state.loading ? "正在加载…" : "开始一段新的对话吧。" }}
-        </p>
-        <div
-          v-for="item in state.conversations"
-          :key="item.id"
-          class="chat-history-item"
-          :class="{ active: state.activeId === item.id }"
-        >
-          <button
-            class="chat-history-open"
-            type="button"
-            :disabled="busy"
-            :aria-current="state.activeId === item.id ? 'true' : undefined"
-            :title="item.title"
-            @click="chat.openConversation(item.id)"
-          >
-            {{ item.title }}
-          </button>
-          <button
-            class="chat-history-more"
-            type="button"
-            :disabled="busy"
-            :aria-label="`会话操作：${item.title}`"
-            :aria-expanded="openMenuId === item.id"
-            @click.stop="toggleMenu(item.id)"
-          >
-            <MoreHorizontal :size="17" />
-          </button>
-          <div
-            v-if="openMenuId === item.id"
-            class="chat-history-menu"
-            @click.stop
-            @keydown.esc="closeMenu"
-          >
-            <button type="button" @click="remove(item.id)">
-              <Trash2 :size="15" />删除会话
-            </button>
-          </div>
-        </div>
-      </div>
-    </aside>
+  <div class="chat-workspace" :class="`chat-workspace--${mode}`" :style="{ '--chat-composer-height': `${composerHeight}px` }">
     <section class="chat-main" aria-label="当前对话">
-      <div v-if="mode === 'full'" class="chat-mobile-history">
-        <label class="sr-only" for="chat-conversation">选择会话</label>
-        <div>
-          <select
-            id="chat-conversation"
-            :value="state.activeId || ''"
-            :disabled="busy"
-            @change="select"
-          >
-            <option value="">新会话</option>
-            <option
-              v-for="item in state.conversations"
-              :key="item.id"
-              :value="item.id"
-            >
-              {{ item.title }}
-            </option></select
-          ><ChevronDown :size="16" aria-hidden="true" />
-        </div>
-        <button
-          class="icon-button"
-          type="button"
-          aria-label="新建会话"
-          :disabled="busy"
-          @click="newConversation"
-        >
-          <Plus :size="19" /></button
-        ><button
-          v-if="state.activeId"
-          class="icon-button"
-          type="button"
-          aria-label="删除当前会话"
-          :disabled="busy"
-          @click="remove(state.activeId)"
-        >
-          <Trash2 :size="17" />
-        </button>
-      </div>
       <div
         ref="list"
         class="chat-messages"
@@ -255,111 +176,88 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
           <LoaderCircle :size="20" class="spinner" />
           <p>正在加载会话…</p>
         </div>
-        <div
+        <ChatWelcome
           v-else-if="
             !state.messages.length && !state.isSending && !state.recovering
           "
-          class="chat-welcome"
-        >
-          <span class="chat-welcome-icon"><Bot :size="27" /></span>
-          <h2>你好，我是禾序 AI 助手</h2>
-          <p>
-            选购、规格或使用问题，<br
-              v-if="mode === 'widget'"
-            />都可以在这里聊一聊。
-          </p>
-          <div class="chat-suggestions">
-            <button
-              v-for="suggestion in state.suggestions"
-              :key="suggestion"
-              type="button"
-              @click="chat.send(suggestion)"
-            >
-              {{ suggestion }}
-            </button>
-          </div>
-        </div>
+          :mode="mode"
+          :suggestions="state.suggestions"
+          @select="chat.send"
+        />
         <template v-else>
           <article
             v-for="message in state.messages"
             :key="message.id"
             class="chat-message"
             :class="`chat-message--${message.role}`"
+            :aria-label="message.role === 'user' ? '用户消息' : '助手回答'"
           >
-            <div class="chat-message-heading">
-              <span>{{ message.role === "user" ? "你" : "禾序 AI 助手" }}</span
-              ><time :datetime="message.createdAt">{{
-                time(message.createdAt)
-              }}</time>
-            </div>
-            <p class="chat-message-text">{{ message.content }}</p>
-            <template v-if="message.role === 'assistant'">
-              <div v-if="message.citations.length" class="chat-sources">
-                <div
-                  v-for="citation in message.citations"
-                  :key="citation.chunkId"
-                >
-                  <FileText :size="14" /><span
-                    >来源 ·
-                    {{
-                      citation.documentTitle || citation.originalFilename
-                    }}</span
-                  >
-                </div>
-              </div>
-              <button
-                class="chat-copy"
-                type="button"
-                aria-label="复制回答"
-                @click="copy(message.content)"
-              >
-                <Copy :size="15" /><span>复制</span>
-              </button>
+            <span class="chat-avatar" aria-hidden="true"
+              ><UserRound v-if="message.role === 'user'" :size="23" /><Bot
+                v-else
+                :size="24"
+            /></span>
+            <div class="chat-message-body">
               <ChatProgress
-                v-if="mode === 'full'"
+                v-if="message.role === 'assistant' && mode === 'full'"
                 :events="message.progressEvents || []"
                 settled
               />
-            </template>
+              <ChatMarkdown
+                v-if="message.role === 'assistant'"
+                :text="message.content"
+              />
+              <UserMessageContent v-else :message="message" />
+              <button
+                v-if="message.role === 'user'"
+                class="chat-copy chat-copy--user"
+                type="button"
+                aria-label="复制我的消息"
+                title="复制消息"
+                @click="copy(clipboardText(messageDocument(message.content, message.context)), '消息')"
+              >
+                <Copy :size="15" />
+              </button>
+              <template v-if="message.role === 'assistant'">
+                <button
+                  class="chat-copy"
+                  type="button"
+                  aria-label="复制回答"
+                  @click="copy(message.content)"
+                >
+                  <Copy :size="15" /><span>复制</span>
+                </button>
+              </template>
+            </div>
           </article>
           <article
             v-if="state.isSending || state.recovering || state.partialAnswer"
             class="chat-message chat-message--assistant chat-pending"
+            aria-label="助手回答"
           >
-            <div class="chat-message-heading">
-              <span>禾序 AI 助手</span
-              ><small v-if="!state.isSending && !state.recovering"
-                >未完成</small
+            <span class="chat-avatar" aria-hidden="true"
+              ><Bot :size="24"
+            /></span>
+            <div class="chat-message-body">
+              <p v-if="!state.isSending && !state.recovering" class="chat-incomplete">未完成</p>
+              <ChatCommentary :events="state.progress" />
+              <ChatProgress
+                v-if="mode === 'full'"
+                :events="state.progress"
+                :settled="!state.isSending && !state.recovering"
+              />
+              <ChatMarkdown
+                v-if="state.partialAnswer"
+                :text="state.partialAnswer"
+              />
+              <p
+                v-if="(state.isSending || state.recovering) && (mode === 'widget' || state.recovering || !hasProcessSteps || state.partialAnswer)"
+                class="chat-generating"
+                role="status"
               >
+                <LoaderCircle class="spinner" :size="15" />{{ simpleStatus }}
+              </p>
             </div>
-            <p v-if="state.partialAnswer" class="chat-message-text">
-              {{ state.partialAnswer }}
-            </p>
-            <p
-              v-if="state.isSending || state.recovering"
-              class="chat-generating"
-              role="status"
-            >
-              <LoaderCircle class="spinner" :size="15" />{{ simpleStatus }}
-            </p>
-            <div v-if="state.partialCitations.length" class="chat-sources">
-              <div
-                v-for="citation in state.partialCitations"
-                :key="citation.chunkId"
-              >
-                <FileText :size="14" /><span
-                  >来源 ·
-                  {{
-                    citation.documentTitle || citation.originalFilename
-                  }}</span
-                >
-              </div>
-            </div>
-            <ChatProgress
-              v-if="mode === 'full'"
-              :events="state.progress"
-              :settled="!state.isSending && !state.recovering"
-            />
           </article>
         </template>
       </div>
@@ -374,7 +272,7 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
       >
         <ArrowDown :size="15" />回到最新消息
       </button>
-      <div class="chat-composer-area">
+      <div ref="composerArea" class="chat-composer-area">
         <div v-if="state.error" class="chat-error" role="alert">
           <p>{{ state.error }}</p>
           <button
@@ -396,34 +294,36 @@ onBeforeUnmount(() => window.removeEventListener("click", closeMenu));
             重新连接
           </button>
         </div>
-        <form class="chat-composer" @submit.prevent="send">
-          <label class="sr-only" :for="`chat-input-${mode}`">输入问题</label
-          ><textarea
-            :id="`chat-input-${mode}`"
-            ref="composer"
-            :value="state.draft"
-            rows="2"
-            maxlength="2000"
-            placeholder="输入你想了解的问题…"
-            :disabled="state.loading || state.switching"
-            @input="edit"
-            @keydown="keyboard"
-          ></textarea
-          ><button
+        <div class="chat-toolbar" aria-label="会话操作与额度">
+          <template v-if="mode === 'full'">
+            <button
+              v-if="chat.hasContent()"
+              class="button chat-new"
+              type="button"
+              :disabled="busy"
+              @click="newConversation"
+            >
+              <Plus :size="14" />新建会话
+            </button>
+            <ChatHistoryMenu />
+          </template>
+          <ChatQuota />
+          <ProductReferencePicker ref="productPicker" :selected="state.products" :disabled="busy || state.unresolved"
+            :draft="encodedDraft" :composer="composer?.element || null" @select="attachProduct" />
+        </div>
+        <form class="chat-composer" :class="{ 'chat-composer--compact': compactComposer, 'chat-composer--with-products': state.products.length }" @submit.prevent="send">
+          <InlineComposer ref="composer" :id="`chat-input-${mode}`" :text="state.draft" :products="state.products"
+            :document-key="state.activeId || 'new'" :disabled="state.loading || state.switching" :references-disabled="busy || state.unresolved"
+            :expanded="productPicker?.opened || false" :list-id="productPicker?.listId" :active-descendant="productPicker?.activeDescendant"
+            @change="edit" @caret="syncProductCommand" @keydown="keyboard" @compact="compactComposer = $event" @notice="state.notice = $event" />
+          <div class="chat-composer-actions"><button
             type="submit"
-            :disabled="busy || state.unresolved || !state.draft.trim()"
+            :disabled="busy || state.unresolved || readableDraft.length < 2 || readableDraft.length > 2000"
             aria-label="发送问题"
           >
             <ArrowUp :size="20" />
-          </button>
+          </button></div>
         </form>
-        <p class="chat-composer-note">
-          {{
-            mode === "full"
-              ? "AI 回答仅供参考，请以产品官方资料为准。"
-              : "AI 助手 · 请勿发送敏感个人信息"
-          }}
-        </p>
       </div>
     </section>
   </div>

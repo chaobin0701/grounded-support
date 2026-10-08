@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue';
-import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, LockKeyhole, Play, PlugZap, Plus, RefreshCw, ShieldCheck, Trash2, XCircle } from '@lucide/vue';
+import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, LockKeyhole, Play, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
 import { adminApi, type LlmConnectionTestResult, type LlmProfileItem } from './admin-api';
 import { modelPlatforms, modelPlatformOptions, type ModelPlatformKey } from './model-platforms';
 import { groupModelProfiles, modelProfileStatus } from './model-profile-presentation';
@@ -167,10 +167,6 @@ onMounted(load);
       </template>
     </AdminPageHeader>
 
-    <div class="model-service-note">
-      <ShieldCheck :size="17" />
-      <p>密钥在服务端加密保存。当前配置用于后续请求；向量模型在独立的 Embedding 服务中管理。</p>
-    </div>
     <div v-if="loading && !profiles.length" class="model-service-empty" role="status"><LoaderCircle :size="22" class="spinning" /><p>正在加载模型配置…</p></div>
     <div v-else-if="!profiles.length" class="model-service-empty">
       <h2>还没有模型配置</h2><p>添加模型连接后，可将其设为 Agent 当前使用的模型。</p>
@@ -248,7 +244,7 @@ onMounted(load);
             <label class="model-field"><span class="ui-label">上下文窗口（tokens）</span><input v-model.number="form.contextWindowTokens" class="ui-input" type="number" min="1024" max="1000000" required /><small>用于历史压缩和上下文预算。</small></label>
             <label class="model-field"><span class="ui-label">最大输出（tokens）</span><input v-model.number="form.maxOutputTokens" class="ui-input" type="number" min="128" max="32000" required /><small>模型单次回复的输出上限。</small></label>
           </div>
-          <p class="model-output-note"><Code2 :size="15" /><span>结构化输出由系统自动适配，无需配置。</span></p>
+          <p class="model-output-note"><Code2 :size="15" /><span>必须支持原生工具调用与 JSON 结构化输出；系统固定发送协议约束，不自动降级。</span></p>
         </section>
 
         <footer class="model-form-footer">
@@ -261,7 +257,7 @@ onMounted(load);
     <UiDialog v-model:open="resultDialogOpen" title="连接测试" :description="testedModel" size="md" :layer="60">
       <div class="model-connection-result" role="status" aria-live="polite">
         <template v-if="testing"><LoaderCircle :size="30" class="spinning" /><h3>正在连接模型服务…</h3><p>使用当前填写的参数发送真实测试请求。</p></template>
-        <template v-else-if="testResult?.ok"><CheckCircle2 :size="30" class="result-success" /><h3>连接成功</h3><p>{{ testResult.model }} · {{ testResult.durationMs }} ms</p><blockquote>{{ testResult.responsePreview }}</blockquote></template>
+        <template v-else-if="testResult?.ok"><CheckCircle2 :size="30" class="result-success" /><h3>连接与协议验证通过</h3><p>{{ testResult.model }} · {{ testResult.durationMs }} ms</p><blockquote>{{ testResult.responsePreview }}</blockquote><p>原生工具调用 ✓ · JSON 结构化输出 ✓</p></template>
         <template v-else-if="testResult"><XCircle :size="30" class="result-failure" /><h3>连接失败</h3><p>{{ testResult.message }}</p></template>
       </div>
       <div class="model-result-footer"><button type="button" class="ui-button" @click="resultDialogOpen = false">{{ testing ? '关闭窗口' : '返回配置' }}</button></div>

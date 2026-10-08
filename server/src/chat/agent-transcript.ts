@@ -1,8 +1,8 @@
-import type { PlannerToolCall } from '../ai/agent/planner-output';
+import type { LlmToolCall } from '../ai/providers/provider.types';
 
 export type AgentTranscriptToolCall = {
   id: string;
-  name: PlannerToolCall['name'];
+  name: LlmToolCall['name'];
   arguments: Record<string, unknown>;
 };
 
@@ -23,6 +23,7 @@ export type AgentTranscriptMessage = {
   toolName?: string;
   citationIds?: number[];
   productIds?: string[];
+  productReferences?: Array<{ productId: string; offset: number; length?: number }>;
 };
 
 export const TRANSCRIPT_VERSION = 1;

@@ -1,8 +1,9 @@
 import { Inject, Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { LLM_PROVIDER, LlmProvider } from '../ai/providers/llm-provider';
 import { ProviderError } from '../ai/providers/provider-errors';
-import { LlmMessage, LlmResponseFormat, LlmToolCall, LlmToolDefinition } from '../ai/providers/provider.types';
+import { LlmMessage, LlmRequest, LlmResponseFormat, LlmToolCall, LlmToolDefinition } from '../ai/providers/provider.types';
 import { AppConfigService } from '../config/config.service';
+import { reserveModelCall } from './model-call-accounting';
 
 export type ModelResult = {
   content: string;
@@ -46,10 +47,6 @@ export class LlmService {
     return this.provider.contextWindowTokens ?? this.config?.llm.contextWindowTokens ?? 32000;
   }
 
-  get structuredOutputMode(): 'auto' | 'required' | 'disabled' {
-    return this.provider.structuredOutput ?? this.config?.llm.structuredOutput ?? 'auto';
-  }
-
   async complete(system: string, user: string, model = this.model): Promise<string> {
     return (await this.completeDetailed(system, user, model)).content;
   }
@@ -61,16 +58,22 @@ export class LlmService {
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       let reason = 'network_error';
       let retryable = true;
+      const messages = options.messages ?? [{ role: 'system', content: system }, { role: 'user', content: user } satisfies LlmMessage];
+      const request: LlmRequest = {
+        model, messages,
+        ...(options.tools?.length ? { tools: options.tools } : {}),
+        ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
+        temperature: 0.1,
+        maxTokens: purpose === 'summary' ? Math.min(800, this.maxOutputTokens) : this.maxOutputTokens,
+      };
+      // A quota rejection is not a provider failure and must never be retried or
+      // converted into a generic refusal. Each real retry obtains a separate lease.
+      const lease = await reserveModelCall(request, purpose);
+      let settling = false;
       try {
-        const messages = options.messages ?? [{ role: 'system', content: system }, { role: 'user', content: user } satisfies LlmMessage];
-        const response = await provider.chat({
-          model,
-          messages,
-          ...(options.tools?.length ? { tools: options.tools } : {}),
-          ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
-          temperature: 0.1,
-          maxTokens: purpose === 'summary' ? 800 : this.maxOutputTokens,
-        });
+        const response = await provider.chat(request);
+        settling = true;
+        await lease?.settle(response.usage);
         if (response.usage.inputTokens !== null || response.usage.outputTokens !== null || response.usage.totalTokens !== null) usage.seen = true;
         usage.inputTokens += response.usage.inputTokens ?? 0;
         usage.outputTokens += response.usage.outputTokens ?? 0;
@@ -91,6 +94,8 @@ export class LlmService {
         }
         reason = `empty_response:${response.finishReason || 'unknown'}`;
       } catch (error) {
+        if (settling) throw error; // Accounting failure must not repeat a paid model request.
+        await lease?.settle(null, error);
         if (error instanceof ProviderError) {
           reason = error.code;
           retryable = error.retryable;
@@ -112,20 +117,28 @@ export class LlmService {
     let content = '';
     let usage = { inputTokens: null as number | null, outputTokens: null as number | null, totalTokens: null as number | null };
     let finishReason: string | null = null;
-    for await (const event of this.provider.stream({
+    const request: LlmRequest = {
       model,
       messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
       temperature: 0.1,
       maxTokens: this.maxOutputTokens,
-    })) {
-      if (event.type === 'text_delta') {
-        content += event.delta;
-        onDelta(event.delta);
-      } else {
-        usage = event.usage;
-        finishReason = event.finishReason;
+    };
+    const lease = await reserveModelCall(request, 'answer');
+    try {
+      for await (const event of this.provider.stream(request)) {
+        if (event.type === 'text_delta') {
+          content += event.delta;
+          onDelta(event.delta);
+        } else {
+          usage = event.usage;
+          finishReason = event.finishReason;
+        }
       }
+    } catch (error) {
+      await lease?.settle(usage, error);
+      throw error;
     }
+    await lease?.settle(usage);
     return { content, toolCalls: [], model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: 1 };
   }
 }

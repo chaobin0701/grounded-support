@@ -154,7 +154,7 @@ export interface LlmProfileItem {
   timeoutMs: number;
   contextWindowTokens: number;
   maxOutputTokens: number;
-  structuredOutput: 'auto';
+  structuredOutput: 'required';
   supportsToolCalls: boolean;
   supportsStreaming: boolean;
   enabled: boolean;
@@ -164,7 +164,7 @@ export interface LlmProfileItem {
 }
 
 export type LlmProfileInput = Omit<LlmProfileItem, 'id' | 'providerKey' | 'adapterType' | 'enabled' | 'isDefault' | 'hasApiKey' | 'apiKeyPreview' | 'structuredOutput'> & { apiKey?: string };
-export type LlmConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
+export type LlmConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string; capabilities: { nativeTools: true; structuredOutput: true } };
 
 export interface ChatTraceItem {
   id: string;
@@ -254,14 +254,16 @@ export interface ChatTraceDetail extends ChatTraceItem {
 }
 
 export interface ConversationListItem {
+  applicationId: string; applicationName: string;
   id: string; title: string; updatedAt: string; createdAt: string; visitorSessionId: string; busyUntil: string | null;
   messageCount: number; turnCount: number; lastQuestion: string | null; lastStatus: string | null;
   lastRefused: boolean | null; lastTraceId: string | null; hasFailed: boolean; hasRefused: boolean; clientType: string;
 }
 export interface ConversationDetail {
+  applicationId: string; applicationName: string;
   id: string; visitorSessionId: string; title: string; summary: string; busyUntil: string | null;
   createdAt: string; updatedAt: string;
-  messages: { id: number; role: string; content: string; refused: boolean | null; citations: unknown; toolSteps: unknown; progressEvents: unknown; createdAt: string }[];
+  messages: { id: number; role: string; content: string; context?: import('./chat-api').ConversationMessage['context']; refused: boolean | null; citations: unknown; toolSteps: unknown; progressEvents: unknown; createdAt: string }[];
   runs: { id: string; clientRequestId: string; question: string; status: string; startedAt: string | null; finishedAt: string | null; errorCode: string | null; userMessageId: number | null; assistantMessageId: number | null; createdAt: string }[];
   traces: { id: string; kind: string; userMessageId: number | null; question: string; finalAnswer: string | null; refused: boolean | null; status: string; errorCode: string | null; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; durationMs: number; createdAt: string }[];
 }
@@ -414,7 +416,31 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
   return response.json() as Promise<T>;
 }
 
+export type IntegrationScope = 'chat:write' | 'conversations:read' | 'conversations:delete' | 'usage:read';
+export interface IntegrationAppInput {
+  name: string; enabled: boolean; websiteEnabled: boolean; apiEnabled: boolean;
+  allowedOrigins: string[]; scopes: IntegrationScope[]; requestsPerMinute: number; concurrency: number; dailyRequests: number; dailyTokenLimit: number | null;
+}
+export interface IntegrationApp extends IntegrationAppInput { id: string; isInternal: boolean; createdAt: string; updatedAt: string }
+export interface IntegrationKey {
+  id: string; name: string; maskedKey: string; scopes: IntegrationScope[];
+  expiresAt: string | null; revokedAt: string | null; lastUsedAt: string | null; createdAt: string;
+}
+export interface IntegrationKeyInput { name: string; scopes: IntegrationScope[]; expiresAt?: string }
+export interface IntegrationDetail {
+  app: IntegrationApp; keys: IntegrationKey[];
+  usage: { requests: number; completed: number; failed: number; running: number; totalTokens: number; inputTokens: number; outputTokens: number;
+    reservedTokens: number; unknownModelCalls: number; tokenLimit: number | null; remainingTokens: number | null; startAt: string; resetAt: string; timezone: string };
+  recent: { id: string; status: string; conversationId: string | null; traceId: string | null; totalTokens: number; durationMs: number | null; createdAt: string }[];
+}
+
 export const adminApi = {
+  integrations: (token: string) => request<IntegrationApp[]>('/integrations', {}, token),
+  integration: (token: string, id: string) => request<IntegrationDetail>(`/integrations/${id}`, {}, token),
+  createIntegration: (token: string, input: IntegrationAppInput) => request<IntegrationApp>('/integrations', { method: 'POST', body: JSON.stringify(input) }, token),
+  updateIntegration: (token: string, id: string, input: IntegrationAppInput) => request<IntegrationApp>(`/integrations/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
+  createIntegrationKey: (token: string, id: string, input: IntegrationKeyInput, rotateId?: string) => request<{ id: string; apiKey: string; maskedKey: string }>(`/integrations/${id}/keys${rotateId ? `/${rotateId}/rotate` : ''}`, { method: 'POST', body: JSON.stringify(input) }, token),
+  revokeIntegrationKey: (token: string, id: string, keyId: string) => request(`/integrations/${id}/keys/${keyId}/revoke`, { method: 'POST' }, token),
   embeddingProfiles: (token: string) => request<EmbeddingProfileItem[]>('/model-profiles/embedding', {}, token),
   embeddingMetadata: (token: string) => request<{ platforms: EmbeddingPlatformPreset[]; minDimensions: number; maxDimensions: number }>('/model-profiles/embedding/metadata', {}, token),
   createEmbeddingProfile: (token: string, input: EmbeddingProfileInput) => request<EmbeddingProfileItem>('/model-profiles/embedding', { method: 'POST', body: JSON.stringify(input) }, token),
@@ -458,7 +484,7 @@ export const adminApi = {
   chatTraces: (token: string) => request<ChatTraceItem[]>('/chat-traces?limit=50', {}, token),
   chatTrace: (token: string, id: string) => request<ChatTraceDetail>(`/chat-traces/${encodeURIComponent(id)}`, {}, token),
   debugInspect: (token: string, input: { conversationIds?: string[]; traceIds?: string[]; issueDescription?: string }) => request<DebugInspection>('/debug/inspect', { method: 'POST', body: JSON.stringify(input) }, token),
-  conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}`, {}, token),
+  conversations: (token: string, params: { limit?: number; offset?: number; q?: string; status?: string; visitorId?: string; device?: string; since?: string; applicationId?: string } = {}) => request<{ items: ConversationListItem[]; filters: { visitorId: string; conversationCount: number; clientType: string }[]; applications: { id: string; name: string }[]; pagination: { limit: number; offset: number; hasMore: boolean } }>(`/conversations?limit=${params.limit ?? 30}&offset=${params.offset ?? 0}&q=${encodeURIComponent(params.q ?? '')}&status=${params.status ?? 'all'}&visitorId=${encodeURIComponent(params.visitorId ?? '')}&device=${params.device ?? 'all'}&since=${encodeURIComponent(params.since ?? '')}&applicationId=${encodeURIComponent(params.applicationId ?? '')}`, {}, token),
   conversation: (token: string, id: string) => request<ConversationDetail>(`/conversations/${encodeURIComponent(id)}`, {}, token),
   llmProfiles: (token: string) => request<LlmProfileItem[]>('/model-profiles/llm', {}, token),
   createLlmProfile: (token: string, input: LlmProfileInput) => request<LlmProfileItem>('/model-profiles/llm', { method: 'POST', body: JSON.stringify(input) }, token),

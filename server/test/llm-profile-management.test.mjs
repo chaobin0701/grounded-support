@@ -42,7 +42,7 @@ function fixture(rows, options = {}) {
   const database = { query, transaction: async action => { const backup = structuredClone(state); try { return await action({ query }); } catch (error) { state = backup; throw error; } } };
   const config = { llm: { allowedBaseUrls: options.allowedBaseUrls ?? [baseUrl], apiKey: options.environmentKey } };
   const secrets = { encrypt: value => { encrypted.push(value); return `encrypted:${value}`; }, decrypt: value => { decrypted.push(value); return value.startsWith('encrypted:') ? value.slice('encrypted:'.length) : options.savedKey ?? '12-secret-api-key-89'; } };
-  const registry = { activateProfile: value => activated.push(value), createFromProfile: profile => { sent.push(profile); return { chat: async request => { sent.push(request); if (options.providerError) throw options.providerError; return { content: options.content ?? '连接成功', model: profile.model, durationMs: 45 }; } }; } };
+  const registry = { activateProfile: value => activated.push(value), createFromProfile: profile => { sent.push(profile); return { chat: async request => { sent.push(request); if (options.providerError) throw options.providerError; return { content: options.content ?? (request.toolChoice ? '{}' : '{"message":"连接成功"}'), toolCalls: request.toolChoice ? options.toolCalls ?? [{ id: 'probe-1', name: 'connection_probe', arguments: { probe: 'connection-test' } }] : [], model: profile.model, durationMs: 45 }; } }; } };
   return { service: new LlmProfileService(database, config, secrets, registry), calls, activated, sent, decrypted, encrypted, state: () => state };
 }
 
@@ -62,6 +62,20 @@ test('connection test uses unsaved form values without creating or activating a 
   assert.equal(result.ok, true); assert.equal(result.model, 'unsaved-model'); assert.equal(result.responsePreview, '连接成功');
   assert.equal(f.sent[0].apiKey, 'new-api-key'); assert.equal(f.sent[0].timeoutMs, 45000);
   assert.equal(f.sent[1].maxTokens, 64); assert.equal(f.calls.length, 0); assert.equal(f.activated.length, 0);
+  assert.deepEqual(result.capabilities, { nativeTools: true, structuredOutput: true });
+  assert.equal(f.sent.length, 3); assert.deepEqual(f.sent[1].responseFormat, { type: 'json_object' });
+  assert.deepEqual(f.sent[2].toolChoice, { name: 'connection_probe' });
+  assert.deepEqual(f.sent[2].responseFormat, { type: 'json_object' });
+});
+test('connection capabilities reject text-only endpoints, legacy calls and malformed native arguments without activating anything', async () => {
+  for (const options of [{ content: '连接成功' }, { content: '{"message":"错误内容"}' }, { toolCalls: [] }, { toolCalls: [{ id: '1', name: 'connection_probe', arguments: { probe: 'wrong' } }] }]) {
+    const f = fixture([], options);
+    await assert.rejects(f.service.testConnection({ ...input, apiKey: 'test-key' }), error => error.getStatus() === 400);
+    assert.equal(f.calls.length, 0); assert.equal(f.activated.length, 0);
+  }
+  const f = fixture([row(1, { supports_tool_calls: false })]);
+  await assert.rejects(f.service.activate(1, 1), /原生工具调用/);
+  assert.equal(f.activated.length, 0);
 });
 test('editing with blank key reuses saved credentials but sends the edited model', async () => {
   const f = fixture([row(1)]); await f.service.testConnection({ ...input, profileId: 1 });

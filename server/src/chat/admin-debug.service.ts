@@ -187,12 +187,12 @@ export class AdminDebugService {
     if (!conversation) return null;
     const [messages, runs, traces] = await Promise.all([
       this.database.query<MessageRow>(
-        `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps",
+        `SELECT id::int, role, content, refused, citations, request_context AS context, tool_steps AS "toolSteps",
                 progress_events AS "progressEvents", created_at AS "createdAt"
          FROM conversation_messages WHERE conversation_id = $1 ORDER BY id ASC`, [conversationId],
       ),
       this.database.query<RunRow>(
-        `SELECT id, client_request_id AS "clientRequestId", question, status,
+        `SELECT id, client_request_id AS "clientRequestId", question, request_context AS context, status,
                 expires_at AS "expiresAt", started_at AS "startedAt", finished_at AS "finishedAt",
                 error_code AS "errorCode", user_message_id::int AS "userMessageId",
                 assistant_message_id::int AS "assistantMessageId", created_at AS "createdAt"
@@ -267,10 +267,11 @@ export class AdminDebugService {
         if (trace.refused === true && toolCalls.length === 0 && looksLikeToolIntent(trace.rawModelOutput)) {
           add({ code: 'planner_tool_not_executed', severity: 'error', title: '模型请求了工具但未执行', detail: `轨迹 ${trace.id} 的原始模型输出包含工具请求，但执行步骤中没有对应的工具调用，随后进入了拒答。`, traceId: trace.id });
         }
-        const failedTools = toolCalls.filter((step) => asRecord(step).ok === false);
+        const actualTools = steps.filter(step => (asRecord(step).type === 'tool_call' || asRecord(step).origin === 'preload') && !asRecord(step).reused);
+        const failedTools = actualTools.filter((step) => asRecord(step).ok === false);
         if (failedTools.length) add({ code: 'tool_failed', severity: 'error', title: '工具调用失败', detail: `轨迹 ${trace.id} 有 ${failedTools.length} 次工具调用失败。`, traceId: trace.id });
         if (toolCalls.length >= 5) add({ code: 'tool_call_limit_risk', severity: 'warning', title: '工具调用次数较多', detail: `轨迹 ${trace.id} 共调用 ${toolCalls.length} 次工具。`, traceId: trace.id });
-        const callKeys = toolCalls.map((step) => JSON.stringify({ name: asRecord(step).name, arguments: asRecord(step).arguments }));
+        const callKeys = actualTools.map((step) => JSON.stringify({ name: asRecord(step).name, arguments: asRecord(step).arguments }));
         if (new Set(callKeys).size < callKeys.length) add({ code: 'duplicate_tool_call', severity: 'warning', title: '存在重复工具调用', detail: `轨迹 ${trace.id} 有完全相同的工具参数被重复调用。`, traceId: trace.id });
         const preflight = asRecord(context.preflight);
         if ((asNumber(preflight.hitCount) ?? 0) > 0 && sourceIds.size === 0) add({ code: 'preflight_evidence_lost', severity: 'warning', title: '预检索资料未进入最终上下文', detail: `轨迹 ${trace.id} 预检索命中，但最终没有保存资料来源。`, traceId: trace.id });

@@ -8,10 +8,11 @@ const CLIENT_TYPES = new Set(['all', 'browser', 'mobile', 'wechat', 'feishu', 'a
 export class AdminConversationService {
   constructor(private readonly database: DatabaseService) {}
 
-  async list(limit: number, offset: number, query = '', status: string = 'all', visitorId = '', device = 'all', since: string | null = null) {
+  async list(limit: number, offset: number, query = '', status: string = 'all', visitorId = '', device = 'all', since: string | null = null, applicationId = '') {
     const filter = this.normalizeStatus(status);
     if (!CLIENT_TYPES.has(device)) throw new BadRequestException('Invalid conversation device filter');
     if (since && Number.isNaN(new Date(since).getTime())) throw new BadRequestException('Invalid conversation time filter');
+    if (applicationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(applicationId)) throw new BadRequestException('Invalid application ID');
     const safeLimit = Math.max(1, Math.min(limit, 100));
     const safeOffset = Math.max(0, offset);
     const search = `%${query.trim()}%`;
@@ -28,6 +29,7 @@ export class AdminConversationService {
        )
        SELECT c.id, c.title, c.updated_at AS "updatedAt", c.created_at AS "createdAt",
               c.visitor_session_id AS "visitorSessionId",
+              c.application_id AS "applicationId", app.name AS "applicationName",
               vs.client_type AS "clientType",
               c.busy_until AS "busyUntil",
               COALESCE(ms."messageCount", 0) AS "messageCount",
@@ -38,6 +40,7 @@ export class AdminConversationService {
               EXISTS (SELECT 1 FROM chat_traces t WHERE t.conversation_id = c.id AND t.refused = true) AS "hasRefused"
        FROM conversations c
        JOIN visitor_sessions vs ON vs.id = c.visitor_session_id
+       JOIN integration_apps app ON app.id = c.application_id
        LEFT JOIN message_stats ms ON ms.conversation_id = c.id
        LEFT JOIN latest_trace lt ON lt.conversation_id = c.id
        WHERE ($1 = '%%' OR c.id::text ILIKE $1 OR c.title ILIKE $1 OR COALESCE(lt.question, '') ILIKE $1)
@@ -45,13 +48,14 @@ export class AdminConversationService {
          AND ($3 = '' OR c.visitor_session_id::text = $3)
          AND ($4 = 'all' OR vs.client_type = $4)
          AND ($5::timestamptz IS NULL OR c.updated_at >= $5::timestamptz)
+         AND ($8 = '' OR c.application_id::text = $8)
          AND ($2 = 'all'
            OR ($2 = 'answered' AND lt.status = 'completed' AND COALESCE(lt.refused, false) = false)
            OR ($2 = 'refused' AND lt.refused = true)
            OR ($2 = 'failed' AND (lt.status = 'failed' OR EXISTS (SELECT 1 FROM chat_traces t2 WHERE t2.conversation_id = c.id AND t2.status = 'failed')))
            OR ($2 = 'active' AND c.busy_until IS NOT NULL AND c.busy_until > now()))
        ORDER BY c.updated_at DESC
-       LIMIT $6 OFFSET $7`, [search, filter, visitorId, device, since, safeLimit + 1, safeOffset],
+       LIMIT $6 OFFSET $7`, [search, filter, visitorId, device, since, safeLimit + 1, safeOffset, applicationId],
     );
     const hasMore = result.rows.length > safeLimit;
     const filters = await this.database.query<{ visitorId: string; conversationCount: number; clientType: string }>(
@@ -60,19 +64,21 @@ export class AdminConversationService {
        WHERE EXISTS (SELECT 1 FROM conversation_messages m WHERE m.conversation_id = c.id)
        GROUP BY c.visitor_session_id, vs.client_type ORDER BY max(c.updated_at) DESC LIMIT 100`,
     );
-    return { items: result.rows.slice(0, safeLimit), filters: filters.rows, pagination: { limit: safeLimit, offset: safeOffset, hasMore } };
+    const applications = await this.database.query('SELECT id, name FROM integration_apps ORDER BY is_internal DESC, name LIMIT 200');
+    return { items: result.rows.slice(0, safeLimit), filters: filters.rows, applications: applications.rows, pagination: { limit: safeLimit, offset: safeOffset, hasMore } };
   }
 
   async detail(id: string) {
     const conversation = await this.database.query(
-      `SELECT id, visitor_session_id AS "visitorSessionId", title, summary,
-              busy_until AS "busyUntil", created_at AS "createdAt", updated_at AS "updatedAt"
-       FROM conversations WHERE id = $1`, [id],
+      `SELECT c.id, c.visitor_session_id AS "visitorSessionId", c.title, c.summary,
+              c.application_id AS "applicationId", app.name AS "applicationName",
+              c.busy_until AS "busyUntil", c.created_at AS "createdAt", c.updated_at AS "updatedAt"
+       FROM conversations c JOIN integration_apps app ON app.id=c.application_id WHERE c.id = $1`, [id],
     );
     if (!conversation.rows[0]) throw new NotFoundException('Conversation not found');
     const [messages, runs, traces] = await Promise.all([
       this.database.query(
-        `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps",
+        `SELECT id::int, role, content, refused, citations, request_context AS context, tool_steps AS "toolSteps",
                 progress_events AS "progressEvents", created_at AS "createdAt"
          FROM conversation_messages WHERE conversation_id = $1 ORDER BY id ASC`, [id]),
       this.database.query(

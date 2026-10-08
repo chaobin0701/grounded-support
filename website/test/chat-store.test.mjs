@@ -80,6 +80,149 @@ async function eventually(fn) {
     await new Promise((resolve) => setTimeout(resolve, 2));
   assert.ok(fn());
 }
+test('说明与答案分别保存；重复说明事件去重且不会改变发送正文或答案', async t => {
+  const commentary = { type: 'commentary', id: 'batch-1', text: '我先查看产品资料。' };
+  const { store } = fixture(t, { stream: async (_id, _question, _req, callbacks) => {
+    callbacks.commentary(commentary); callbacks.commentary(commentary);
+    assert.deepEqual(store.state.progress, [commentary]);
+    assert.equal(store.state.partialAnswer, '');
+    callbacks.delta(answer.answer);
+    return answer;
+  } });
+  await store.initialize(); store.setDraft('介绍产品'); await store.send();
+  const message = store.state.messages.at(-1);
+  assert.equal(message.content, answer.answer); assert.deepEqual(message.progressEvents, [commentary]);
+});
+test('只引用一个产品也能发送：名称进入正文、ID 与范围独立提交，首次发送才创建会话', async t => {
+  const bodies = [];
+  const { store, counts } = fixture(t, { stream: async (_id, question, _req, _callbacks, _signal, context) => { bodies.push({ question, context }); return answer; } });
+  await store.initialize();
+  store.attachProduct({ id: 'xiaomi-fresh-air', name: '米家新风机' });
+  assert.equal(store.state.draft, '');
+  assert.equal(counts.create, 0);
+  await store.send();
+  assert.equal(counts.create, 1);
+  assert.deepEqual(bodies, [{ question: '米家新风机', context: { productIds: ['xiaomi-fresh-air'], productReferences: [{ productId: 'xiaomi-fresh-air', offset: 0, length: 5 }] } }]);
+  assert.equal(store.state.messages[0].content, '米家新风机');
+  assert.equal(store.state.products.length, 0);
+});
+test('只引用多个产品支持发送与去重；删除最后一个引用后，空白不能创建会话', async t => {
+  const bodies = [];
+  const { store, counts } = fixture(t, { stream: async (_id, question, _req, _callbacks, _signal, context) => { bodies.push({ question, context }); return answer; } });
+  await store.initialize();
+  store.setComposer(' \n ', [{ id: '1', name: '米家新风机', offset: 0 }, { id: '1', name: '米家新风机', offset: 0 }, { id: '2', name: '米家电暖器', offset: 2 }]);
+  await store.send();
+  assert.deepEqual(bodies[0], { question: '米家新风机 \n米家电暖器', context: { productIds: ['1', '2'], productReferences: [{ productId: '1', offset: 0, length: 5 }, { productId: '2', offset: 7, length: 5 }] } });
+  store.newConversation();
+  store.attachProduct({ id: '1', name: '米家新风机' });
+  store.removeProduct('1');
+  store.setDraft(' \n ');
+  await store.send();
+  assert.equal(bodies.length, 1);
+  assert.equal(counts.create, 1);
+  assert.equal(store.state.activeId, null);
+});
+test('产品附件最多五个，自动去重、移除、刷新恢复，正文保留名称且 ID 独立提交', async t => {
+  const bodies = [];
+  const { store, storage } = fixture(t, { stream: async (_id, _q, _req, _callbacks, _signal, context) => { bodies.push(context); return answer; } });
+  await store.initialize();
+  for (let i = 1; i <= 5; i++) assert.equal(store.attachProduct({ id: String(i), name: `产品${i}` }), true);
+  store.attachProduct({ id: '1', name: '产品1' });
+  assert.equal(store.state.products.length, 5);
+  assert.equal(store.attachProduct({ id: '6', name: '产品6' }), false);
+  const restored = fixture(t, {}, storage).store; await restored.initialize();
+  assert.equal(restored.state.products.length, 5);
+  store.removeProduct('2'); store.setDraft('适合卧室使用吗？');
+  await store.send();
+  assert.deepEqual(bodies[0], { productIds: ['1','3','4','5'], productReferences: ['1','3','4','5'].map((productId, index) => ({ productId, offset: index * 3, length: 3 })) });
+  assert.equal(store.state.messages[0].content, '产品1产品3产品4产品5适合卧室使用吗？');
+  assert.equal(store.state.messages[0].context.products.length, 4);
+  assert.equal(store.state.products.length, 0);
+});
+test('恢复失败请求时保留产品，换产品重发不会复用旧幂等 ID', async t => {
+  const storage = new MemoryStorage();
+  storage.setItem(ACTIVE_KEY, id);
+  storage.setItem(PENDING_KEY, JSON.stringify({ conversationId: id, requestId: 'old', question: '适合卧室吗？', products: [{ id: '1', name: '产品1' }] }));
+  const { store, requests } = fixture(t, {}, storage);
+  await store.initialize();
+  assert.equal(store.state.products[0]?.id, '1');
+  store.removeProduct('1'); store.attachProduct({ id: '2', name: '产品2' });
+  await store.send('适合卧室吗？');
+  assert.notEqual(requests[0], 'old');
+});
+test('正文中间与换行后的引用随草稿恢复，发送时修正空白偏移，历史原位保存', async t => {
+  const bodies = [];
+  const { store, storage } = fixture(t, { stream: async (_id, question, _req, _callbacks, _signal, context) => { bodies.push({ question, context }); return answer; } });
+  await store.initialize();
+  const text = '  前🙂\n后  ', products = [{ id: '1', name: '产品1', offset: 3 }, { id: '2', name: '产品2', offset: 6 }];
+  store.setComposer(text, products);
+  const restored = fixture(t, {}, storage).store; await restored.initialize();
+  assert.equal(restored.state.draft, text); assert.deepEqual([...restored.state.products], products);
+  await store.send();
+  const context = { productIds: ['1','2'], productReferences: [{ productId: '1', offset: 1, length: 3 }, { productId: '2', offset: 7, length: 3 }] };
+  assert.deepEqual(bodies[0], { question: '前产品1🙂\n产品2后', context });
+  assert.deepEqual(store.state.messages[0].context.productReferences, context.productReferences);
+});
+test('相同正文与产品沿用未确认请求 ID，完成恢复后不会遗留产品草稿', async t => {
+  const storage = new MemoryStorage();
+  storage.setItem(ACTIVE_KEY, id);
+  storage.setItem(PENDING_KEY, JSON.stringify({ conversationId: id, requestId: 'same', question: '适合卧室吗？', products: [{ id: '1', name: '产品1' }] }));
+  const { store, requests } = fixture(t, {}, storage);
+  await store.initialize();
+  await store.send(); assert.equal(requests[0], 'same');
+  assert.equal(store.state.products.length, 0);
+});
+test('新的未确认请求恢复编辑器草稿，重发沿用完整正文、范围和幂等 ID', async t => {
+  const storage = new MemoryStorage();
+  const products = [{ id: '1', name: '米家电暖器', offset: 8 }];
+  const context = { productIds: ['1'], productReferences: [{ productId: '1', offset: 8, length: 5 }] };
+  storage.setItem(ACTIVE_KEY, id);
+  storage.setItem(PENDING_KEY, JSON.stringify({ conversationId: id, requestId: 'new-range', question: '这个产品怎么样\n米家电暖器', draft: '这个产品怎么样\n', products, context }));
+  const bodies = [];
+  const { store } = fixture(t, { stream: async (_id, question, requestId, _cb, _signal, context) => { bodies.push({ question, requestId, context }); return answer; } }, storage);
+  await store.initialize();
+  assert.equal(bodies.length, 0); // Refresh never resends automatically.
+  assert.equal(store.state.draft, '这个产品怎么样\n');
+  assert.deepEqual([...store.state.products], products);
+  await store.send();
+  assert.deepEqual(bodies, [{ question: '这个产品怎么样\n米家电暖器', requestId: 'new-range', context }]);
+});
+test('失败回答从服务端完整正文恢复内联编辑器，重新发送不重复名称', async t => {
+  const storage = new MemoryStorage(); storage.setItem(ACTIVE_KEY, id);
+  const context = { productIds: ['1'], productReferences: [{ productId: '1', offset: 8, length: 5 }] };
+  storage.setItem(PENDING_KEY, JSON.stringify({ conversationId: id, requestId: 'failed', question: '这个产品怎么样\n米家电暖器', draft: '这个产品怎么样\n', products: [{ id: '1', name: '米家电暖器', offset: 8 }], context }));
+  const bodies = []; let failure = true;
+  const { store } = fixture(t, { runs: async () => failure ? [{ clientRequestId: 'failed', status: 'failed', question: '这个产品怎么样\n米家电暖器', context }] : [], stream: async (_id, question, requestId, _cb, _signal, context) => { bodies.push({ question, requestId, context }); return answer; } }, storage);
+  await store.initialize(); failure = false;
+  assert.equal(store.state.draft, '这个产品怎么样\n');
+  assert.equal(store.state.products[0].name, '米家电暖器');
+  assert.equal(storage.getItem(PENDING_KEY), null);
+  await store.send();
+  assert.equal(bodies[0].question, '这个产品怎么样\n米家电暖器');
+  assert.deepEqual(bodies[0].context, context);
+  assert.notEqual(bodies[0].requestId, 'failed');
+});
+test('网络失败保留不含标签名称的编辑草稿和产品位置，手动重试不重复名称', async t => {
+  const bodies = []; let failure = true;
+  const { store } = fixture(t, { stream: async (_id, question, requestId, _cb, _signal, context) => { bodies.push({ question, requestId, context }); if (failure) throw new Error('断网'); return answer; } });
+  await store.initialize();
+  store.setComposer('这个产品怎么样\n', [{ id: '1', name: '米家电暖器', offset: 8 }]);
+  await store.send();
+  assert.equal(store.state.draft, '这个产品怎么样\n');
+  assert.equal(store.state.products[0].offset, 8);
+  failure = false; await store.send();
+  assert.deepEqual(bodies[1], bodies[0]);
+});
+test('损坏的新请求元数据不能覆盖草稿或引发恢复崩溃', async t => {
+  for (const corrupt of [{ draft: 7 }, { context: { productReferences: 'invalid' } }, { context: { productIds: ['1'], productReferences: [{ productId: '1', offset: 0, length: 99 }] } }]) {
+    const storage = new MemoryStorage(); storage.setItem(ACTIVE_KEY, id);
+    storage.setItem(`${DRAFT_PREFIX}${id}`, '下一条问题');
+    storage.setItem(PENDING_KEY, JSON.stringify({ conversationId: id, requestId: 'corrupt', question: '旧问题', ...corrupt }));
+    const { store } = fixture(t, {}, storage);
+    await store.initialize(); assert.equal(store.state.draft, '下一条问题');
+    await store.send(); assert.equal(store.state.messages[0].content, '下一条问题');
+  }
+});
 test("初始化一次、打开窗口和新建不创建空会话，首次发送才创建", async (t) => {
   const { store, counts } = fixture(t);
   const first = store.initialize();
@@ -100,6 +243,14 @@ test("初始化一次、打开窗口和新建不创建空会话，首次发送�
   await store.send();
   assert.equal(counts.create, 1);
   assert.equal(counts.stream, 2);
+});
+
+test("每日额度不足保留明确提示而不是提问频繁，不自动重新发送", async (t) => {
+  const { store, counts } = fixture(t, { stream: async () => { counts.stream++; throw new ChatApiError(429, "今日 Token 额度已用完，请明日再试。", "daily_token_quota_exceeded", "2026-10-09T00:00:00+08:00"); } });
+  await store.initialize(); store.setDraft("你好"); await store.send();
+  assert.equal(counts.stream, 1);
+  assert.equal(store.state.error, "今日 Token 额度已用完，请明日再试。");
+  assert.equal(store.state.draft, "你好");
 });
 test("生成中关闭/打开/进入完整视图只改变展示，SSE 单次消费；下一问题草稿保留", async (t) => {
   let resolveAnswer;
@@ -305,4 +456,19 @@ test("会话切换保存不同草稿，删除清理当前会话并发出通用�
   assert.equal(store.state.notice, "会话已删除");
   assert.equal(store.state.draft, "新会话草稿");
   assert.equal(storage.getItem(`${DRAFT_PREFIX}${id}`), null);
+});
+test("历史列表失败不影响恢复已保存的当前会话与草稿", async (t) => {
+  const storage = new MemoryStorage();
+  storage.setItem(ACTIVE_KEY, id);
+  storage.setItem(`${DRAFT_PREFIX}${id}`, "当前会话草稿");
+  const { store, counts } = fixture(t, {
+    list: async () => { throw new ChatApiError(503); },
+    messages: async () => [message],
+  }, storage);
+  await store.initialize();
+  assert.equal(store.state.activeId, id);
+  assert.equal(store.state.messages[0].content, message.content);
+  assert.equal(store.state.draft, "当前会话草稿");
+  assert.equal(counts.create, 0);
+  assert.equal(counts.stream, 0);
 });

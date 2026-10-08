@@ -6,6 +6,10 @@ export interface Citation {
   sourceStartLine: number;
   sourceEndLine: number;
 }
+export interface ProductRequestContext {
+  productIds?: string[];
+  productReferences?: Array<{ productId: string; offset: number; length?: number }>;
+}
 export interface ProgressEvent {
   type: "progress";
   id: string;
@@ -17,11 +21,46 @@ export interface ProgressEvent {
   durationMs?: number;
   resultCount?: number;
 }
+export interface CommentaryEvent { type: "commentary"; id: string; text: string }
+export type ProcessEvent = ProgressEvent | CommentaryEvent;
 export interface ChatAnswer {
   answer: string;
   refused: boolean;
   citations: Citation[];
-  progressEvents?: ProgressEvent[];
+  progressEvents?: ProcessEvent[];
+  usage?: ModelUsage;
+}
+export interface ModelUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  reservedTokens: number;
+  unknownModelCalls: number;
+  accounting: "actual" | "pending" | "incomplete";
+  includesSummary: boolean;
+}
+export interface ChatStatus {
+  service: "ready";
+  canSend: boolean;
+  code: string;
+  retryAt: string | null;
+  checkedAt: string;
+  modelHealth: "not_probed";
+}
+export interface WebsiteQuota {
+  scope: "website-shared";
+  startAt: string;
+  resetAt: string;
+  timezone: "Asia/Shanghai";
+  checkedAt: string;
+  requests: number;
+  requestLimit: number;
+  remainingRequests: number;
+  totalTokens: number;
+  reservedTokens: number;
+  tokenLimit: number | null;
+  remainingTokens: number | null;
+  unknownModelCalls: number;
 }
 export interface ConversationItem {
   id: string;
@@ -36,13 +75,15 @@ export interface ChatMessage {
   content: string;
   refused: boolean | null;
   citations: Citation[];
-  progressEvents?: ProgressEvent[];
+  progressEvents?: ProcessEvent[];
   createdAt: string;
+  context?: ProductRequestContext & { products?: Array<{ id: string; name: string }> };
 }
 export interface ConversationRun {
   id: string;
   clientRequestId: string;
   question: string;
+  context?: ProductRequestContext;
   status:
     "queued" | "running" | "completed" | "failed" | "interrupted" | "expired";
   expiresAt: string;
@@ -56,9 +97,12 @@ export interface Presentation {
 export interface StreamCallbacks {
   delta: (text: string) => void;
   progress: (event: ProgressEvent) => void;
+  commentary?: (event: CommentaryEvent) => void;
   started: (citations: Citation[]) => void;
 }
 export interface ChatApi {
+  status?: () => Promise<ChatStatus>;
+  quota?: () => Promise<WebsiteQuota>;
   list: () => Promise<ConversationItem[]>;
   create: () => Promise<ConversationItem>;
   messages: (id: string) => Promise<ChatMessage[]>;
@@ -71,5 +115,6 @@ export interface ChatApi {
     requestId: string,
     callbacks: StreamCallbacks,
     signal?: AbortSignal,
+    context?: ProductRequestContext,
   ) => Promise<ChatAnswer>;
 }

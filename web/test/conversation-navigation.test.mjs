@@ -48,3 +48,11 @@ test('a trace focus never replaces the conversation path or survives a malformed
   assert.throws(() => conversationDetailLocation('../audit'), /UUID/);
   assert.throws(() => conversationDetailLocation('8b52198b'), /UUID/);
 });
+
+test('application isolation filter survives detail navigation and discards malformed query values', () => {
+  const state = { query: '', visitorId: '', device: 'api', timeRange: 'all', offset: 0, applicationId: visitorId };
+  const detail = conversationDetailLocation(conversationId, traceId, state);
+  assert.deepEqual(readConversationListState(detail.query), state);
+  assert.equal(conversationListQuery(state).app, visitorId);
+  assert.equal(readConversationListState({ app: '../other' }).applicationId, undefined);
+});

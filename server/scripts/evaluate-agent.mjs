@@ -27,17 +27,19 @@ function fixtureTool(name, data, content = JSON.stringify(data)) {
 }
 
 function createCaseRuntime(testCase) {
+  let nextCallId = 0;
+  const native = (name, args) => ({ content: '', toolCalls: [{ id: `eval-${nextCallId++}`, name, arguments: args }] });
   const responses = {
-    'returns-basic': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '退货期限' } }, { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
-    'returns-citation': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } }, { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
-    'unsupported-refusal': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '海外配送' } }, { type: 'final', status: 'refused', answer: '无法确定，建议联系人工。', citationIds: [], productIds: [] }],
-    'product-list': [{ type: 'tool', name: 'mcp_product_catalog_list_products', arguments: {} }, { type: 'final', status: 'answered', answer: '暖巢 H2 是产品之一。', citationIds: [], productIds: ['heater-h2'] }],
-    'product-detail': [{ type: 'tool', name: 'mcp_product_catalog_list_products', arguments: {} }, { type: 'tool', name: 'mcp_product_catalog_get_product_detail', arguments: { productId: 'heater-h2' } }, { type: 'final', status: 'answered', answer: 'H2 额定功率为 1500 W，三档。', citationIds: [], productIds: ['heater-h2'] }],
-    'duplicate-call': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } }, { type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } }],
-    'tool-limit': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策 1' } }, { type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策 2' } }, { type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策 3' } }, { type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策 4' } }],
-    'session-isolation': [{ type: 'tool', name: 'search_knowledge', arguments: { query: '退货政策' } }, { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
+    'returns-basic': [native('search_knowledge', { query: '退货期限' }), { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
+    'returns-citation': [native('search_knowledge', { query: '退货政策' }), { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
+    'unsupported-refusal': [native('search_knowledge', { query: '海外配送' }), { type: 'final', status: 'refused', answer: '无法确定，建议联系人工。', citationIds: [], productIds: [] }],
+    'product-list': [native('mcp_product_catalog_list_products', {}), { type: 'final', status: 'answered', answer: '暖巢 H2 是产品之一。', citationIds: [], productIds: ['heater-h2'] }],
+    'product-detail': [native('mcp_product_catalog_list_products', {}), native('mcp_product_catalog_get_product_detail', { productId: 'heater-h2' }), { type: 'final', status: 'answered', answer: 'H2 额定功率为 1500 W，三档。', citationIds: [], productIds: ['heater-h2'] }],
+    'duplicate-call': [native('search_knowledge', { query: '退货政策' }), native('search_knowledge', { query: '退货政策' })],
+    'tool-limit': [native('search_knowledge', { query: '退货政策 1' }), native('search_knowledge', { query: '退货政策 2' }), native('search_knowledge', { query: '退货政策 3' }), native('search_knowledge', { query: '退货政策 4' })],
+    'session-isolation': [native('search_knowledge', { query: '退货政策' }), { type: 'final', status: 'answered', answer: '七天内可申请退货。', citationIds: [12], productIds: [] }],
   }[testCase.id];
-  const llm = { model: 'offline-eval-model', completeDetailed: async () => { const next = responses.shift(); return { content: JSON.stringify(next ?? { type: 'final', status: 'refused', answer: '无法确定，建议联系人工。', citationIds: [], productIds: [] }), model: 'offline-eval-model', inputTokens: 100, outputTokens: 20, totalTokens: 120 }; } };
+  const llm = { model: 'offline-eval-model', completeDetailed: async () => { const next = responses.shift(); return { ...(next?.toolCalls ? next : { content: JSON.stringify(next ?? { type: 'final', status: 'refused', answer: '无法确定，建议联系人工。', citationIds: [], productIds: [] }), toolCalls: [] }), model: 'offline-eval-model', inputTokens: 100, outputTokens: 20, totalTokens: 120 }; } };
   const tools = [fixtureTool('search_knowledge', testCase.id === 'unsupported-refusal' ? { hits: [] } : { hits: [hit] }, testCase.id === 'unsupported-refusal' ? '没有找到相关资料。' : '[12] 退货政策：七天内可申请退货。'), fixtureTool('mcp_product_catalog_list_products', { total: 1, products: [h2] }), fixtureTool('mcp_product_catalog_get_product_detail', h2Detail)];
   const registry = { get: (name) => { const tool = tools.find((item) => item.name === name); if (!tool) throw new Error(`unknown fixture tool: ${name}`); return tool; } };
   const agent = structuredClone(DEFAULT_AGENT_CONFIGURATION);

@@ -11,7 +11,7 @@ const { products, loading, error, reload } = useProducts();
 <template>
   <section class="home-hero">
     <div class="container hero-layout">
-      <div class="hero-copy">
+      <div v-reveal class="hero-copy">
         <p class="eyebrow">禾序智能 · 家庭电器与生活服务</p>
         <h1>让日常，<br /><span>井然舒适。</span></h1>
         <p class="hero-description">
@@ -24,9 +24,8 @@ const { products, loading, error, reload } = useProducts();
             >认识禾序 <ArrowUpRight :size="17"
           /></RouterLink>
         </div>
-        <p class="hero-footnote">温度 · 空气 · 舒适日常</p>
       </div>
-      <figure class="hero-photo">
+      <figure v-reveal="{ delay: 0.12, distance: 14, duration: 0.85 }" class="hero-photo">
         <img
           src="/images/舒适生活.png"
           alt="暖白与木色的客厅，窗边自然光与日常生活物件"
@@ -34,12 +33,11 @@ const { products, loading, error, reload } = useProducts();
           height="1024"
           fetchpriority="high"
         />
-        <figcaption>把舒适，留给生活。<span>品牌生活场景示意</span></figcaption>
       </figure>
     </div>
   </section>
   <section class="container section">
-    <div class="section-heading">
+    <div v-reveal class="section-heading">
       <div>
         <p class="eyebrow">从家的需要开始</p>
         <h2>好好生活，慢慢挑选。</h2>
@@ -56,16 +54,18 @@ const { products, loading, error, reload } = useProducts();
       @retry="reload"
     />
     <div v-if="!loading && !error" class="product-grid">
-      <ProductCard
-        v-for="product in products.slice(0, 4)"
+      <div
+        v-for="(product, index) in products.slice(0, 4)"
         :key="product.id"
-        :product="product"
-      />
+        v-reveal="{ delay: index * 0.06 }"
+      >
+        <ProductCard :product="product" />
+      </div>
     </div>
   </section>
   <section class="brand-story">
     <div class="container story-layout">
-      <div>
+      <div v-reveal>
         <p class="eyebrow">关于禾序</p>
         <h2>科技的意义，<br />是让生活少一点费心。</h2>
         <p class="story-intro">{{ brand.introduction }}</p>
@@ -74,7 +74,7 @@ const { products, loading, error, reload } = useProducts();
         /></RouterLink>
       </div>
       <div class="principles">
-        <article v-for="item in principles" :key="item.number">
+        <article v-for="(item, index) in principles" :key="item.number" v-reveal="{ delay: index * 0.06 }">
           <span>{{ item.number }}</span>
           <div>
             <h3>{{ item.title }}</h3>
@@ -85,13 +85,13 @@ const { products, loading, error, reload } = useProducts();
     </div>
   </section>
   <section class="container section service-section">
-    <div class="section-heading">
+    <div v-reveal class="section-heading">
       <div>
         <p class="eyebrow">使用与服务</p>
         <h2>需要帮助时，简单一点。</h2>
       </div>
     </div>
-    <div class="service-links">
+    <div v-reveal="{ delay: 0.06 }" class="service-links">
       <RouterLink to="/support#documents"
         ><BookOpen :size="26" />
         <div>

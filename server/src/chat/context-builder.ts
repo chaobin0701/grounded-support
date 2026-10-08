@@ -5,6 +5,8 @@ import { PreviousTurnDto } from './chat.dto';
 import type { SearchHit } from '../documents/fuse-search-results';
 import type { SkillDefinition, SkillSummary } from '../ai/skills/skill.types';
 import type { AgentTranscriptMessage } from './agent-transcript';
+import type { ProductDetail } from '../ai/tools/product-catalog/product-catalog.service';
+import type { RequestContext } from './request-context';
 
 export interface ContextBuildInput {
   configuration?: AgentConfiguration;
@@ -16,6 +18,9 @@ export interface ContextBuildInput {
   availableSkills?: SkillSummary[];
   loadedSkills?: SkillDefinition[];
   transcript?: AgentTranscriptMessage[];
+  nativeTranscript?: boolean;
+  requestContext?: RequestContext;
+  products?: ProductDetail[];
 }
 
 export interface BuiltContext {
@@ -50,7 +55,22 @@ export class ContextBuilder {
       question,
       summary,
       history,
-      toolResults: input.toolResults,
+      toolResults: input.toolResults.map(result => {
+        if (['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(String(result.tool))) {
+          if (typeof result.productRef === 'string' && (input.products ?? []).some(p => p.id === result.productRef)) return { tool: result.tool, productRef: result.productRef };
+          try {
+            const data = typeof result.result === 'string' ? JSON.parse(result.result) : null;
+            if (data?.id && (input.products ?? []).some(p => p.id === data.id)) return { tool: result.tool, productRef: data.id };
+          } catch { /* Keep errors intact. */ }
+        }
+        return result;
+      }),
+      productContext: {
+        productIds: input.requestContext?.productIds ?? [],
+        productReferences: input.requestContext?.productReferences ?? [],
+        products: input.products ?? [],
+        unavailableProductIds: (input.requestContext?.productIds ?? []).filter(id => !(input.products ?? []).some(p => p.id === id)),
+      },
       availableSkills: input.availableSkills ?? [],
       loadedSkills: (input.loadedSkills ?? []).map(({ id, name, version, systemInstructions }) => ({ id, name, version, instructions: systemInstructions })),
       initialEvidence: (input.initialEvidence ?? []).map((hit) => ({
@@ -60,7 +80,8 @@ export class ContextBuilder {
         content: hit.content.slice(0, 1800),
         score: hit.score,
       })),
-      agentTranscript: input.transcript ?? [],
+      // The native transcript is already a separate set of model messages, not a second JSON copy.
+      ...(input.nativeTranscript ? {} : { agentTranscript: input.transcript ?? [] }),
       transcriptVersion: 1,
     };
     const userPrompt = JSON.stringify(payload);

@@ -13,6 +13,7 @@ export type ToolExecutionTrace = {
   durationMs: number;
   errorCode?: string;
   resultChars?: number;
+  reused?: boolean;
 };
 
 export type ToolExecutionOutcome = {
@@ -90,8 +91,27 @@ export class ToolExecutionService {
     context: ToolContext,
     state: ToolExecutionState,
   ): Promise<ToolExecutionOutcome> {
+    return this.executeWithTool(name, args, context, state);
+  }
+
+  /** Trusted backend-only batch adapter. Retains the registered capability's permission and budget. */
+  async executePreflight(tool: AgentTool, args: Record<string, unknown>, context: ToolContext, state: ToolExecutionState): Promise<ToolExecutionOutcome> {
+    return this.executeWithTool(tool.name, args, context, state, tool);
+  }
+
+  private async executeWithTool(name: string, args: Record<string, unknown>, context: ToolContext, state: ToolExecutionState, preflightTool?: AgentTool): Promise<ToolExecutionOutcome> {
     const started = Date.now();
     const baseTrace = (): ToolExecutionTrace => ({ name, arguments: args, ok: false, durationMs: Date.now() - started });
+    const detail = name === 'get_product_detail' || name === 'mcp_product_catalog_get_product_detail';
+    // Successful, revision-checked product details only. Never cache errors or arbitrary tools.
+    if (detail && (!state.allowedTools || state.allowedTools.has(name))) {
+      try {
+        const parsed = !preflightTool ? this.registry.get(name).inputSchema.safeParse(args) : { success: false as const };
+        const id = parsed.success ? (parsed.data as { productId: string }).productId : undefined;
+        const cached = id ? state.productResults?.get(id) : undefined;
+        if (cached) return { result: this.policy.normalizeResult(cached, state.maxResultChars), trace: { ...baseTrace(), ok: true, reused: true, resultChars: cached.content.length } };
+      } catch { /* The normal path safely reports unknown tools. */ }
+    }
     const policyFailure = this.policy.beforeCall(state, name, args);
     if (policyFailure) {
       return this.failure(policyFailure, baseTrace());
@@ -100,6 +120,7 @@ export class ToolExecutionService {
     let tool: AgentTool;
     try {
       tool = this.registry.get(name);
+      if (preflightTool) tool = preflightTool;
     } catch {
       return this.failure('unknown_tool', baseTrace());
     }
@@ -110,6 +131,7 @@ export class ToolExecutionService {
     try {
       const result = await this.withTimeout(tool.execute(validation.input, context), state.timeoutMs ?? this.policy.timeoutMs);
       const normalized = this.policy.normalizeResult(result, state.maxResultChars);
+      if (detail && normalized.success && !preflightTool) state.productResults?.set((validation.input as { productId: string }).productId, normalized);
       const trace: ToolExecutionTrace = {
         name,
         arguments: args,

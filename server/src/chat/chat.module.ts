@@ -16,10 +16,14 @@ import { ChatApplicationService } from './chat-application.service';
 import { SkillsModule } from '../ai/skills/skills.module';
 import { AdminAgentConfigController } from './admin-agent-config.controller';
 import { AgentSettingsService } from '../config/agent-settings.service';
+import { IntegrationModule } from '../integrations/integration.module';
+import { IntegrationChatGateway } from './integration-chat.gateway';
+import { AgentApiController } from './agent-api.controller';
+import { ProductContextPreparer } from './product-context-preparer';
 
 @Module({
-  imports: [DocumentModule, AdminModule, AgentModule, SkillsModule],
-  controllers: [ChatController, AdminChatTraceController, AdminConversationController, AdminDebugController, AdminAgentConfigController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, AdminDebugService, AdminConversationService, AgentSettingsService],
+  imports: [DocumentModule, AdminModule, AgentModule, SkillsModule, IntegrationModule],
+  controllers: [ChatController, AgentApiController, AdminChatTraceController, AdminConversationController, AdminDebugController, AdminAgentConfigController],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, AdminDebugService, AdminConversationService, AgentSettingsService, IntegrationChatGateway, ProductContextPreparer],
 })
 export class ChatModule {}

@@ -23,7 +23,7 @@ export class ChatApplicationService {
     await this.messageBus.publish({ ...base, type: 'message.received', question: message.question });
     await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'run.started' });
     try {
-      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId, message.skillId, callbacks);
+      const answer = await this.conversations.ask(message.ownerId, message.conversationId, message.question, undefined, undefined, message.clientRequestId, message.skillId, callbacks, message.context);
       await this.messageBus.publish({ ...base, eventId: randomUUID(), type: 'message.completed', answer: answer.answer, refused: answer.refused, citations: answer.citations });
       return answer;
     } catch (error) {
@@ -33,6 +33,8 @@ export class ChatApplicationService {
   }
 
   private errorCode(error: unknown): string {
+    const body = (error as { getResponse?: () => unknown }).getResponse?.();
+    if (body && typeof body === 'object' && 'code' in body && body.code === 'model_protocol_error') return 'model_protocol_error';
     const status = (error as { getStatus?: () => number }).getStatus?.();
     return status === 409 ? 'conflict' : status === 400 ? 'invalid_request' : 'answer_failed';
   }

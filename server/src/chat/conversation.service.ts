@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, HttpException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Request, Response } from 'express';
 import { DatabaseService } from '../database.service';
@@ -11,6 +11,9 @@ import { ContextGovernor } from './context-governor';
 import { AppConfigService } from '../config/config.service';
 import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration, type AgentConfigurationSnapshot } from '../config/agent-config';
 import { AgentSettingsService } from '../config/agent-settings.service';
+import { INTERNAL_APP_ID, type IntegrationRequest } from '../integrations/integration.types';
+import { IntegrationService } from '../integrations/integration.service';
+import { contextFingerprint, messageContext, normalizeRequestContext, type RequestContext, type MessageContext } from './request-context';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -24,12 +27,13 @@ type ConversationRow = {
 };
 type MessageRow = {
   id: number; role: 'user' | 'assistant'; content: string;
-  refused: boolean | null; citations: ChatAnswer['citations']; toolSteps: ToolStep[]; progressEvents: ProcessEvent[]; createdAt: string;
+  refused: boolean | null; citations: ChatAnswer['citations']; toolSteps: ToolStep[]; progressEvents: ProcessEvent[]; context?: MessageContext; createdAt: string;
 };
 type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'interrupted' | 'expired';
 type RunRow = {
   id: string; conversationId: string; clientRequestId: string; question: string; status: RunStatus;
   expiresAt: string | Date; userMessageId: number | null; assistantMessageId: number | null;
+  context?: RequestContext;
 };
 
 function clientType(request: Request): string {
@@ -43,16 +47,19 @@ function clientType(request: Request): string {
 export class ConversationService {
   private readonly logger = new Logger(ConversationService.name);
 
-  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService, @Optional() private readonly contextGovernor?: ContextGovernor, @Optional() private readonly config?: AppConfigService, @Optional() private readonly settings?: AgentSettingsService) {}
+  constructor(private readonly database: DatabaseService, private readonly chat: ChatService, private readonly llm: LlmService, @Optional() private readonly contextGovernor?: ContextGovernor, @Optional() private readonly config?: AppConfigService, @Optional() private readonly settings?: AgentSettingsService, @Optional() private readonly access?: IntegrationService) {}
 
   async session(request: Request, response: Response): Promise<string> {
+    const identity = (request as IntegrationRequest).integration;
+    if (identity?.ownerId) return identity.ownerId;
     const raw = request.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${COOKIE_NAME}=`))?.slice(COOKIE_NAME.length + 1);
     if (raw && /^[a-f0-9]{64}$/i.test(raw)) {
       const hash = createHash('sha256').update(raw).digest('hex');
-      const existing = await this.database.query<SessionRow>('SELECT id FROM visitor_sessions WHERE token_hash = $1', [hash]);
+      const existing = await this.database.query<SessionRow>('SELECT id FROM visitor_sessions WHERE token_hash = $1 AND application_id = $2 AND external_user_id IS NULL AND credential_expires_at > now()', [hash, INTERNAL_APP_ID]);
       if (existing.rows[0]) return existing.rows[0].id;
     }
     const token = randomBytes(32).toString('hex');
+    this.access?.checkVisitorBootstrap(request.ip || request.socket?.remoteAddress || 'unknown');
     const id = randomUUID();
     await this.database.query('INSERT INTO visitor_sessions (id, token_hash, client_type) VALUES ($1, $2, $3)', [id, createHash('sha256').update(token).digest('hex'), clientType(request)]);
     response.cookie(COOKIE_NAME, token, {
@@ -99,11 +106,11 @@ export class ConversationService {
        FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [id, memory.snapshotTurns * 2],
     );
     const recentMessages = recent.rows.reverse();
-    const transcriptRows = await this.database.query<{ agentTranscript: unknown }>(
-      `SELECT context_snapshot->'agentTranscript' AS "agentTranscript"
+    const transcriptRows = await this.database.query<{ agentTranscript: unknown; products?: unknown }>(
+      `SELECT context_snapshot->'agentTranscript' AS "agentTranscript", context_snapshot->'products' AS products
        FROM chat_traces
        WHERE conversation_id = $1 AND kind = 'answer' AND context_snapshot ? 'agentTranscript'
-       ORDER BY created_at ASC LIMIT $2`, [id, memory.transcriptMaxTraces],
+       ORDER BY created_at DESC LIMIT $2`, [id, memory.transcriptMaxTraces],
     );
     const agentTranscript = flattenTranscript(transcriptRows.rows.map((row) => row.agentTranscript)).slice(-memory.transcriptMaxMessages);
     const history: { question: string; answer: string }[] = [];
@@ -123,6 +130,7 @@ export class ConversationService {
       })),
       history,
       agentTranscript,
+      priorProducts: transcriptRows.rows.flatMap(row => Array.isArray(row.products) ? row.products : []),
     };
   }
 
@@ -130,7 +138,7 @@ export class ConversationService {
     await this.expireRuns(ownerId, id);
     await this.get(ownerId, id);
     const result = await this.database.query<MessageRow>(
-      `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", created_at AS "createdAt"
+      `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", request_context AS context, created_at AS "createdAt"
        FROM conversation_messages WHERE conversation_id = $1 ORDER BY id ASC`, [id],
     );
     return result.rows;
@@ -140,7 +148,7 @@ export class ConversationService {
     await this.expireRuns(ownerId, id);
     await this.get(ownerId, id);
     const result = await this.database.query<RunRow>(
-      `SELECT id, client_request_id AS "clientRequestId", question, status,
+      `SELECT id, client_request_id AS "clientRequestId", question, request_context AS context, status,
               expires_at AS "expiresAt", started_at AS "startedAt", finished_at AS "finishedAt",
               error_code AS "errorCode", created_at AS "createdAt"
        FROM conversation_runs WHERE conversation_id = $1
@@ -156,18 +164,19 @@ export class ConversationService {
     if (!result.rowCount) throw new NotFoundException('Conversation not found');
   }
 
-  async ask(ownerId: string, id: string, question: string, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, idempotencyKey?: string, requestedSkillId?: string, callbacks?: ChatStreamCallbacks): Promise<ChatAnswer> {
+  async ask(ownerId: string, id: string, question: string, onStep?: (step: ToolStep) => void, onCommentary?: (event: CommentaryEvent) => void, idempotencyKey?: string, requestedSkillId?: string, callbacks?: ChatStreamCallbacks, context?: RequestContext): Promise<ChatAnswer> {
+    const requestContext = normalizeRequestContext(context, question);
     const clientRequestId = this.normalizeIdempotencyKey(idempotencyKey);
     await this.expireRuns(ownerId, id);
     let previousRun: RunRow | null = null;
     if (clientRequestId) {
       const existing = await this.database.query<RunRow>(
-        `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, status,
+        `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, request_context AS context, status,
                 expires_at AS "expiresAt", user_message_id AS "userMessageId", assistant_message_id AS "assistantMessageId"
          FROM conversation_runs WHERE conversation_id = $1 AND client_request_id = $2`, [id, clientRequestId],
       );
       previousRun = existing.rows[0] ?? null;
-      if (previousRun && previousRun.question !== question) {
+      if (previousRun && (previousRun.question !== question || contextFingerprint(previousRun.context) !== contextFingerprint(requestContext))) {
         throw new ConflictException('Idempotency-Key was already used for a different question');
       }
       if (previousRun?.status === 'completed') return this.resultForRun(previousRun);
@@ -187,11 +196,11 @@ export class ConversationService {
       await this.get(ownerId, id);
       if (clientRequestId) {
         const completed = await this.database.query<RunRow>(
-          `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, status,
+          `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, request_context AS context, status,
                   expires_at AS "expiresAt", user_message_id AS "userMessageId", assistant_message_id AS "assistantMessageId"
            FROM conversation_runs WHERE conversation_id = $1 AND client_request_id = $2`, [id, clientRequestId],
         );
-        if (completed.rows[0]?.status === 'completed') return this.resultForRun(completed.rows[0]);
+        if (completed.rows[0]?.status === 'completed' && completed.rows[0].question === question && contextFingerprint(completed.rows[0].context) === contextFingerprint(requestContext)) return this.resultForRun(completed.rows[0]);
       }
       throw new ConflictException('Conversation is already answering a question');
     }
@@ -211,9 +220,9 @@ export class ConversationService {
         } else {
           const created = await this.database.query<{ id: string }>(
             `INSERT INTO conversation_runs
-              (id, conversation_id, client_request_id, question, status, started_at, expires_at)
-             VALUES ($1, $2, $3, $4, 'running', now(), now() + ${RUN_TIMEOUT_SQL}) RETURNING id`,
-            [randomUUID(), id, clientRequestId, question],
+              (id, conversation_id, client_request_id, question, status, started_at, expires_at, request_context)
+             VALUES ($1, $2, $3, $4, 'running', now(), now() + ${RUN_TIMEOUT_SQL}, $5::jsonb) RETURNING id`,
+            [randomUUID(), id, clientRequestId, question, JSON.stringify(requestContext)],
           );
           runId = created.rows[0].id;
         }
@@ -222,11 +231,11 @@ export class ConversationService {
       await this.releaseBusy(ownerId, id, busyUntil);
       if ((error as { code?: string }).code === '23505' && clientRequestId) {
         const duplicate = await this.database.query<RunRow>(
-          `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, status,
+          `SELECT id, conversation_id AS "conversationId", client_request_id AS "clientRequestId", question, request_context AS context, status,
                   expires_at AS "expiresAt", user_message_id AS "userMessageId", assistant_message_id AS "assistantMessageId"
            FROM conversation_runs WHERE conversation_id = $1 AND client_request_id = $2`, [id, clientRequestId],
         );
-        if (duplicate.rows[0]?.question !== question) throw new ConflictException('Idempotency-Key was already used for a different question');
+        if (duplicate.rows[0]?.question !== question || contextFingerprint(duplicate.rows[0]?.context) !== contextFingerprint(requestContext)) throw new ConflictException('Idempotency-Key was already used for a different request');
         if (duplicate.rows[0]?.status === 'completed') return this.resultForRun(duplicate.rows[0]);
       }
       throw error;
@@ -243,28 +252,41 @@ export class ConversationService {
         traceId,
         priorTranscript: snapshot.agentTranscript,
         configurationSnapshot,
+        requestContext,
+        priorProducts: snapshot.priorProducts,
       });
       await this.saveResult(id, question, run, Date.now() - started, runId);
       void this.updateSummary(id, snapshot.summary, configurationSnapshot).catch(() => this.logger.warn('Conversation summary update failed'));
       return run.result;
     } catch (error) {
+      const failureBody = error instanceof HttpException ? error.getResponse() : null;
+      const errorCode = error instanceof HttpException && (error.getStatus() === 429 || error.getStatus() === 502) && typeof failureBody === 'object' && failureBody && 'code' in failureBody ? String(failureBody.code) : 'answer_failed';
+      // A protocol failure occurs after a paid, completed model response. Keep
+      // its known usage in the failed trace instead of reporting it as unknown.
+      const failureContext = contextSnapshot as Record<string, unknown> | null;
+      const modelCalls: Array<{ response?: Record<string, unknown> }> = errorCode === 'model_protocol_error' && Array.isArray(failureContext?.modelCalls) ? failureContext.modelCalls : [];
+      const knownTokens = (field: 'inputTokens' | 'outputTokens' | 'totalTokens'): number | null => {
+        const values = modelCalls.map(call => call?.response?.[field]).filter((value): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0);
+        return values.length ? values.reduce((sum, value) => sum + value, 0) : null;
+      };
       if (runId) {
         await this.database.query(
           `UPDATE conversation_runs SET status = 'failed', finished_at = now(), error_code = $2 WHERE id = $1 AND status = 'running'`,
-          [runId, 'answer_failed'],
+          [runId, errorCode],
         ).catch(() => this.logger.warn('Failed to persist conversation run failure'));
       }
       await this.recordTrace({
         id: traceId, conversationId: id, userMessageId: null, question,
         contextSnapshot: contextSnapshot ?? {
+          requestContext,
           summary: snapshot?.summary ?? '',
           recentMessages: snapshot?.recentMessages.map(({ role, content }) => ({ role, content })) ?? [],
         },
         model: this.llm.model, rawModelOutput: null, finalAnswer: null,
-        refused: null, status: 'failed', errorCode: 'answer_failed',
-        inputTokens: error instanceof ModelFailure ? error.usage.inputTokens : null,
-        outputTokens: error instanceof ModelFailure ? error.usage.outputTokens : null,
-        totalTokens: error instanceof ModelFailure ? error.usage.totalTokens : null,
+        refused: null, status: 'failed', errorCode,
+        inputTokens: error instanceof ModelFailure ? error.usage.inputTokens : knownTokens('inputTokens'),
+        outputTokens: error instanceof ModelFailure ? error.usage.outputTokens : knownTokens('outputTokens'),
+        totalTokens: error instanceof ModelFailure ? error.usage.totalTokens : knownTokens('totalTokens'),
         durationMs: Date.now() - started,
       }).catch(() => this.logger.warn('Failed to persist chat failure trace'));
       throw error;
@@ -286,8 +308,8 @@ export class ConversationService {
         }
       }
       const user = await client.query<{ id: number }>(
-        `INSERT INTO conversation_messages (conversation_id, role, content)
-         VALUES ($1, 'user', $2) RETURNING id::int`, [conversationId, question],
+        `INSERT INTO conversation_messages (conversation_id, role, content, request_context)
+         VALUES ($1, 'user', $2, $3::jsonb) RETURNING id::int`, [conversationId, question, JSON.stringify(messageContext(run.contextSnapshot.requestContext, run.contextSnapshot.products))],
       );
       const assistant = await client.query<{ id: number }>(
         `INSERT INTO conversation_messages (conversation_id, role, content, refused, citations, tool_steps, progress_events)

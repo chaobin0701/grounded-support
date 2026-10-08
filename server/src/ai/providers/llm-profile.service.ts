@@ -17,7 +17,7 @@ const profileInput = z.object({
   timeoutMs: z.number().int().min(1000).max(120000).default(20000),
   contextWindowTokens: z.number().int().min(1024).max(1000000).default(32000),
   maxOutputTokens: z.number().int().min(128).max(32000).default(1200),
-  supportsToolCalls: z.boolean().default(true),
+  supportsToolCalls: z.literal(true).default(true),
   supportsStreaming: z.boolean().default(true),
 }).strict();
 
@@ -33,7 +33,7 @@ const profileUpdateInput = profileInput.partial().extend({
 });
 
 type ProfileRow = Record<string, unknown>;
-type ConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string };
+type ConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string; capabilities: { nativeTools: true; structuredOutput: true } };
 const connectionTestInput = profileInput.extend({ profileId: z.number().int().positive().optional() });
 const deleteInput = z.object({ replacementId: z.number().int().positive().optional() }).strict();
 
@@ -62,7 +62,7 @@ export class LlmProfileService {
         const inserted = await client.query<ProfileRow>(`${this.insertSql()} RETURNING ${this.returningColumns()}`, [
           parsed.data.name, parsed.data.platformKey, parsed.data.baseUrl, parsed.data.model, apiKeyCiphertext,
           parsed.data.timeoutMs, parsed.data.contextWindowTokens, parsed.data.maxOutputTokens,
-          'auto', parsed.data.supportsToolCalls, parsed.data.supportsStreaming,
+          'required', parsed.data.supportsToolCalls, parsed.data.supportsStreaming,
         ]);
         const created = inserted.rows[0];
         await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id, details)
@@ -113,11 +113,13 @@ export class LlmProfileService {
     const row = await this.find(id);
     if (!row) throw new NotFoundException('LLM profile not found');
     if (!row.enabled) throw new BadRequestException('Disabled profile cannot be activated');
+    if (!row.supports_tool_calls) throw new BadRequestException('此 Agent 需要支持原生工具调用的模型');
     const active = await this.database.transaction(async (client) => {
       await client.query('LOCK TABLE llm_profiles IN SHARE ROW EXCLUSIVE MODE');
       const current = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [id]);
       if (!current.rows[0]) throw new NotFoundException('LLM profile not found');
       if (!current.rows[0].enabled) throw new BadRequestException('Disabled profile cannot be activated');
+      if (!current.rows[0].supports_tool_calls) throw new BadRequestException('此 Agent 需要支持原生工具调用的模型');
       await client.query('UPDATE llm_profiles SET is_default = FALSE, updated_at = now() WHERE is_default = TRUE');
       const updated = await client.query<ProfileRow>(`UPDATE llm_profiles SET is_default = TRUE, updated_at = now() WHERE id = $1 RETURNING ${this.returningColumns()}`, [id]);
       await client.query(`INSERT INTO audit_logs(actor_admin_id, action, target_type, target_id)
@@ -157,6 +159,7 @@ export class LlmProfileService {
         if (!replacementId || replacementId === id) throw new ConflictException('删除当前模型前，请选择另一份已启用的配置');
         const next = await client.query<ProfileRow>(this.selectSql('WHERE id = $1 LIMIT 1'), [replacementId]);
         if (!next.rows[0] || !next.rows[0].enabled) throw new BadRequestException('替代模型不存在或尚未启用');
+        if (!next.rows[0].supports_tool_calls) throw new BadRequestException('替代模型必须支持原生工具调用');
         replacement = await this.hydrate(next.rows[0]);
         await client.query('UPDATE llm_profiles SET is_default = FALSE, updated_at = now() WHERE id = $1', [id]);
         await client.query('UPDATE llm_profiles SET is_default = TRUE, updated_at = now() WHERE id = $1', [replacementId]);
@@ -195,17 +198,27 @@ export class LlmProfileService {
     return this.runConnectionTest({
       ...parsed.data, id: parsed.data.profileId ?? 0, apiKey,
       providerKey: 'openai-compatible', adapterType: 'openai-compatible',
-      structuredOutput: 'auto', enabled: true, isDefault: false,
+      structuredOutput: 'required', enabled: true, isDefault: false,
     });
   }
 
   private async runConnectionTest(profile: LlmProfileRecord): Promise<ConnectionTestResult> {
     const provider = this.registry.createFromProfile(profile);
     try {
-      const response = await provider.chat({ model: profile.model, messages: [{ role: 'user', content: '只回复：连接成功' }], maxTokens: 64 });
-      const responsePreview = response.content.trim().replace(/\s+/gu, ' ').slice(0, 160);
-      if (!responsePreview) throw new BadRequestException('模型返回为空，连接测试未完成');
-      return { ok: true, model: response.model, durationMs: response.durationMs, responsePreview };
+      const response = await provider.chat({ model: profile.model, messages: [{ role: 'user', content: '仅返回 JSON 对象：{"message":"连接成功"}' }], responseFormat: { type: 'json_object' }, maxTokens: 64 });
+      if (!response.content.trim()) throw new BadRequestException('模型返回为空，连接测试未完成');
+      let body: unknown;
+      try { body = JSON.parse(response.content); } catch { throw new BadRequestException('模型未返回合法 JSON，不满足 Agent 结构化输出要求'); }
+      if (!z.object({ message: z.literal('连接成功') }).strict().safeParse(body).success || response.toolCalls?.length) throw new BadRequestException('模型未遵守结构化输出要求');
+      const name = 'connection_probe';
+      const probe = await provider.chat({
+        model: profile.model,
+        messages: [{ role: 'user', content: '请通过原生工具调用 connection_probe，参数为 {"probe":"connection-test"}。正文只返回 JSON 对象 {}，不要在正文中写工具指令。' }],
+        tools: [{ name, description: '无副作用的连接能力测试，不执行任何业务操作', parameters: { type: 'object', properties: { probe: { type: 'string', enum: ['connection-test'] } }, required: ['probe'], additionalProperties: false } }],
+        toolChoice: { name }, responseFormat: { type: 'json_object' }, maxTokens: 128,
+      });
+      if (probe.toolCalls?.length !== 1 || probe.toolCalls[0]?.name !== name || !probe.toolCalls[0].id || !z.object({ probe: z.literal('connection-test') }).strict().safeParse(probe.toolCalls[0].arguments).success) throw new BadRequestException('模型未返回标准 tool_calls，不支持此 Agent 的原生工具调用要求');
+      return { ok: true, model: response.model, durationMs: response.durationMs + probe.durationMs, responsePreview: '连接成功', capabilities: { nativeTools: true, structuredOutput: true } };
     } catch (error) {
       if (!(error instanceof ProviderError)) throw error;
       const messages: Record<string, string> = {
@@ -215,6 +228,7 @@ export class LlmProfileService {
         provider_model_not_found: '模型不存在或尚未开通，请检查模型 ID。',
         provider_unavailable: '模型服务暂时不可用，请稍后重试。',
         provider_invalid_response: '模型返回格式异常，连接测试未完成。',
+        provider_unsupported_response_format: '此端点不支持 JSON 输出模式，不满足 Agent 要求；不会自动降级。',
       };
       throw new BadRequestException({ code: error.code, message: messages[error.code] ?? '模型连接测试失败，请检查配置。' });
     }
@@ -281,7 +295,7 @@ export class LlmProfileService {
     return {
       id: Number(row.id), name: String(row.name), platformKey: isLlmPlatformKey(row.platform_key) ? row.platform_key : 'custom', providerKey: 'openai-compatible', adapterType: 'openai-compatible',
       baseUrl: String(row.base_url), model: String(row.model), timeoutMs: Number(row.timeout_ms), contextWindowTokens: Number(row.context_window_tokens),
-      maxOutputTokens: Number(row.max_output_tokens), structuredOutput: 'auto',
+      maxOutputTokens: Number(row.max_output_tokens), structuredOutput: 'required',
       supportsToolCalls: Boolean(row.supports_tool_calls), supportsStreaming: Boolean(row.supports_streaming), enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default),
     };
   }

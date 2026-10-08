@@ -11,7 +11,7 @@ import {
   ProviderUnsupportedResponseFormatError,
 } from './provider-errors';
 import { LlmProvider } from './llm-provider';
-import { LlmRequest, LlmResponse, LlmStreamEvent, LlmResponseFormat } from './provider.types';
+import { LlmRequest, LlmResponse, LlmStreamEvent } from './provider.types';
 
 export const SUPPORTED_LLM_MODELS = ['deepseek-v4-1-flash-260910', 'glm-5-3-flash-260828'] as const;
 
@@ -23,8 +23,6 @@ export interface OpenAICompatibleProviderOptions {
   maxOutputTokens?: number;
   contextWindowTokens?: number;
   supportedModels?: readonly string[];
-  /** `auto` retries without response_format only when the endpoint rejects it. */
-  structuredOutput?: 'auto' | 'required' | 'disabled';
 }
 
 type RawResponse = {
@@ -47,7 +45,6 @@ export class OpenAICompatibleProvider implements LlmProvider {
   readonly maxOutputTokens: number | undefined;
   readonly contextWindowTokens: number | undefined;
   private readonly supportedModels: readonly string[];
-  readonly structuredOutput: NonNullable<OpenAICompatibleProviderOptions['structuredOutput']>;
   private readonly logger = new Logger(OpenAICompatibleProvider.name);
 
   constructor(options: OpenAICompatibleProviderOptions) {
@@ -61,7 +58,6 @@ export class OpenAICompatibleProvider implements LlmProvider {
     // account.  Keep an optional allow-list for deployments that need one, but
     // do not impose a built-in list on user-managed profiles.
     this.supportedModels = options.supportedModels ?? [];
-    this.structuredOutput = options.structuredOutput ?? 'auto';
   }
 
   async chat(request: LlmRequest): Promise<LlmResponse> {
@@ -70,13 +66,8 @@ export class OpenAICompatibleProvider implements LlmProvider {
     const started = Date.now();
     let response: Response;
     let payload: RawResponse;
-    let omittedResponseFormat = false;
     try {
       ({ response, payload } = await this.fetchChatResponse(request));
-      if (!response.ok && this.shouldRetryWithoutStructuredOutput(response.status, request, payload)) {
-        omittedResponseFormat = true;
-        ({ response, payload } = await this.fetchChatResponse(request, true));
-      }
     } catch (error) {
       if (error instanceof ProviderError) throw error;
       if (error instanceof DOMException && error.name === 'TimeoutError') throw new ProviderTimeoutError();
@@ -84,7 +75,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
       throw new ProviderUnavailableError();
     }
     if (!response.ok) {
-      if (!omittedResponseFormat && this.structuredOutput !== 'disabled' && request.responseFormat && this.isUnsupportedResponseFormat(response.status, payload)) {
+      if (request.responseFormat && this.isUnsupportedResponseFormat(response.status, payload)) {
         throw new ProviderUnsupportedResponseFormatError(response.status);
       }
       throw this.mapHttpError(response.status, payload);
@@ -121,13 +112,13 @@ export class OpenAICompatibleProvider implements LlmProvider {
     };
   }
 
-  private async fetchChatResponse(request: LlmRequest, omitResponseFormat = false): Promise<{ response: Response; payload: RawResponse }> {
+  private async fetchChatResponse(request: LlmRequest): Promise<{ response: Response; payload: RawResponse }> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(this.buildChatBody(request, omitResponseFormat)),
+        body: JSON.stringify(this.buildChatBody(request)),
         signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
       });
     } catch (error) {
@@ -139,8 +130,8 @@ export class OpenAICompatibleProvider implements LlmProvider {
     return { response, payload };
   }
 
-  private buildChatBody(request: LlmRequest, omitResponseFormat: boolean): Record<string, unknown> {
-    const responseFormat = this.responseFormatFor(request.responseFormat, omitResponseFormat);
+  private buildChatBody(request: LlmRequest): Record<string, unknown> {
+    const responseFormat = request.responseFormat;
     return {
       model: request.model,
       messages: request.messages.map((message) => ({
@@ -151,20 +142,11 @@ export class OpenAICompatibleProvider implements LlmProvider {
         ...(message.toolCalls?.length ? { tool_calls: message.toolCalls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: JSON.stringify(call.arguments) } })) } : {}),
       })),
       ...(request.tools?.length ? { tools: request.tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })) } : {}),
+      ...(request.toolChoice ? { tool_choice: typeof request.toolChoice === 'string' ? request.toolChoice : { type: 'function', function: { name: request.toolChoice.name } } } : {}),
       ...(responseFormat ? { response_format: responseFormat } : {}),
       temperature: request.temperature ?? 0.1,
       max_tokens: request.maxTokens ?? 1200,
     };
-  }
-
-  private responseFormatFor(format: LlmResponseFormat | undefined, omit: boolean): LlmResponseFormat | undefined {
-    if (omit || !format || this.structuredOutput === 'disabled') return undefined;
-    return format;
-  }
-
-  private shouldRetryWithoutStructuredOutput(status: number, request: LlmRequest, payload: RawResponse): boolean {
-    if (this.structuredOutput !== 'auto' || !request.responseFormat) return false;
-    return this.isUnsupportedResponseFormat(status, payload);
   }
 
   private isUnsupportedResponseFormat(status: number, payload: RawResponse): boolean {
@@ -178,7 +160,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
     if (this.supportedModels.length > 0 && !this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
+      const fetchStream = (includeUsage: boolean) => fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify({
@@ -187,9 +169,17 @@ export class OpenAICompatibleProvider implements LlmProvider {
           temperature: request.temperature ?? 0.1,
           max_tokens: request.maxTokens ?? 1200,
           stream: true,
+          ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
         }),
         signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
       });
+      response = await fetchStream(true);
+      // Some compatible endpoints reject stream_options. Negotiate once before
+      // receiving any deltas; the resulting missing usage stays explicitly unknown.
+      if (response.status === 400 || response.status === 422) {
+        const rejected = await response.clone().text();
+        if (/stream[_ -]?options|include[_ -]?usage/i.test(rejected)) response = await fetchStream(false);
+      }
     } catch (error) {
       if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
       this.logger.warn('Model provider stream failed before receiving a response');
@@ -208,9 +198,10 @@ export class OpenAICompatibleProvider implements LlmProvider {
     try {
       while (true) {
         const { value, done } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+        buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
         const frames = buffer.split('\n\n');
         buffer = frames.pop() ?? '';
+        if (done && buffer.trim()) { frames.push(buffer); buffer = ''; }
         for (const frame of frames) {
           const data = frame.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
           if (!data || data === '[DONE]') continue;
@@ -222,10 +213,12 @@ export class OpenAICompatibleProvider implements LlmProvider {
           const choice = payload.choices?.[0];
           if (typeof choice?.delta?.content === 'string' && choice.delta.content) yield { type: 'text_delta', delta: choice.delta.content };
           if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
-          usage = {
-            inputTokens: numberOrNull(payload.usage?.prompt_tokens),
-            outputTokens: numberOrNull(payload.usage?.completion_tokens),
-            totalTokens: numberOrNull(payload.usage?.total_tokens),
+          // Usage is usually an extra choices:[] frame. Later empty frames must
+          // not overwrite a previously received usage record with nulls.
+          if (payload.usage) usage = {
+            inputTokens: numberOrNull(payload.usage.prompt_tokens) ?? usage.inputTokens,
+            outputTokens: numberOrNull(payload.usage.completion_tokens) ?? usage.outputTokens,
+            totalTokens: numberOrNull(payload.usage.total_tokens) ?? usage.totalTokens,
           };
         }
         if (done) break;

@@ -13,4 +13,8 @@ export class ChatRateLimitService {
   async run<T>(ip: string, task: () => Promise<T>): Promise<T> {
     return this.limiter.run('chat', ip, task);
   }
+
+  runPlatform<T>(task: () => Promise<T>): Promise<T> {
+    return this.limiter.runConcurrent('chat', task);
+  }
 }

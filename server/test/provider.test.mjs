@@ -3,6 +3,39 @@ import test from 'node:test';
 import { OpenAICompatibleProvider } from '../dist/ai/providers/openai-compatible.provider.js';
 import { ProviderAuthenticationError, ProviderRateLimitError, ProviderTimeoutError, ProviderUnsupportedResponseFormatError } from '../dist/ai/providers/provider-errors.js';
 
+test('stream requests usage, handles split/final frames and never overwrites usage with null', async () => {
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(_url,init)=>{
+    assert.deepEqual(JSON.parse(init.body).stream_options,{include_usage:true});
+    const text='data: {"choices":[{"delta":{"content":"你好"}}]}\r\n\r\ndata: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":null}\n\ndata: [DONE]';
+    const bytes=new TextEncoder().encode(text);
+    return new Response(new ReadableStream({start(controller){for(let i=0;i<bytes.length;i+=7)controller.enqueue(bytes.slice(i,i+7));controller.close();}}));
+  };
+  try {
+    const provider=new OpenAICompatibleProvider({apiKey:'fixture',baseUrl:'https://test.example.invalid',model:'test',timeoutMs:1000});
+    const events=[]; for await(const event of provider.stream({model:'test',messages:[]}))events.push(event);
+    assert.equal(events[0].delta,'你好'); assert.deepEqual(events.at(-1).usage,{inputTokens:10,outputTokens:2,totalTokens:12});
+  } finally {globalThis.fetch=originalFetch;}
+});
+
+test('compatible stream negotiates unsupported usage options before any output, but does not retry authentication', async () => {
+  const originalFetch=globalThis.fetch; let calls=0;
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(init.body);calls++;
+    if(calls===1)return new Response('{"error":{"message":"stream_options unsupported"}}',{status:400});
+    assert.equal(body.stream_options,undefined);
+    return new Response('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+  };
+  try {
+    const provider=new OpenAICompatibleProvider({apiKey:'fixture',baseUrl:'https://test.example.invalid',model:'test',timeoutMs:1000});
+    const events=[];for await(const event of provider.stream({model:'test',messages:[]}))events.push(event);
+    assert.equal(calls,2);assert.equal(events.at(-1).usage.totalTokens,null);
+    calls=0; globalThis.fetch=async()=>{calls++;return new Response('{"error":"stream_options auth"}',{status:401});};
+    await assert.rejects(async()=>{for await(const _ of provider.stream({model:'test',messages:[]})){}},ProviderAuthenticationError);
+    assert.equal(calls,1);
+  } finally {globalThis.fetch=originalFetch;}
+});
+
 test('OpenAI-compatible provider normalizes text, tool calls, usage and duration', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
@@ -10,6 +43,7 @@ test('OpenAI-compatible provider normalizes text, tool calls, usage and duration
     assert.equal(body.model, 'test-model');
     assert.equal(body.messages[0].role, 'system');
     assert.equal(body.tools[0].function.name, 'list_products');
+    assert.deepEqual(body.tool_choice, { type: 'function', function: { name: 'list_products' } });
     assert.deepEqual(body.response_format, { type: 'json_object' });
     return new Response(JSON.stringify({
       choices: [{ finish_reason: 'tool_calls', message: {
@@ -25,6 +59,7 @@ test('OpenAI-compatible provider normalizes text, tool calls, usage and duration
       model: 'test-model',
       messages: [{ role: 'system', content: 'system' }, { role: 'user', content: 'question' }],
       tools: [{ name: 'list_products', description: 'list', parameters: { type: 'object' } }],
+      toolChoice: { name: 'list_products' },
       responseFormat: { type: 'json_object' },
     });
     assert.equal(result.content, '我先查一下产品。');
@@ -59,7 +94,7 @@ test('provider normalizes content parts and object tool arguments', async () => 
   }
 });
 
-test('auto structured output retries once without response_format when endpoint rejects it', async () => {
+test('structured output never downgrades even with a legacy auto setting', async () => {
   const originalFetch = globalThis.fetch;
   const bodies = [];
   globalThis.fetch = async (_url, init) => {
@@ -70,20 +105,19 @@ test('auto structured output retries once without response_format when endpoint 
   };
   try {
     const provider = new OpenAICompatibleProvider({ apiKey: 'test-key', baseUrl: 'https://test.example.invalid/api/v3', model: 'test-model', timeoutMs: 1000, supportedModels: ['test-model'], structuredOutput: 'auto' });
-    const result = await provider.chat({ model: 'test-model', messages: [{ role: 'user', content: 'question' }], responseFormat: { type: 'json_object' } });
-    assert.equal(result.content, '{"type":"final"}');
+    await assert.rejects(provider.chat({ model: 'test-model', messages: [{ role: 'user', content: 'question' }], responseFormat: { type: 'json_object' } }), ProviderUnsupportedResponseFormatError);
     assert.deepEqual(bodies[0].response_format, { type: 'json_object' });
-    assert.equal(bodies[1].response_format, undefined);
+    assert.equal(bodies.length, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test('disabled structured output does not send response_format', async () => {
+test('an explicit request contract cannot be disabled by a legacy provider setting', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
-    assert.equal(body.response_format, undefined);
+    assert.deepEqual(body.response_format, { type: 'json_object' });
     return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { content: '{}' } }] }), { status: 200 });
   };
   try {

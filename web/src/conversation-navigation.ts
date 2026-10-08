@@ -8,6 +8,7 @@ export type ConversationListState = {
   device: string;
   timeRange: string;
   offset: number;
+  applicationId?: string;
 };
 
 export function queryString(value: Query[string]) {
@@ -26,6 +27,7 @@ export function readConversationListState(query: Query): ConversationListState {
     device: ['browser', 'mobile', 'wechat', 'feishu', 'api'].includes(device) ? device : 'all',
     timeRange: ['24h', '7d', '30d'].includes(range) ? range : 'all',
     offset: Number.isSafeInteger(page) && page > 0 && Number.isSafeInteger(offset) ? offset : 0,
+    ...(conversationUuid.test(queryString(query.app)) ? { applicationId: queryString(query.app) } : {}),
   };
 }
 
@@ -33,6 +35,7 @@ export function conversationListQuery(state: ConversationListState) {
   const query: Record<string, string> = {};
   if (state.query.trim()) query.q = state.query.trim();
   if (state.visitorId) query.visitor = state.visitorId;
+  if (state.applicationId) query.app = state.applicationId;
   if (state.device !== 'all') query.device = state.device;
   if (state.timeRange !== 'all') query.range = state.timeRange;
   if (state.offset > 0) query.page = String(Math.floor(state.offset / 30) + 1);

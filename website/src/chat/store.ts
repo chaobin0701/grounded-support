@@ -1,18 +1,36 @@
 import { reactive } from "vue";
 import { ChatApiError } from "./api.ts";
+import { messageDocument, normalizeDocument, serializeMessageDocument, type InlineProduct } from "./inline-document.ts";
 import type {
   ChatApi,
   ChatMessage,
   Citation,
   ConversationItem,
-  ProgressEvent,
+  ProcessEvent,
+  WebsiteQuota,
+  ChatStatus,
+  ModelUsage,
+  ProductRequestContext,
 } from "./types.ts";
 
 export const ACTIVE_KEY = "grounded.activeConversationId";
 export const PENDING_KEY = "grounded.pendingChatRequest";
 export const DRAFT_PREFIX = "grounded.draftInput.";
 type BrowserStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-type Pending = { conversationId: string; requestId: string; question: string };
+type ProductAttachment = InlineProduct;
+type Pending = { conversationId: string; requestId: string; question: string; products?: ProductAttachment[]; draft?: string; context?: ProductRequestContext };
+export function productAttachments(value: unknown): ProductAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const unique = new Map<string, ProductAttachment>();
+  for (const item of value) {
+    if (item && typeof item.id === 'string' && item.id.trim() && item.id.length <= 80 && typeof item.name === 'string') unique.set(item.id.trim(), { id: item.id.trim(), name: item.name.slice(0, 200), ...(Number.isInteger(item.offset) && item.offset >= 0 && item.offset <= 2000 ? { offset: item.offset } : {}) });
+  }
+  return [...unique.values()].slice(0, 5);
+}
+function sameProducts(left: ProductAttachment[] = [], right: ProductAttachment[] = []) {
+  const identity = (products: ProductAttachment[]) => products.map(p => [p.id, p.offset ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  return JSON.stringify(identity(left)) === JSON.stringify(identity(right));
+}
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const fallbackSuggestions = [
   "你们有哪些产品？",
@@ -30,9 +48,10 @@ export function createChatStore(
     conversations: [] as ConversationItem[],
     messages: [] as ChatMessage[],
     draft: "",
+    products: [] as ProductAttachment[],
     partialAnswer: "",
     partialCitations: [] as Citation[],
-    progress: [] as ProgressEvent[],
+    progress: [] as ProcessEvent[],
     loading: false,
     ready: false,
     isSending: false,
@@ -44,6 +63,11 @@ export function createChatStore(
     notice: "",
     widgetOpen: false,
     suggestions: [...fallbackSuggestions],
+    quota: null as WebsiteQuota | null,
+    quotaStatus: null as ChatStatus | null,
+    lastUsage: null as ModelUsage | null,
+    quotaLoading: false,
+    quotaError: "",
   });
   let initial: Promise<void> | undefined;
   let localId = -1;
@@ -53,6 +77,42 @@ export function createChatStore(
   let disposed = false;
   let restoredDraft = false;
   let controller: AbortController | undefined;
+  let quotaRequest: Promise<void> | undefined;
+  let quotaAgain = false;
+  let quotaTimer: ReturnType<typeof setTimeout> | undefined;
+  async function refreshQuota(force = false): Promise<void> {
+    if (disposed || !api.quota || !api.status) return;
+    if (quotaRequest) {
+      if (force) quotaAgain = true;
+      return quotaRequest;
+    }
+    if (!force && state.quota && !state.quotaError && Date.now() - Date.parse(state.quota.checkedAt) < 10_000) return;
+    state.quotaLoading = true;
+    quotaRequest = (async () => {
+      try {
+        const [quota, status] = await Promise.all([api.quota!(), api.status!()]);
+        if (disposed) return;
+        state.quota = quota;
+        state.quotaStatus = status;
+        state.quotaError = "";
+        clearTimeout(quotaTimer);
+        const reset = Date.parse(quota.resetAt);
+        const retry = status.retryAt ? Date.parse(status.retryAt) : Infinity;
+        const next = Math.min(reset, retry > Date.now() ? retry : Infinity);
+        if (next > Date.now()) quotaTimer = setTimeout(() => { void refreshQuota(true); }, next - Date.now() + 1000);
+      } catch {
+        if (!disposed) state.quotaError = "额度暂时无法查询";
+      } finally {
+        state.quotaLoading = false;
+        quotaRequest = undefined;
+        if (quotaAgain && !disposed) {
+          quotaAgain = false;
+          void refreshQuota(true);
+        }
+      }
+    })();
+    return quotaRequest;
+  }
   function get(key: string) {
     try {
       return storage?.getItem(key) ?? null;
@@ -77,6 +137,26 @@ export function createChatStore(
     state.draft = value;
     put(draftKey(), value || null);
   }
+  function setComposer(value: string, products: ProductAttachment[]) {
+    const doc = normalizeDocument(value, products);
+    setDraft(doc.text); setProducts(doc.products);
+  }
+  function productKey(id = state.activeId) { return `${draftKey(id)}.products`; }
+  function readProducts(id = state.activeId): ProductAttachment[] {
+    try { return productAttachments(JSON.parse(get(productKey(id)) || '[]')); } catch { return []; }
+  }
+  function setProducts(value: ProductAttachment[]) {
+    state.products = productAttachments(value);
+    put(productKey(), state.products.length ? JSON.stringify(state.products) : null);
+  }
+  function attachProduct(product: ProductAttachment) {
+    if (busy() || state.unresolved) { state.notice = '请等待当前请求完成后再关联产品'; return false; }
+    if (!state.products.some(p => p.id === product.id) && state.products.length >= 5) { state.notice = '一次最多关联 5 个产品'; return false; }
+    const previous = state.products.find(p => p.id === product.id);
+    setProducts([...state.products, { ...product, offset: product.offset ?? previous?.offset ?? state.draft.length }]);
+    return true;
+  }
+  function removeProduct(id: string) { setProducts(state.products.filter(p => p.id !== id)); }
   function restoreDraft(value: string) {
     if (!state.draft) {
       setDraft(value);
@@ -92,13 +172,30 @@ export function createChatStore(
         uuid.test(value.conversationId) &&
         typeof value.requestId === "string" &&
         typeof value.question === "string"
-      )
-        return value;
+      ) {
+        if (value.draft !== undefined && typeof value.draft !== "string") return null;
+        const context = value.context;
+        if (context !== undefined) {
+          if (!context || typeof context !== "object" || Array.isArray(context)) return null;
+          if (context.productIds !== undefined && (!Array.isArray(context.productIds) || context.productIds.length > 5 || !context.productIds.every((id: unknown) => typeof id === "string" && id.trim() && id.length <= 80))) return null;
+          if (context.productReferences !== undefined) {
+            if (!Array.isArray(context.productReferences) || context.productReferences.length > 5) return null;
+            let end = 0;
+            const seen = new Set<string>();
+            for (const reference of [...context.productReferences].sort((a, b) => (a?.offset ?? 0) - (b?.offset ?? 0))) {
+              if (!reference || !context.productIds?.includes(reference.productId) || seen.has(reference.productId) || !Number.isInteger(reference.offset) || reference.offset < end || reference.offset > value.question.length || (reference.length !== undefined && (!Number.isInteger(reference.length) || reference.length < 1 || reference.length > 200 || reference.offset + reference.length > value.question.length))) return null;
+              seen.add(reference.productId); end = reference.offset + (reference.length ?? 0);
+            }
+          }
+        }
+        return { conversationId: value.conversationId, requestId: value.requestId, question: value.question, draft: value.draft, context, products: productAttachments(value.products) };
+      }
     } catch {
       /* Malformed storage is not trusted. */
     }
     return null;
   }
+  function pendingDraft(saved: Pending) { return saved.draft ?? saved.question; }
   function clearPending(id = state.activeId) {
     if (pending()?.conversationId === id) put(PENDING_KEY, null);
   }
@@ -116,16 +213,19 @@ export function createChatStore(
       !!state.deletingId
     );
   }
+  function hasContent() {
+    return state.messages.length > 0 || !!state.partialAnswer;
+  }
   function stopPolling() {
     clearTimeout(pollTimer);
     pollTimer = undefined;
   }
   function report(error: unknown) {
     if (error instanceof ChatApiError) {
-      if (error.status === 429) return "提问有些频繁，请稍后再试。";
+      if (error.status === 429) return error.code ? error.message : "提问有些频繁，请稍后再试。";
       if (error.status === 409) return "上一轮仍在处理中，正在检查保存状态。";
       if (error.status === 404)
-        return "这段会话不存在或已被删除，可以新建会话。";
+        return "这段会话不属于当前浏览器，或已失效。可以直接开始新的对话。";
       if (error.status === 400) return "问题格式不正确，请检查后重新发送。";
     }
     return error instanceof Error
@@ -145,6 +245,7 @@ export function createChatStore(
     resetPartial();
     put(ACTIVE_KEY, "new");
     state.draft = get(draftKey(null)) || "";
+    state.products = readProducts(null);
     return true;
   }
   async function openConversation(id: string) {
@@ -158,6 +259,7 @@ export function createChatStore(
       state.activeId = id;
       state.messages = messages;
       state.draft = get(draftKey(id)) || "";
+      state.products = readProducts(id);
       put(ACTIVE_KEY, id);
       resetPartial();
       state.unresolved = false;
@@ -205,7 +307,8 @@ export function createChatStore(
         state.recovering = false;
         state.unresolved = false;
         if (saved?.conversationId === id) {
-          restoreDraft(saved.question);
+          restoreDraft(pendingDraft(saved));
+          if (!state.products.length && state.draft === pendingDraft(saved)) setProducts(saved.products ?? []);
           if (!state.error)
             state.error =
               "未找到这一轮的运行记录。可以手动重试，系统会沿用请求 ID 避免重复处理。";
@@ -213,8 +316,8 @@ export function createChatStore(
         return;
       }
       if (run.status === "completed") {
-        if (matched && saved && restoredDraft && state.draft === saved.question)
-          setDraft("");
+        if (matched && saved && restoredDraft && state.draft === pendingDraft(saved))
+          { setDraft(""); if (sameProducts(state.products, saved.products)) setProducts([]); }
         state.messages = await api.messages(id);
         clearPending(id);
         resetPartial();
@@ -222,6 +325,7 @@ export function createChatStore(
         state.unresolved = false;
         state.error = "";
         state.notice = "已恢复保存的回答";
+        void refreshQuota(true);
         try {
           await refreshList();
         } catch {
@@ -238,10 +342,11 @@ export function createChatStore(
         clearPending(id);
         state.recovering = false;
         state.unresolved = false;
-        restoreDraft(
-          saved?.conversationId === id ? saved.question : run.question,
-        );
+        const recovered = saved?.conversationId === id ? { text: pendingDraft(saved), products: saved.products ?? [] } : messageDocument(run.question, run.context);
+        restoreDraft(recovered.text);
+        if (!state.products.length && state.draft === recovered.text) setProducts(recovered.products);
         state.error = "上一轮未完成。问题已保留，可以重新发送。";
+        void refreshQuota(true);
         return;
       }
       const expires = new Date(run.expiresAt).getTime();
@@ -288,7 +393,7 @@ export function createChatStore(
       }
     }
   }
-  function initialize() {
+  function initialize(preferredId?: string | null) {
     if (initial) return initial;
     initial = (async () => {
       state.loading = true;
@@ -301,13 +406,19 @@ export function createChatStore(
         .catch(() => {});
       try {
         await refreshList();
+      } catch {
+        state.error = "历史会话暂时无法加载，可以重试或直接提问。";
+      }
+      try {
         const active = get(ACTIVE_KEY);
-        const preferred =
-          active === "new" ? null : active || pending()?.conversationId;
+        const preferred = preferredId !== undefined
+          ? preferredId
+          : active === "new" ? null : active || pending()?.conversationId;
         if (preferred && uuid.test(preferred)) {
           state.activeId = preferred;
           try {
             state.messages = await api.messages(preferred);
+            put(ACTIVE_KEY, preferred);
             state.draft = get(draftKey()) || "";
             await checkRecovery();
           } catch (error) {
@@ -315,6 +426,8 @@ export function createChatStore(
               state.activeId = null;
               put(ACTIVE_KEY, "new");
               clearPending(preferred);
+              state.draft = get(draftKey(null)) || "";
+              state.error = report(error);
             } else state.error = report(error);
           }
         } else {
@@ -324,17 +437,32 @@ export function createChatStore(
       } catch (error) {
         state.error = "历史会话暂时无法加载，可以重试或直接提问。";
         state.draft = get(draftKey(null)) || "";
+        state.products = readProducts(null);
       } finally {
+        state.products = readProducts();
         state.loading = false;
         state.ready = true;
+        void refreshQuota();
       }
     })();
     return initial;
   }
   async function send(value = state.draft) {
     if (busy() || state.unresolved || disposed) return;
-    const question = value.trim();
-    const length = Array.from(question).length;
+    const doc = normalizeDocument(value, state.products);
+    const serialized = serializeMessageDocument(doc);
+    let { question, context } = serialized as { question: string; context: ProductRequestContext };
+    let products = doc.products;
+    const previous = pending();
+    // A manual retry of an old pending request must preserve its exact old body/key.
+    const legacyReplay = previous?.conversationId === state.activeId && !previous.context?.productReferences?.some(r => r.length !== undefined)
+      && previous.question === value.trim() && sameProducts(previous.products, state.products);
+    if (legacyReplay && previous) {
+      question = previous.question;
+      products = previous.products ?? [];
+      context = previous.context ?? { productIds: products.map(p => p.id), ...(products.length && products.every(p => p.offset !== undefined) ? { productReferences: products.map(p => ({ productId: p.id, offset: p.offset! })) } : {}) };
+    }
+    const length = question.length;
     if (length < 2 || length > 2000) {
       state.error = "请输入 2–2000 个字的问题。";
       return;
@@ -343,6 +471,7 @@ export function createChatStore(
     state.error = "";
     resetPartial();
     setDraft("");
+    setProducts([]);
     controller = new AbortController();
     let id = state.activeId;
     try {
@@ -353,16 +482,17 @@ export function createChatStore(
         put(ACTIVE_KEY, id);
         // A next question typed while creation was in progress belongs to the new conversation.
         put(draftKey(null), null);
+        put(productKey(null), null);
         put(draftKey(id), state.draft || null);
       }
       const saved = pending();
       const requestId =
-        saved?.conversationId === id && saved.question === question
+        saved?.conversationId === id && saved.question === question && sameProducts(saved.products, products)
           ? saved.requestId
           : crypto.randomUUID();
       put(
         PENDING_KEY,
-        JSON.stringify({ conversationId: id, requestId, question }),
+        JSON.stringify({ conversationId: id, requestId, question, products, draft: doc.text, context }),
       );
       state.messages.push({
         id: localId--,
@@ -371,6 +501,7 @@ export function createChatStore(
         refused: null,
         citations: [],
         createdAt: new Date().toISOString(),
+        context: { ...context, products },
       });
       const answer = await api.stream(
         id,
@@ -386,10 +517,15 @@ export function createChatStore(
           progress: (event) => {
             if (!disposed) state.progress.push(event);
           },
+          commentary: (event) => {
+            if (!disposed && !state.progress.some(item => item.id === event.id)) state.progress.push(event);
+          },
         },
         controller.signal,
+        context,
       );
       if (disposed) return;
+      state.lastUsage = answer.usage ?? null;
       state.messages.push({
         id: localId--,
         role: "assistant",
@@ -412,7 +548,8 @@ export function createChatStore(
     } catch (error) {
       if (disposed) return;
       state.error = report(error);
-      restoreDraft(question);
+      restoreDraft(doc.text);
+      if (!state.products.length && state.draft === doc.text) setProducts(products);
       if (
         error instanceof ChatApiError &&
         (error.status === 400 || error.status === 429)
@@ -429,6 +566,7 @@ export function createChatStore(
     } finally {
       state.isSending = false;
       controller = undefined;
+      void refreshQuota(true);
     }
   }
   async function removeConversation(id: string) {
@@ -441,11 +579,13 @@ export function createChatStore(
         (item) => item.id !== id,
       );
       put(draftKey(id), null);
+      put(productKey(id), null);
       clearPending(id);
       if (state.activeId === id) {
         state.activeId = null;
         state.messages = [];
         state.draft = get(draftKey(null)) || "";
+        state.products = readProducts(null);
         state.unresolved = false;
         resetPartial();
         put(ACTIVE_KEY, "new");
@@ -457,9 +597,9 @@ export function createChatStore(
       state.deletingId = null;
     }
   }
-  function openWidget() {
+  function openWidget(product?: ProductAttachment) {
     state.widgetOpen = true;
-    void initialize();
+    void initialize().then(() => { if (product) attachProduct(product); return refreshQuota(); });
   }
   function closeWidget() {
     state.widgetOpen = false;
@@ -468,20 +608,26 @@ export function createChatStore(
     disposed = true;
     stopPolling();
     controller?.abort();
+    clearTimeout(quotaTimer);
   }
   return {
     state,
     initialize,
     send,
     setDraft,
+    setComposer,
+    attachProduct,
+    removeProduct,
     newConversation,
     openConversation,
     removeConversation,
     checkRecovery,
     refreshList,
+    refreshQuota,
     openWidget,
     closeWidget,
     busy,
+    hasContent,
     dispose,
   };
 }

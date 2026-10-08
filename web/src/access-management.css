@@ -1,0 +1,47 @@
+.access-toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.access-search { position: relative; display: block; flex: 1; min-width: 0; }
+.access-search > svg { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); color: #98a2b3; pointer-events: none; }
+.access-search .ui-input { padding-left: 36px; }
+.access-filter { width: 150px; flex: none; }
+.access-record { display: flex; align-items: flex-start; gap: 12px; }
+.access-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 32px; height: 32px; margin-top: 2px; border-radius: 8px; color: #667085; background: #f2f4f7; font-size: 13px; font-weight: 600; }
+.access-record.selected .access-avatar { background: #e9efff; color: #2457e6; }
+.access-record-copy { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.access-record-copy > strong { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; color: #344054; font-size: 13px; font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
+.access-record-copy > span { color: #667085; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.access-record-copy > small { color: #98a2b3; font-size: 11px; line-height: 1.6; }
+.access-self { font-size: 10px; font-weight: 400; color: #7b8eaa; }
+.access-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.access-detail-heading p { margin: 0 0 7px; color: #98a2b3; font-size: 11px; }
+.access-detail-heading h2 { margin: 0; color: #1d2939; font-size: 18px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.access-facts { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 13px 16px; margin: 0 0 20px; font-size: 12px; line-height: 1.6; }
+.access-facts dt { color: #98a2b3; }
+.access-facts dd { margin: 0; color: #475467; overflow-wrap: anywhere; }
+.access-code { font-family: ui-monospace, SFMono-Regular, monospace; }
+.access-detail-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 24px; }
+.ui-button.access-danger { color: #c73939; }
+.ui-button.access-danger:hover { background: #fff7f7; border-color: #f5caca; }
+.access-permission-list { display: grid; gap: 16px; }
+.access-detail-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 300px; gap: 10px; color: #98a2b3; font-size: 12px; }
+.access-detail-empty p { margin: 0; }
+.access-dialog-form { display: grid; gap: 22px; padding-top: 4px; }
+.access-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+.access-field { display: grid; align-content: start; gap: 8px; min-width: 0; color: #475467; font-size: 12px; font-weight: 500; }
+.access-field small { color: #98a2b3; font-size: 11px; font-weight: 400; line-height: 1.6; }
+.access-dialog-account { display: grid; gap: 5px; color: #344054; font-size: 14px; }
+.access-dialog-account span { color: #98a2b3; font-size: 12px; overflow-wrap: anywhere; }
+.access-permission-toolbar { display: grid; gap: 12px; }
+.access-permission-toolbar h3 { margin: 0; color: #344054; font-size: 13px; font-weight: 600; }
+.access-permission-toolbar h3 span { margin-left: 8px; color: #98a2b3; font-size: 11px; font-weight: 400; }
+.access-permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; align-items: start; }
+.access-dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding-top: 18px; border-top: 1px solid #edf0f5; }
+.access-empty-text { margin: 0; padding: 8px 0; color: #98a2b3; font-size: 12px; }
+.access-form-error { margin: 0; padding: 10px 12px; border-radius: 6px; color: #b42318; background: #fff3f1; font-size: 12px; line-height: 1.7; }
+@media (max-width: 600px) {
+  .access-toolbar { gap: 8px; }
+  .access-filter { width: 112px; }
+  .access-form-grid,.access-permission-grid { grid-template-columns: 1fr; }
+  .access-detail-heading { gap: 10px; }
+  .access-facts { grid-template-columns: 70px minmax(0, 1fr); gap: 10px; }
+  .access-record { gap: 9px; }
+}

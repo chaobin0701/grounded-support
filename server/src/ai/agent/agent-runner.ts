@@ -24,6 +24,8 @@ export class AgentRunner {
       ...transcriptMessageBase(input.conversationId, input.traceId, priorTranscript.length + 1),
       role: 'user',
       content: input.question,
+      productIds: input.requestContext?.productIds,
+      productReferences: input.requestContext?.productReferences,
     };
     const transcript = [...priorTranscript, userMessage];
     const initialContext = this.contextBuilder.build({
@@ -38,6 +40,19 @@ export class AgentRunner {
       transcript,
     });
     const state = this.createState(initialContext, input, transcript, [userMessage]);
+    if (input.productPreparation) {
+      state.executionState = input.productPreparation.executionState;
+      state.toolContext = input.productPreparation.toolContext;
+      for (const product of input.productPreparation.products) state.products.set(product.id, product);
+      for (const entry of input.productPreparation.entries) state.executionSteps.push({
+        type: 'preflight', stage: 'planning', origin: 'preload', name: entry.name, arguments: entry.arguments,
+        result: entry.outcome.result.data ?? entry.outcome.result.content,
+        ok: entry.outcome.result.success, durationMs: entry.outcome.trace.durationMs,
+        reused: entry.outcome.trace.reused ?? false, errorCode: entry.outcome.trace.errorCode,
+        detail: entry.outcome.trace.reused ? '复用已校验版本的产品详情' : '第一次模型调用前准备上下文',
+      });
+      state.contextSnapshot.productPreparation = state.executionSteps.filter(step => step.origin === 'preload');
+    }
     for (const hit of input.initialEvidence ?? []) state.hits.set(hit.chunkId, hit);
     state.contextSnapshot.preflight = input.preflight;
     state.executionSteps.push({
@@ -65,7 +80,7 @@ export class AgentRunner {
     callbacks.onContext?.(state.contextSnapshot);
 
     for (let round = 0; round < state.runtime.maxPlannerRounds; round += 1) {
-      const step = await this.loop.step(input, state, callbacks.onProgress);
+      const step = await this.loop.step(input, state, callbacks.onProgress, callbacks.onCommentary);
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
 
@@ -96,7 +111,7 @@ export class AgentRunner {
       hits: new Map(),
       products: new Map(),
       contextSnapshot: {
-        promptVersion: 'agent-base-with-on-demand-skills-v2',
+        promptVersion: 'agent-native-tools-public-commentary-v3',
         systemPrompt: this.loop.systemPromptFor(input.availableSkills ?? [], [...loadedSkills.values()], agent),
         agentConfigurationRevision: input.configurationSnapshot?.revision,
         agentConfigurationVersion: input.configurationSnapshot?.configurationVersion,
@@ -111,6 +126,7 @@ export class AgentRunner {
         transcriptVersion: TRANSCRIPT_VERSION,
         agent: { name: agent.identity.name, role: agent.identity.role },
         runtime,
+        requestContext: input.requestContext ?? {},
         availableSkills: input.availableSkills ?? [],
         loadedSkills: [...loadedSkills.values()].map(({ id, name, version }) => ({ id, name, version })),
       },

@@ -4,10 +4,11 @@ import { useRoute } from "vue-router";
 import { ArrowUpRight, Menu, X } from "@lucide/vue";
 import { brand } from "./brand";
 import { chat } from "./chat/service";
+import { assistantLocation } from "./chat/route";
 import FloatingAssistant from "./components/FloatingAssistant.vue";
 import ToastNotice from "./components/ToastNotice.vue";
 const route = useRoute();
-const isAssistant = computed(() => route.path === "/assistant");
+const isAssistant = computed(() => route.name === "assistant");
 const menuOpen = ref(false);
 const main = ref<HTMLElement | null>(null);
 const menuButton = ref<HTMLButtonElement | null>(null);
@@ -24,15 +25,11 @@ function closeMenu() {
   menuOpen.value = false;
   menuButton.value?.focus();
 }
-function openConsultation() {
-  menuOpen.value = false;
-  chat.openWidget();
-}
 watch(
-  () => route.path,
+  () => isAssistant.value ? "assistant" : route.path,
   async () => {
     menuOpen.value = false;
-    if (route.path === "/assistant") chat.closeWidget();
+    if (isAssistant.value) chat.closeWidget();
     await nextTick();
     main.value?.focus({ preventScroll: true });
   },
@@ -61,21 +58,13 @@ watch(
             >{{ link.text }}</RouterLink
           >
         </nav>
-        <button
+        <RouterLink
           v-if="!isAssistant"
-          type="button"
           class="header-consult"
-          @click="openConsultation"
+          :to="assistantLocation(chat.state.activeId)"
         >
           在线咨询 <ArrowUpRight :size="17" />
-        </button>
-        <RouterLink
-          v-else
-          class="header-consult"
-          to="/assistant"
-          aria-current="page"
-          >在线助手</RouterLink
-        >
+        </RouterLink>
         <button
           ref="menuButton"
           class="menu-button"
@@ -101,9 +90,8 @@ watch(
           :to="link.to"
           :aria-current="active(link.to) ? 'page' : undefined"
           >{{ link.text }}</RouterLink
-        ><button v-if="!isAssistant" type="button" @click="openConsultation">
-          在线咨询</button
-        ><RouterLink v-else to="/assistant">在线助手</RouterLink>
+        ><RouterLink :to="assistantLocation(chat.state.activeId)">
+          {{ isAssistant ? "在线助手" : "在线咨询" }}</RouterLink>
       </nav>
     </header>
     <main id="main-content" ref="main" tabindex="-1"><RouterView /></main>

@@ -41,6 +41,7 @@ export interface LlmRequest {
   model: string;
   messages: LlmMessage[];
   tools?: LlmToolDefinition[];
+  toolChoice?: 'auto' | 'none' | { name: string };
   responseFormat?: LlmResponseFormat;
   temperature?: number;
   maxTokens?: number;

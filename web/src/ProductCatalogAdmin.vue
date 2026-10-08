@@ -114,10 +114,9 @@ onMounted(() => { void loadProducts(); });
     </AdminPageHeader>
     <div v-if="notice" class="my-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{{ notice }}</div>
     <div v-if="error" class="my-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{{ error }}</div>
-    <div class="my-6 flex items-center justify-between text-sm text-slate-500"><span>当前目录 {{ products.length }} 个商品</span><span class="text-xs text-slate-400">官网与 Agent 共用此数据源</span></div>
     <div class="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <table class="w-full text-left text-sm">
-        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-5 py-3 font-medium">产品</th><th class="px-5 py-3 font-medium">分类</th><th class="px-5 py-3 font-medium">参考售价</th><th class="px-5 py-3 font-medium">规格</th><th class="px-5 py-3 font-medium">状态</th><th class="w-28 px-3"></th></tr></thead>
+        <thead class="bg-slate-50 text-xs text-slate-500"><tr><th class="px-5 py-3 font-medium">产品<span v-if="!loading">（{{ products.length }}）</span></th><th class="px-5 py-3 font-medium">分类</th><th class="px-5 py-3 font-medium">参考售价</th><th class="px-5 py-3 font-medium">规格</th><th class="px-5 py-3 font-medium">状态</th><th class="w-28 px-3"></th></tr></thead>
         <tbody class="divide-y divide-slate-100">
           <tr v-for="product in products" :key="product.id" class="hover:bg-slate-50">
             <td class="px-5 py-4"><div class="flex items-center gap-3"><img v-if="product.imageUrl" :src="product.imageUrl" :alt="product.name" class="size-10 rounded-lg object-cover" /><span v-else class="grid size-10 place-items-center rounded-lg bg-brand-50 text-brand-600"><Boxes :size="18" /></span><span><strong class="block font-medium">{{ product.name }}</strong><small class="mt-1 block text-xs text-slate-400">{{ product.brand }} · {{ product.id }}</small></span></div></td>

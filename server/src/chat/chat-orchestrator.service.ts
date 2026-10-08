@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { AgentRunner } from '../ai/agent/agent-runner';
+import { AgentProtocolError } from '../ai/agent/model-response';
 import type { PreviousTurnDto } from './chat.dto';
 import type { ChatRun, ChatStreamCallbacks, CommentaryEvent, PublicProgressEvent, ToolStep } from './chat.service';
 import { LlmService } from './llm.service';
@@ -10,6 +11,8 @@ import { ContextGovernor } from './context-governor';
 import { AppConfigService } from '../config/config.service';
 import { agentConfigurationRevision, DEFAULT_AGENT_CONFIGURATION, effectiveAgentConfiguration, type AgentConfigurationSnapshot } from '../config/agent-config';
 import { AgentSettingsService } from '../config/agent-settings.service';
+import type { ChatAgentContext } from './chat.service';
+import { ProductContextPreparer } from './product-context-preparer';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -22,6 +25,7 @@ export class ChatOrchestratorService {
     @Optional() private readonly contextGovernor?: ContextGovernor,
     @Optional() private readonly config?: AppConfigService,
     @Optional() private readonly settings?: AgentSettingsService,
+    @Optional() private readonly productPreparer?: ProductContextPreparer,
   ) {}
 
   async askDetailed(
@@ -30,23 +34,31 @@ export class ChatOrchestratorService {
     summary: string,
     onContext?: (context: Record<string, unknown>) => void,
     _onStep?: (step: ToolStep) => void,
-    _onCommentary?: (event: CommentaryEvent) => void,
+    onCommentary?: (event: CommentaryEvent) => void,
     requestedSkillId?: string,
     callbacks?: ChatStreamCallbacks,
-    agentContext?: { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot },
+    agentContext?: ChatAgentContext,
   ): Promise<ChatRun> {
     const configured = agentContext?.configurationSnapshot ?? await this.settings?.snapshot();
     const agentConfig = configured?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION;
     const configurationSnapshot = { ...(configured ?? { revision: agentConfigurationRevision(agentConfig), configurationVersion: 0, updatedAt: null, updatedBy: null }), configuration: effectiveAgentConfiguration(agentConfig) };
-    const progressEvents: PublicProgressEvent[] = [];
+    const progressEvents: Array<PublicProgressEvent | CommentaryEvent> = [];
     const emitProgress = (event: PublicProgressEvent) => {
       progressEvents.push(event);
       callbacks?.onProgress?.(event);
+    };
+    const emitCommentary = (event: CommentaryEvent) => {
+      progressEvents.push(event);
+      callbacks?.onCommentary?.(event);
+      onCommentary?.(event);
     };
     // Ordinary turns have no current/default Skill and no keyword routing.
     // Retain explicit internal requests for real specialist guides only.
     if (requestedSkillId && (!this.skillRegistry?.has(requestedSkillId) || !agentConfig.enabledSkills.includes(requestedSkillId))) throw new BadRequestException('Unknown or unavailable skill');
     const initialSkills = requestedSkillId ? [this.skillRegistry!.get(requestedSkillId)] : [];
+    const productPreparation = agentContext?.requestContext?.productIds?.length && this.productPreparer
+      ? await this.productPreparer.prepare(question, agentContext.requestContext.productIds, agentContext.priorProducts ?? [], configurationSnapshot.configuration, emitProgress)
+      : undefined;
     const result = await this.agentRunner.run(
       {
         question,
@@ -58,10 +70,17 @@ export class ChatOrchestratorService {
         conversationId: agentContext?.conversationId,
         traceId: agentContext?.traceId,
         priorTranscript: agentContext?.priorTranscript,
+        requestContext: agentContext?.requestContext,
+        productPreparation,
+        initialEvidence: productPreparation?.evidence,
       },
-      { onContext, onProgress: emitProgress },
-    );
-    const hasToolProgress = progressEvents.some((event) => event.stage === 'tool');
+      { onContext, onProgress: emitProgress, onCommentary: emitCommentary },
+    ).catch(error => {
+      // The runtime has no HTTP concerns; the chat adapter maps a domain error.
+      if (error instanceof AgentProtocolError) throw new BadGatewayException({ code: error.code, message: '模型响应格式异常，请稍后重试。' });
+      throw error;
+    });
+    const hasToolProgress = progressEvents.some((event) => event.type === 'progress' && event.stage === 'tool');
     result.contextSnapshot.agentConfigurationRevision = configurationSnapshot.revision;
     result.contextSnapshot.agentConfigurationVersion = configurationSnapshot.configurationVersion;
     if (!result.result.refused && callbacks?.onAnswerDelta) {

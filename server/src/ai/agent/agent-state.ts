@@ -58,6 +58,8 @@ export type AgentExecutionStep = {
   plannerRound?: number;
   toolBatchId?: string;
   toolIndex?: number;
+  origin?: 'preload' | 'model';
+  reused?: boolean;
 };
 
 export type AgentState = {

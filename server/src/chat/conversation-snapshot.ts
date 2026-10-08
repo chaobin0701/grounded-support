@@ -16,4 +16,5 @@ export interface ConversationSnapshot {
   recentMessages: SnapshotMessage[];
   history: PreviousTurnDto[];
   agentTranscript: AgentTranscriptMessage[];
+  priorProducts?: unknown[];
 }

@@ -9,6 +9,7 @@
 ## 目录
 
 - `web/`：Vue 访客问答页与管理员资料/权限后台
+- `website/`：独立的禾序智能官网，默认开发端口 8849
 - `server/`：NestJS API 与同一代码库中的 Worker
 - `infra/`：数据库初始化脚本
 - `samples/`：后续放入虚构政策与验收问题
@@ -42,6 +43,8 @@ node scripts/dev-supervisor.mjs
 ```
 
 开发页面固定在 `http://localhost:8848`。Vite 会热更新 `web/src`，TypeScript watch 会重新编译 `server/src`，API 和 Worker 由监督进程保持在线；进程退出后会自动重启，并每 10 秒检查一次 `http://localhost:3000/api/health`。停止时按 `Ctrl+C`，不会删除数据库容器或数据卷。
+
+8848 的页面品牌为「禾序智能客服」：`/` 只提供独立对话，`/admin` 保留管理后台，`/docs/integration` 提供接入文档。旧的 `/product/*` 官网和 `/help` 帮助页已移除，旧链接回到对话首页。企业官网在独立的 `website/` 项目中维护，产品后台与 API 不受本次页面收敛影响。
 
 首次运行前确保 `server/node_modules` 和 `web/node_modules` 已安装。该模式会自动执行数据库迁移，并停止 Docker 中的 API、Worker 和 Web 容器；需要恢复完整 Docker 验收时运行 `docker compose up --build -d`，访问 `http://localhost:8081`。
 
@@ -138,11 +141,11 @@ Worker 在切片后逐片段生成向量，并将片段、向量和 `ready` 状�
 
 ## 访客问答 API
 
-在本机 `.env` 设置 `LLM_API_KEY` 后，回答模型由 `LlmService` 通过 OpenAI-compatible `/chat/completions` 接口调用火山方舟。配置先由 `AppConfigService` 校验，再由 `ProviderRegistry` 创建 `OpenAICompatibleProvider`；Provider 本身不读取环境变量。可配置 `LLM_PROVIDER`（当前仅支持 `openai-compatible`）、`LLM_BASE_URL`、`LLM_MODEL`、`LLM_TIMEOUT_MS`、`LLM_CONTEXT_WINDOW_TOKENS`、`LLM_MAX_OUTPUT_TOKENS` 和 `LLM_STRUCTURED_OUTPUT`。默认上下文窗口为 32,000 tokens，最大输出为 1,200 tokens；结构化输出默认为 `auto`，规划阶段发送 `response_format: { type: "json_object" }`，兼容端点拒绝该参数时自动回退一次；不兼容端点可设置为 `disabled`，严格要求支持时可设置为 `required`。模型密钥只传给 API 容器，前端和 Worker 不持有。修改配置后重建 API：`docker compose up -d --build api`。
+在本机 `.env` 设置 `LLM_API_KEY`，或在后台模型服务配置密钥后，`LlmService` 通过 OpenAI Compatible `/chat/completions` 调用模型。模型工具调用只支持标准 `tool_calls`，不解析正文 JSON 工具指令或 DSML。规划请求固定发送 `response_format: { type: "json_object" }`，不支持时明确报错，不自动降级；旧 `LLM_STRUCTURED_OUTPUT` 不再决定 Agent 请求协议。模型 ID、超时、上下文窗口和最大输出仍由模型服务配置；默认 32,000 / 1,200 tokens。后台测试连接验证 JSON 与原生工具两项能力。Provider 不读取环境变量或执行业务工具。开发使用 API 3000、Web 8848 和官网 8849 热更新，仅数据库由 Docker 运行。
 
 访客可直接打开 `http://localhost:8081` 使用 Vue 页面。页面可新建、切换和删除多段对话；同一浏览器刷新后可恢复。后端用 180 天有效的 `HttpOnly` 匿名 Cookie 将会话归属到当前浏览器，不提供登录或跨设备找回；清除 Cookie 后旧记录无法找回。删除对话会级联删除消息与调用轨迹。每段对话的摘要和历史严格独立，新会话从空上下文开始。
 
-完整原始消息保存在 PostgreSQL；回答时会传当前会话的摘要、最近最多三轮已回答问答、结构化 Agent Transcript 和当前问题。当前 Transcript 第一阶段复用 `chat_traces.context_snapshot.agentTranscript` 保存，不新增表；每轮包含用户消息、assistant 工具调用、tool 结果和最终 assistant 回答，并带有会话 ID、轨迹 ID、序号和时间。摘要更新本身也是一次模型调用，另记一条轨迹。摘要和 Transcript 都只帮助模型理解会话，不能替代本轮引用校验；后续 Context Governor 会再负责 token 预算和压缩。
+完整原始消息保存在 PostgreSQL；回答时会传当前会话的摘要、最近最多三轮已回答问答、结构化 Agent Transcript 和当前问题。Transcript 复用 `chat_traces.context_snapshot.agentTranscript` 保存，不新增表；每轮包含用户消息、assistant 公开说明和原生工具调用、tool 结果和最终 assistant 回答，并带有会话 ID、轨迹 ID、序号和时间。摘要更新本身也是一次模型调用，另记一条轨迹。历史工具资料可复用，不要求每轮重新取证；引用仅作为展示元数据，答案只做基础格式校验。Context Governor 负责 token 预算和压缩。
 
 记忆边界由 `conversation_id` 决定：匿名浏览器 Cookie 只负责归属校验，不是跨会话记忆。`ConversationService.snapshot()` 会先校验当前浏览器是否拥有该会话，再加载该会话的摘要、最近消息和历史 Transcript；`ContextBuilder` 将它们与当前轮工具结果和预检索资料组装为模型上下文。新会话不会读取旧会话内容，删除会话会级联删除消息和轨迹。当前不建立用户级或跨会话 Memory 表。
 
@@ -167,7 +170,7 @@ curl -X POST http://localhost:8081/api/chat \
 
 请求问题限 2–200 个字符；回答返回 `answer`、`refused`、`citations`。后端自己的编排器最多执行六次工具调用，每次都校验工具名和参数；模型若拒答、没有有效来源 ID 或输出格式不合约定，API 返回“无法确定，建议联系人工。”。模型给出的引用 ID 必须属于本轮工具结果，但这只能验证引用来源，**不能自动证明回答的每一句都受资料支持**，重要政策仍需人工验收。模型无法查询真实订单或执行退款。
 
-当前普通 JSON 接口是核心实现；第六阶段增加了独立 SSE 传输层。后端先完成工具调用、最终答案和来源校验，再把已校验正文分段发送，因此这是答案传输流式化，不是模型私有思考过程，也不会公开工具过程。模型调用遇到网络错误、限流、5xx 或空响应最多重试一次；容器日志不记密钥、请求正文或供应商原始响应。
+JSON 与 SSE 共用 Agent 运行。工具只通过原生 `tool_calls` 执行；工具前可发送模型生成的公开 `commentary`，工具状态使用 `progress`，最终回答使用 `answer_delta`。说明与答案分开保存，不展示私有推理、参数或耗时。答案只校验基础格式，不校验业务正确性；协议异常记录 `model_protocol_error` 与失败状态，不伪装成拒答。网络错误、限流、5xx 或空响应仍按既有策略最多重试一次，但不通过旧格式或取消 JSON 约束降级。日志不记录密钥或供应商原始响应。
 
 ### ToolRegistry 与本地工具
 
@@ -207,6 +210,6 @@ curl -X POST http://localhost:8081/api/chat \
 
 后续扩大问答评测集并改进证据判定；如需更低首字延迟，再研究可安全校验的真正模型 token 流。公网部署前还需完善登录限流、刷新会话、共享限流、文件安全扫描、滥用防护和安全验收。
 
-Agent 上下文治理正在分阶段推进：第一阶段已经建立标准 Agent Transcript，让下一轮能够看到上一轮的 `assistant.tool_calls` 和 `tool` 结果；第二阶段增加 `ContextGovernor` 和 token budget，按上下文窗口、最大输出和 5% 安全缓冲计算输入预算，并将 `normal/elevated/high/overflow` 压力写入轨迹。下一阶段再实现旧上下文压缩、summary checkpoint 和结构化证据复用。即使历史工具结果被带入上下文，也不能直接绕过本轮 `AnswerGuard`；价格、库存等易变信息仍应重新查询。
+Agent 上下文治理正在分阶段推进：第一阶段已经建立标准 Agent Transcript，让下一轮能够看到上一轮的 `assistant.tool_calls` 和 `tool` 结果；第二阶段增加 `ContextGovernor` 和 token budget，按上下文窗口、最大输出和 5% 安全缓冲计算输入预算，并将 `normal/elevated/high/overflow` 压力写入轨迹。下一阶段再实现旧上下文压缩、summary checkpoint 和结构化证据复用。历史工具结果可直接复用，答案仅做基础格式校验，不因本轮未重新查询而拒答；价格、库存等实时信息由模型按需重新查询。
 
 工具调用策略也需要逐步增强：保留当前 ToolRegistry 和权限边界，为工具声明只读／有依赖／有副作用等执行属性；同一模型响应中的独立只读工具可以并行，存在参数依赖或潜在副作用的工具必须按顺序执行，并记录调度原因、依赖关系和每个工具的耗时。该策略应在统一 ToolCall 解析和原生 `tool_calls` 兼容稳定后再扩展。

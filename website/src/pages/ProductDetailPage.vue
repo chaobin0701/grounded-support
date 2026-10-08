@@ -50,7 +50,7 @@ onBeforeUnmount(() => controller?.abort());
       ><ArrowLeft :size="17" />返回产品中心</RouterLink
     ><CatalogState :loading="loading" :error="error" @retry="load" /><template
       v-if="product && !loading && !error"
-      ><div class="detail-layout">
+      ><div v-reveal class="detail-layout">
         <ProductImage :src="product.imageUrl" :alt="product.name" eager />
         <div class="detail-copy">
           <p class="eyebrow">{{ product.category }} · {{ productBrand }}</p>
@@ -59,7 +59,6 @@ onBeforeUnmount(() => controller?.abort());
           <p class="detail-price">
             {{ product.suggestedPrice || "价格以官方渠道为准" }}
           </p>
-          <p class="price-note">目录参考信息，非实时售价</p>
           <div class="detail-actions">
             <a
               v-if="source"
@@ -70,27 +69,16 @@ onBeforeUnmount(() => controller?.abort());
               >查看官方资料 <ArrowUpRight :size="18" /></a
             ><button
               type="button"
-              @click="chat.openWidget()"
+              @click="chat.openWidget({ id: product.id, name: product.name })"
               class="button button-outline"
             >
               咨询产品
             </button>
           </div>
-          <div class="detail-brand-note">
-            这是
-            {{
-              product.brand === "Midea"
-                ? "美的"
-                : product.brand === "Xiaomi"
-                  ? "小米"
-                  : product.brand
-            }}
-            产品，保留原品牌资料，不代表禾序自研或合作商品。
-          </div>
         </div>
       </div>
       <div class="detail-info">
-        <section>
+        <section v-reveal>
           <p class="eyebrow">了解产品</p>
           <h2>产品介绍</h2>
           <RichDescription
@@ -102,7 +90,7 @@ onBeforeUnmount(() => controller?.abort());
             ><BookOpen :size="17" />查阅使用与服务资料 <ArrowUpRight :size="16"
           /></RouterLink>
         </section>
-        <section>
+        <section v-reveal="{ delay: 0.06 }">
           <p class="eyebrow">参数与规格</p>
           <h2>把信息看清楚</h2>
           <dl class="spec-list">
@@ -113,9 +101,6 @@ onBeforeUnmount(() => controller?.abort());
           </dl>
           <p v-if="!Object.keys(product.specifications).length">
             暂无完整规格。
-          </p>
-          <p class="price-note">
-            型号和配置可能存在差异，请以官方说明书及产品铭牌为准。
           </p>
         </section>
       </div></template

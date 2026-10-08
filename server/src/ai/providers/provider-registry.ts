@@ -13,7 +13,7 @@ export class UnsupportedProviderError extends Error {
   }
 }
 
-type ProviderFactory = (config: Pick<OpenAICompatibleProviderOptions, 'apiKey' | 'baseUrl' | 'model' | 'timeoutMs' | 'maxOutputTokens' | 'contextWindowTokens' | 'structuredOutput'>) => LlmProvider;
+type ProviderFactory = (config: Pick<OpenAICompatibleProviderOptions, 'apiKey' | 'baseUrl' | 'model' | 'timeoutMs' | 'maxOutputTokens' | 'contextWindowTokens'>) => LlmProvider;
 
 @Injectable()
 export class ProviderRegistry implements OnModuleInit {
@@ -28,7 +28,6 @@ export class ProviderRegistry implements OnModuleInit {
       timeoutMs: llm.timeoutMs,
       maxOutputTokens: llm.maxOutputTokens,
       contextWindowTokens: llm.contextWindowTokens,
-      structuredOutput: llm.structuredOutput,
     }));
   }
 
@@ -67,7 +66,6 @@ export class ProviderRegistry implements OnModuleInit {
       timeoutMs: profile.timeoutMs,
       maxOutputTokens: profile.maxOutputTokens,
       contextWindowTokens: profile.contextWindowTokens,
-      structuredOutput: profile.structuredOutput,
     });
   }
 
@@ -88,7 +86,6 @@ class RuntimeLlmProvider implements LlmProvider {
   constructor(private current: LlmProvider) {}
 
   get model(): string { return this.current.model; }
-  get structuredOutput(): LlmProvider['structuredOutput'] { return this.current.structuredOutput; }
   get maxOutputTokens(): number | undefined { return this.current.maxOutputTokens; }
   get contextWindowTokens(): number | undefined { return this.current.contextWindowTokens; }
   chat(request: Parameters<LlmProvider['chat']>[0]): ReturnType<LlmProvider['chat']> { return this.current.chat(request); }
@@ -101,7 +98,7 @@ function toProfile(row: Record<string, unknown>): LlmProfileRecord {
     id: Number(row.id), name: String(row.name), platformKey: row.platform_key === 'volcengine' || row.platform_key === 'openai' || row.platform_key === 'deepseek' ? row.platform_key : 'custom', providerKey: 'openai-compatible', adapterType: 'openai-compatible',
     baseUrl: String(row.base_url), model: String(row.model), apiKey: undefined,
     timeoutMs: Number(row.timeout_ms), contextWindowTokens: Number(row.context_window_tokens), maxOutputTokens: Number(row.max_output_tokens),
-    structuredOutput: 'auto',
+    structuredOutput: 'required',
     supportsToolCalls: Boolean(row.supports_tool_calls), supportsStreaming: Boolean(row.supports_streaming),
     enabled: Boolean(row.enabled), isDefault: Boolean(row.is_default),
   };

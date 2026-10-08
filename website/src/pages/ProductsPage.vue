@@ -32,7 +32,7 @@ function reset() {
 
 <template>
   <section class="container catalog-page">
-    <div class="page-heading">
+    <div v-reveal class="page-heading">
       <p class="eyebrow">产品中心</p>
       <h1>适合家的，才是好的。</h1>
       <p>看看取暖与空气产品，找到你需要的舒适。</p>
@@ -93,14 +93,13 @@ function reset() {
       @retry="reload"
     />
     <div v-if="!loading && !error" class="product-grid">
-      <ProductCard
-        v-for="product in filtered"
+      <div
+        v-for="(product, index) in filtered"
         :key="product.id"
-        :product="product"
-      />
+        v-reveal="{ delay: (index % 4) * 0.06 }"
+      >
+        <ProductCard :product="product" />
+      </div>
     </div>
-    <p class="catalog-disclaimer">
-      产品信息仅供选购参考。参考价格并非实时成交价，具体信息请以对应产品的官方渠道为准。
-    </p>
   </section>
 </template>

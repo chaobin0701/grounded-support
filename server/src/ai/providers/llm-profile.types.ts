@@ -12,7 +12,7 @@ export type LlmProfileRecord = {
   timeoutMs: number;
   contextWindowTokens: number;
   maxOutputTokens: number;
-  structuredOutput: 'auto';
+  structuredOutput: 'required';
   supportsToolCalls: boolean;
   supportsStreaming: boolean;
   enabled: boolean;

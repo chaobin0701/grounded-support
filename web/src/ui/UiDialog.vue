@@ -10,7 +10,7 @@ const emit = defineEmits<{ 'update:open': [value: boolean] }>();
   <DialogRoot :open="open" @update:open="emit('update:open', $event)">
     <DialogPortal>
       <DialogOverlay class="fixed inset-0 bg-slate-950/45 backdrop-blur-[2px] data-[state=open]:animate-in" :style="{ zIndex: layer }" />
-      <DialogContent class="fixed left-1/2 top-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl border border-slate-200 bg-white shadow-2xl" :style="{ zIndex: layer + 1 }" :class="size === 'lg' ? 'max-w-4xl' : size === 'sm' ? 'max-w-md' : 'max-w-xl'">
+      <DialogContent v-bind="description ? {} : { 'aria-describedby': undefined }" class="fixed left-1/2 top-1/2 max-h-[90vh] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl border border-slate-200 bg-white shadow-2xl" :style="{ zIndex: layer + 1 }" :class="size === 'lg' ? 'max-w-4xl' : size === 'sm' ? 'max-w-md' : 'max-w-xl'">
         <header class="flex items-start justify-between border-b border-slate-100 px-6 py-5">
           <div>
             <DialogTitle class="text-lg font-semibold text-slate-900">{{ title }}</DialogTitle>

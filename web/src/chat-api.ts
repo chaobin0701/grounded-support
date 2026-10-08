@@ -11,8 +11,10 @@ export interface ChatAnswer {
   answer: string;
   refused: boolean;
   citations: Citation[];
-  progressEvents?: ProgressEvent[];
+  progressEvents?: ProcessEvent[];
 }
+export interface CommentaryEvent { type: 'commentary'; id: string; text: string }
+export type ProcessEvent = ProgressEvent | CommentaryEvent;
 
 export interface ProgressEvent {
   type: 'progress';
@@ -27,6 +29,7 @@ export interface ProgressEvent {
 }
 
 export interface PreviousTurn { question: string; answer: string }
+export interface RequestContext { productIds?: string[]; productReferences?: Array<{ productId: string; offset: number; length?: number }> }
 export interface ChatPresentation { title: string; description: string; suggestedQuestions: string[] }
 
 export async function getChatPresentation(): Promise<ChatPresentation> {
@@ -52,8 +55,9 @@ export interface ConversationMessage {
   content: string;
   refused: boolean | null;
   citations: Citation[];
-  progressEvents?: ProgressEvent[];
+  progressEvents?: ProcessEvent[];
   createdAt: string;
+  context?: RequestContext & { products?: Array<{ id: string; name: string }> };
 }
 
 export interface ConversationRun {
@@ -69,15 +73,16 @@ export interface ConversationRun {
 }
 
 export class ChatApiError extends Error {
-  constructor(readonly status: number, message?: string) {
+  constructor(readonly status: number, message?: string, readonly code?: string, readonly retryAt?: string) {
     super(message || `Chat API returned HTTP ${status}`);
   }
 }
 
 async function responseError(response: Response): Promise<ChatApiError> {
   try {
-    const payload = await response.json() as { message?: unknown };
-    return new ChatApiError(response.status, typeof payload.message === 'string' ? payload.message : undefined);
+    const payload = await response.json() as { message?: unknown; code?: unknown; retryAt?: unknown; error?: { message?: unknown; code?: unknown; retryAt?: unknown } };
+    const detail = payload.error ?? payload;
+    return new ChatApiError(response.status, typeof detail.message === 'string' ? detail.message : undefined, typeof detail.code === 'string' ? detail.code : undefined, typeof detail.retryAt === 'string' ? detail.retryAt : undefined);
   } catch {
     return new ChatApiError(response.status);
   }
@@ -92,33 +97,33 @@ function parseAnswer(payload: unknown): ChatAnswer {
   return answer as unknown as ChatAnswer;
 }
 
-export async function askQuestion(question: string, history: PreviousTurn[] = []): Promise<ChatAnswer> {
+export async function askQuestion(question: string, history: PreviousTurn[] = [], context?: RequestContext): Promise<ChatAnswer> {
   const response = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ question, history }),
+    body: JSON.stringify({ question, history, ...(context ? { context } : {}) }),
     signal: AbortSignal.timeout(65_000),
   });
   if (!response.ok) throw await responseError(response);
   return parseAnswer(await response.json());
 }
 
-export async function askInConversation(conversationId: string, question: string, idempotencyKey?: string): Promise<ChatAnswer> {
+export async function askInConversation(conversationId: string, question: string, idempotencyKey?: string, context?: RequestContext): Promise<ChatAnswer> {
   const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...(context ? { context } : {}) }),
     signal: AbortSignal.timeout(65_000),
   });
   if (!response.ok) throw await responseError(response);
   return parseAnswer(await response.json());
 }
 
-export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, idempotencyKey?: string, onProgress?: (event: ProgressEvent) => void): Promise<ChatAnswer> {
+export async function askInConversationStream(conversationId: string, question: string, onDelta: (text: string) => void, idempotencyKey?: string, onProgress?: (event: ProcessEvent) => void, context?: RequestContext): Promise<ChatAnswer> {
   const response = await fetch(`/api/chat/conversations/${encodeURIComponent(conversationId)}/messages/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, ...(context ? { context } : {}) }),
     signal: AbortSignal.timeout(65_000),
   });
   if (!response.ok) throw await responseError(response);
@@ -144,11 +149,16 @@ export async function askInConversationStream(conversationId: string, question: 
         } else if (data && event === 'progress') {
           const progress = JSON.parse(data) as ProgressEvent;
           if (progress.type === 'progress' && typeof progress.id === 'string' && typeof progress.text === 'string') onProgress?.(progress);
+        } else if (data && event === 'commentary') {
+          const commentary = JSON.parse(data) as CommentaryEvent;
+          if (commentary.type === 'commentary' && typeof commentary.id === 'string' && typeof commentary.text === 'string' && commentary.text.length <= 160 && commentary.text.trim()) onProgress?.(commentary);
         } else if (data && event === 'error') {
-          const payload = JSON.parse(data) as { status?: unknown; message?: unknown };
+          const payload = JSON.parse(data) as { status?: unknown; message?: unknown; code?: unknown; retryAt?: unknown };
           throw new ChatApiError(
             typeof payload.status === 'number' ? payload.status : response.status || 503,
             typeof payload.message === 'string' ? payload.message : undefined,
+            typeof payload.code === 'string' ? payload.code : undefined,
+            typeof payload.retryAt === 'string' ? payload.retryAt : undefined,
           );
         } else if (data && event === 'done') {
           finalAnswer = parseAnswer(JSON.parse(data));

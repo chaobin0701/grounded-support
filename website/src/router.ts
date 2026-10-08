@@ -29,7 +29,8 @@ export const router = createRouter({
       meta: { title: "服务支持 · 禾序智能" },
     },
     {
-      path: "/assistant",
+      path: "/assistant/:conversationId?",
+      name: "assistant",
       component: () => import("./pages/AssistantPage.vue"),
       meta: { title: "在线助手 · 禾序智能" },
     },

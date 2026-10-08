@@ -25,6 +25,7 @@ import {
 import ConversationTraceInspector from './ConversationTraceInspector.vue';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import MarkdownContent from './ui/MarkdownContent.vue';
+import ProductMessageContent from './ui/ProductMessageContent.vue';
 import ToastNotice from './ui/ToastNotice.vue';
 import UiDrawer from './ui/UiDrawer.vue';
 import {
@@ -54,6 +55,8 @@ const selectedTrace = ref<ChatTraceDetail | null>(null);
 const selectedTurnId = ref<number | null>(null);
 const query = ref('');
 const visitorId = ref('');
+const applicationId = ref('');
+const applicationOptions = ref<{ id: string; name: string }[]>([]);
 const device = ref('all');
 const timeRange = ref('all');
 const turnFilter = ref('all');
@@ -99,7 +102,7 @@ const clientLabel: Record<string, string> = {
 };
 
 function listState() {
-  return { query: query.value, visitorId: visitorId.value, device: device.value, timeRange: timeRange.value, offset: offset.value };
+  return { query: query.value, visitorId: visitorId.value, applicationId: applicationId.value, device: device.value, timeRange: timeRange.value, offset: offset.value };
 }
 function detailLocation(id: string, traceId?: string) {
   return conversationDetailLocation(id, traceId, readConversationListState(route.query));
@@ -201,12 +204,14 @@ async function loadSessions() {
     const result = await adminApi.conversations(props.token, {
       q: uuid.test(query.value.trim()) ? '' : query.value.trim(),
       visitorId: visitorId.value,
+      applicationId: applicationId.value,
       device: device.value,
       since: sinceValue(),
       offset: offset.value,
     });
     if (request !== listRequest) return;
     sessions.value = result.items;
+    applicationOptions.value = result.applications;
     hasMore.value = result.pagination.hasMore;
     visitorOptions.value = result.filters;
   } catch (cause) {
@@ -392,6 +397,7 @@ async function applyRoute() {
     }
     query.value = state.query;
     visitorId.value = state.visitorId;
+    applicationId.value = state.applicationId ?? '';
     device.value = state.device;
     timeRange.value = state.timeRange;
     offset.value = state.offset;
@@ -449,7 +455,7 @@ onUnmounted(() => {
           :disabled="loading || lookupLoading"
         >
           <LoaderCircle v-if="lookupLoading" class="spin" :size="16" /><ChevronRight v-else :size="16" /></button></label
-      ><select
+      ><select v-model="applicationId" class="ui-input" aria-label="接入应用筛选" @change="reload"><option value="">全部应用</option><option v-for="app in applicationOptions" :key="app.id" :value="app.id">{{ app.name }}</option></select><select
         v-model="visitorId"
         class="ui-input"
         aria-label="访客筛选"
@@ -505,14 +511,14 @@ onUnmounted(() => {
                   </RouterLink>
                   <div class="session-flags"><code :title="item.id">{{ item.id.slice(0, 8) }}</code><span v-if="item.hasFailed" class="session-flag failed">含执行失败</span><span v-if="item.hasRefused" class="session-flag refused">含拒答</span></div>
                 </td>
-                <td class="session-audience"><span :title="item.visitorSessionId">访客 {{ item.visitorSessionId.slice(0, 8) }}</span><small>{{ clientLabel[item.clientType] || item.clientType || '浏览器' }}</small></td>
+                <td class="session-audience"><span :title="item.visitorSessionId">访客 {{ item.visitorSessionId.slice(0, 8) }}</span><small>{{ item.applicationName }} · {{ clientLabel[item.clientType] || item.clientType || '浏览器' }}</small></td>
                 <td class="session-rounds">{{ item.turnCount }}<span class="mobile-unit"> 轮</span></td>
                 <td class="session-date"><time>{{ date(item.updatedAt) }}</time></td>
                 <td class="session-actions"><button class="pane-toggle" :aria-label="`复制会话 ID：${item.id}`" title="复制会话 ID" @click="copy(item.id, '会话 ID')"><Copy :size="15" /></button><RouterLink class="session-detail-link" :to="detailLocation(item.id)" :aria-label="`查看会话：${item.title || item.id}`" @click="rememberListScroll">查看详情<ChevronRight :size="15" aria-hidden="true" /></RouterLink></td>
               </tr>
             </tbody>
           </table>
-          <div v-else-if="!error" class="conversation-empty"><p>没有匹配的会话</p><button v-if="query || visitorId || device !== 'all' || timeRange !== 'all' || offset" class="ui-button secondary" @click="query = ''; visitorId = ''; device = 'all'; timeRange = 'all'; reload()">清除筛选</button></div>
+          <div v-else-if="!error" class="conversation-empty"><p>没有匹配的会话</p><button v-if="query || visitorId || applicationId || device !== 'all' || timeRange !== 'all' || offset" class="ui-button secondary" @click="query = ''; visitorId = ''; applicationId = ''; device = 'all'; timeRange = 'all'; reload()">清除筛选</button></div>
           <div v-else class="conversation-empty"><button class="ui-button secondary" @click="refresh">重新加载</button></div>
         </div>
         <footer class="session-pagination">
@@ -587,7 +593,7 @@ onUnmounted(() => {
               </div>
               <div class="turn-question">
                 <span class="turn-label">用户</span>
-                <p>{{ turn.user.content }}</p>
+                <ProductMessageContent :content="turn.user.content" :context="turn.user.context" />
               </div>
               <div class="turn-answer">
                 <span class="turn-label assistant-label">AI</span>
@@ -711,7 +717,7 @@ onUnmounted(() => {
 .conversation-page :deep(h1:focus) { outline: none; box-shadow: none; }
 .conversation-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(140px, 190px) 130px 140px;
+  grid-template-columns: minmax(220px, 1fr) minmax(120px, 160px) minmax(140px, 170px) 120px 130px;
   gap: 10px;
   flex: none;
   margin-bottom: 18px;

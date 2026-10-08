@@ -19,8 +19,9 @@ export class AdminConversationController {
     @Query('visitorId') visitorId = '',
     @Query('device') device = 'all',
     @Query('since') since = '',
+    @Query('applicationId') applicationId = '',
   ) {
-    return this.conversations.list(limit, offset, query, status, visitorId, device, since || null);
+    return this.conversations.list(limit, offset, query, status, visitorId, device, since || null, applicationId);
   }
 
   @Get(':id')

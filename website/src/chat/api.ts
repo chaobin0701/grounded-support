@@ -7,14 +7,21 @@ import type {
   ConversationRun,
   Presentation,
   ProgressEvent,
+  CommentaryEvent,
   StreamCallbacks,
+  ModelUsage,
 } from "./types.ts";
+import { isChatStatus, isWebsiteQuota } from "./quota.ts";
 
 export class ChatApiError extends Error {
   status: number;
-  constructor(status: number, message = "聊天服务暂时无法连接，请稍后重试。") {
+  code?: string;
+  retryAt?: string;
+  constructor(status: number, message = "聊天服务暂时无法连接，请稍后重试。", code?: string, retryAt?: string) {
     super(message);
     this.status = status;
+    this.code = code;
+    this.retryAt = retryAt;
   }
 }
 function object(value: unknown): value is Record<string, unknown> {
@@ -43,9 +50,15 @@ export function parseAnswer(value: unknown): ChatAnswer {
     refused: value.refused,
     citations: citations(value.citations),
     progressEvents: Array.isArray(value.progressEvents)
-      ? value.progressEvents.filter(isProgress)
+      ? value.progressEvents.filter(value => isProgress(value) || isCommentary(value))
       : [],
+    ...(isUsage(value.usage) ? { usage: value.usage } : {}),
   };
+}
+function isUsage(value: unknown): value is ModelUsage {
+  return object(value)
+    && ["inputTokens", "outputTokens", "totalTokens", "reservedTokens", "unknownModelCalls"].every((key) => typeof value[key] === "number" && Number.isSafeInteger(value[key]) && Number(value[key]) >= 0)
+    && ["actual", "pending", "incomplete"].includes(String(value.accounting)) && typeof value.includesSummary === "boolean";
 }
 function isProgress(value: unknown): value is ProgressEvent {
   return (
@@ -56,6 +69,10 @@ function isProgress(value: unknown): value is ProgressEvent {
     ["planning", "preflight", "tool", "answer"].includes(String(value.stage)) &&
     ["running", "completed"].includes(String(value.status))
   );
+}
+function isCommentary(value: unknown): value is CommentaryEvent {
+  return object(value) && value.type === "commentary" && typeof value.id === "string"
+    && typeof value.text === "string" && !!value.text.trim() && value.text.length <= 160;
 }
 async function request(
   path: string,
@@ -80,14 +97,19 @@ async function request(
   }
   if (!response.ok) {
     let message = "聊天服务暂时不可用，请稍后重试。";
+    let code: string | undefined, retryAt: string | undefined;
     try {
       const data: unknown = await response.json();
-      if (object(data) && typeof data.message === "string")
-        message = data.message;
+      const detail = object(data) && object(data.error) ? data.error : data;
+      if (object(detail)) {
+        if (typeof detail.message === "string") message = detail.message;
+        if (typeof detail.code === "string") code = detail.code;
+        if (typeof detail.retryAt === "string") retryAt = detail.retryAt;
+      }
     } catch {
       /* Status is still usable. */
     }
-    throw new ChatApiError(response.status, message);
+    throw new ChatApiError(response.status, message, code, retryAt);
   }
   return response;
 }
@@ -132,6 +154,7 @@ export async function readAnswerStream(
         "answer_delta",
         "answer_started",
         "progress",
+        "commentary",
         "error",
         "done",
       ].includes(event)
@@ -152,9 +175,13 @@ export async function readAnswerStream(
         object(payload) && typeof payload.message === "string"
           ? payload.message
           : undefined,
+        object(payload) && typeof payload.code === "string" ? payload.code : undefined,
+        object(payload) && typeof payload.retryAt === "string" ? payload.retryAt : undefined,
       );
     else if (event === "progress" && isProgress(payload))
       callbacks.progress(payload);
+    else if (event === "commentary" && isCommentary(payload))
+      callbacks.commentary?.(payload);
     else if (event === "answer_started" && object(payload))
       callbacks.started(citations(payload.citations));
     else if (event === "delta" || event === "answer_delta") {
@@ -190,6 +217,16 @@ export async function readAnswerStream(
 }
 
 export const chatApi: ChatApi = {
+  async status() {
+    const data = await json("/status");
+    if (!isChatStatus(data)) throw new ChatApiError(502, "服务状态格式异常。");
+    return data;
+  },
+  async quota() {
+    const data = await json("/quota");
+    if (!isWebsiteQuota(data)) throw new ChatApiError(502, "额度数据格式异常。");
+    return data;
+  },
   async list() {
     const data = await json("/conversations");
     if (!Array.isArray(data) || !data.every(item))
@@ -221,7 +258,7 @@ export const chatApi: ChatApi = {
       ...value,
       citations: citations(value.citations),
       progressEvents: Array.isArray(value.progressEvents)
-        ? value.progressEvents.filter(isProgress)
+        ? value.progressEvents.filter((event: unknown) => isProgress(event) || isCommentary(event))
         : [],
     })) as ChatMessage[];
   },
@@ -266,7 +303,7 @@ export const chatApi: ChatApi = {
       throw new ChatApiError(502, "欢迎信息格式异常。");
     return data as unknown as Presentation;
   },
-  async stream(id, question, requestId, callbacks, signal) {
+  async stream(id, question, requestId, callbacks, signal, context) {
     const response = await request(
       `/conversations/${encodeURIComponent(id)}/messages/stream`,
       {
@@ -276,7 +313,7 @@ export const chatApi: ChatApi = {
           Accept: "text/event-stream",
           "Idempotency-Key": requestId,
         },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question, ...(context?.productIds?.length ? { context } : {}) }),
         signal,
       },
       true,

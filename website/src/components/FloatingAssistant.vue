@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ArrowUpRight, Bot, Plus, X } from "@lucide/vue";
 import { chat } from "../chat/service";
+import { assistantLocation } from "../chat/route";
 import ChatWorkspace from "./ChatWorkspace.vue";
 const route = useRoute();
+const isAssistant = computed(() => route.name === "assistant");
 const dialog = ref<HTMLElement | null>(null);
 const launcher = ref<HTMLButtonElement | null>(null);
 const mobile = ref(window.matchMedia("(max-width: 600px)").matches);
@@ -35,7 +37,7 @@ function keyboard(event: KeyboardEvent) {
   if (event.key === "Tab" && mobile.value && dialog.value) {
     const targets = [
       ...dialog.value.querySelectorAll<HTMLElement>(
-        'button:not(:disabled),a[href],textarea:not(:disabled),[tabindex="0"]',
+        'button:not(:disabled),a[href],[contenteditable="true"],[tabindex="0"]',
       ),
     ].filter((node) => node.getClientRects().length);
     const first = targets[0];
@@ -65,18 +67,18 @@ watch(
     await nextTick();
     if (open) {
       dialog.value
-        ?.querySelector<HTMLElement>("textarea:not(:disabled),button")
+        ?.querySelector<HTMLElement>('[contenteditable="true"],button')
         ?.focus();
-    } else if (route.path !== "/assistant") {
+    } else if (!isAssistant.value) {
       if (returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
       else launcher.value?.focus({ preventScroll: true });
     }
   },
 );
 watch(
-  () => route.path,
-  (path) => {
-    if (path === "/assistant") close();
+  () => isAssistant.value,
+  (full) => {
+    if (full) close();
   },
 );
 onMounted(() => {
@@ -90,7 +92,7 @@ onBeforeUnmount(() => {
 });
 </script>
 <template>
-  <template v-if="route.path !== '/assistant'">
+  <template v-if="!isAssistant">
     <button
       ref="launcher"
       class="assistant-launcher"
@@ -132,6 +134,7 @@ onBeforeUnmount(() => {
               </div>
               <nav aria-label="聊天窗口操作">
                 <button
+                  v-if="chat.hasContent()"
                   type="button"
                   aria-label="新建会话"
                   title="新建会话"
@@ -140,7 +143,7 @@ onBeforeUnmount(() => {
                 >
                   <Plus :size="18" /></button
                 ><RouterLink
-                  to="/assistant"
+                  :to="assistantLocation(chat.state.activeId)"
                   aria-label="完整助手"
                   title="完整助手"
                   @click="close"
