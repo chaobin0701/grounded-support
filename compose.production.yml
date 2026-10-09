@@ -1,0 +1,92 @@
+name: hexu-support
+
+x-app: &app
+  image: ${SERVER_IMAGE:?Set SERVER_IMAGE}
+  env_file: ${APP_ENV_FILE:-.env.production}
+  restart: unless-stopped
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  volumes:
+    - ./data/uploads:/data/uploads
+  networks: [backend]
+  logging: &logs
+    driver: json-file
+    options:
+      max-size: '10m'
+      max-file: '3'
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set POSTGRES_IMAGE}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    command: [postgres, -c, shared_buffers=64MB, -c, max_connections=50, -c, work_mem=2MB, -c, maintenance_work_mem=32MB]
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    networks: [backend]
+    mem_limit: 256m
+    cpus: 0.75
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging: *logs
+
+  migrate:
+    <<: *app
+    profiles: [maintenance]
+    restart: 'no'
+    command: [npm, run, db:migrate]
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 320m
+
+  api:
+    <<: *app
+    command: [node, --max-old-space-size=192, dist/main.js]
+    depends_on:
+      postgres: {condition: service_healthy}
+    mem_limit: 320m
+    cpus: 0.75
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: [node, --max-old-space-size=256, dist/worker.js]
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 384m
+    cpus: 0.75
+
+  edge:
+    image: ${EDGE_IMAGE:?Set EDGE_IMAGE}
+    restart: unless-stopped
+    environment:
+      WEBSITE_DOMAIN: ${WEBSITE_DOMAIN:?Set WEBSITE_DOMAIN}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:?Set ADMIN_DOMAIN}
+    ports:
+      - '${EDGE_BIND_IP:-127.0.0.1}:80:80'
+      - '${EDGE_BIND_IP:-127.0.0.1}:443:443'
+    volumes:
+      - ./data/caddy:/data
+      - ./data/caddy-config:/config
+    networks: [backend]
+    depends_on:
+      api: {condition: service_healthy}
+    mem_limit: 96m
+    cpus: 0.25
+    logging: *logs
+
+networks:
+  backend:

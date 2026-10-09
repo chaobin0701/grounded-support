@@ -1,0 +1,43 @@
+{
+    admin off
+}
+
+(application_api) {
+    @api path /api/*
+    handle @api {
+        request_body {
+            max_size 3MB
+        }
+        reverse_proxy api:3000 {
+            flush_interval -1
+        }
+    }
+}
+
+{$WEBSITE_DOMAIN} {
+    import application_api
+    handle {
+        root * /srv/website
+        try_files {path} /index.html
+        file_server
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+}
+
+{$ADMIN_DOMAIN} {
+    import application_api
+    handle {
+        root * /srv/web
+        try_files {path} /index.html
+        file_server
+    }
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+}

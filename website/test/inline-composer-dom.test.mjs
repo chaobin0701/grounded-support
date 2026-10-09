@@ -140,6 +140,35 @@ async function mount(t, doc = { text: "", products: [] }) {
   const caret = position => { root.focus(); setEditorSelection(root, position); document.dispatchEvent(new Event("selectionchange")); };
   return { root, state, instance, notices, submissions, key, caret };
 }
+test('占位提示依据实际内容，中文组词未提交草稿时立即消失，取消后恢复', async t => {
+  const { root, state } = await mount(t);
+  assert.equal(root.dataset.empty, 'true');
+  root.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+  root.replaceChildren(document.createTextNode('ni'));
+  root.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', isComposing: true, bubbles: true }));
+  assert.equal(root.dataset.empty, 'false', 'does not wait for a Vue flush or committed parent text');
+  assert.equal(state.text, '', 'IME intermediate text does not overwrite the saved draft');
+  await nextTick();
+  assert.equal(root.dataset.empty, 'false');
+  root.replaceChildren();
+  root.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }));
+  await nextTick();
+  assert.equal(root.dataset.empty, 'true');
+});
+test('普通输入、引用、撤销和草稿切换同步占位状态，不与文字重叠', async t => {
+  const { root, state, instance, key } = await mount(t);
+  root.replaceChildren(document.createTextNode('问题'));
+  root.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  assert.equal(root.dataset.empty, 'false');
+  await nextTick();
+  assert.equal(state.text, '问题');
+  state.text = ''; state.key = 'new'; await nextTick();
+  assert.equal(root.dataset.empty, 'true');
+  instance.value.insertProduct({ product: product('1'), draft: '', caret: null });
+  await nextTick(); assert.equal(root.dataset.empty, 'false');
+  key('z', { ctrlKey: true }); await nextTick();
+  assert.equal(root.dataset.empty, 'true');
+});
 test("DOM 中正文和原子引用真实交错，Range 在引用前/后、中间和换行后都正确", () => {
   const root = document.createElement("div"); document.body.append(root);
   const doc = { text: "前🙂\n后", products: [product("1", 1), product("2", 4)] };

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { productMessageParts } from '../src/product-message.ts';
 
 const context = { productIds: ['xiaomi-electric-warmer'], productReferences: [{ productId: 'xiaomi-electric-warmer', offset: 8, length: 5 }], products: [{ id: 'xiaomi-electric-warmer', name: '已改名的目录产品' }] };
-test('admin and standalone chat style existing names without duplicating text or losing newlines', () => {
+test('admin styles existing names without duplicating text or losing newlines', () => {
   const content = '这个产品怎么样\n米家电暖器';
   const parts = productMessageParts(content, context);
   assert.deepEqual(parts, [{ type: 'text', text: '这个产品怎么样\n' }, { type: 'product', id: 'xiaomi-electric-warmer', name: '米家电暖器' }]);
@@ -21,9 +21,9 @@ test('invalid ranges keep readable body text and unlinked messages remain unchan
   }
   assert.deepEqual(productMessageParts(content), [{ type: 'text', text: content }]);
 });
-test('both administration and legacy workspace use safe shared product-message rendering', () => {
+test('administration retains safe product-message rendering after the legacy workspace is removed', () => {
   const read = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
-  for (const file of ['ConversationTraceAdmin.vue', 'ChatWorkspace.vue']) assert.ok(read(file).includes('<ProductMessageContent'));
+  assert.ok(read('ConversationTraceAdmin.vue').includes('<ProductMessageContent'));
   const component = read('ui/ProductMessageContent.vue');
   assert.ok(component.includes('{{ part.name }}'));
   assert.ok(!component.includes('v-html'));

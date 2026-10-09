@@ -56,8 +56,10 @@ test("两个模式共享自适应输入、草稿更新和尺寸监听，不遗�
   assert.doesNotMatch(workspace, /classList.add\("chat-composer--compact"\)/);
   const css = await readFile(new URL("../src/chat.css", import.meta.url), "utf8");
   assert.match(css, /max-height: min\(240px, 35dvh\);/);
-  assert.match(css, /\.chat-composer\s*\{[^}]*position: relative;[^}]*min-height: 62px;[^}]*border-radius: 24px;[^}]*padding: 14px 64px 14px 16px;/);
+  assert.match(css, /\.chat-composer\s*\{[^}]*position: relative;[^}]*min-height: 62px;[^}]*border-radius: 24px;[^}]*padding: 14px 64px;/);
   assert.match(css, /\.chat-composer--compact\s*\{[^}]*padding-block: 18px;/);
   assert.match(css, /\.chat-composer-actions\s*\{[^}]*position: absolute;[^}]*right: 10px;[^}]*bottom: 8px;[^}]*width: 44px;[^}]*height: 44px;/);
   assert.match(css, /bottom: calc\(var\(--chat-composer-height, 160px\) \+ 12px\);/);
+  assert.match(css, /\.chat-composer-actions > button\s*\{/);
+  assert.doesNotMatch(css, /\.chat-composer button\s*\{/);
 });

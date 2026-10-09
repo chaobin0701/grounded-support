@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Hexu backup at 03:30 Shanghai time
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 Asia/Shanghai
+Persistent=true
+RandomizedDelaySec=300
+Unit=hexu-backup.service
+
+[Install]
+WantedBy=timers.target

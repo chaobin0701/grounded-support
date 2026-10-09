@@ -179,8 +179,8 @@
   flex-direction: column;
   background: var(--white);
   border: 1px solid var(--line);
-  border-radius: 7px;
-  box-shadow: 0 12px 32px #202b2826;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px #202b281a;
   overflow: hidden;
 }
 .chat-history-popover > header {
@@ -188,11 +188,28 @@
   align-items: center;
   justify-content: space-between;
   min-height: 44px;
-  padding: 0 10px 0 18px;
+  padding: 0 6px 0 16px;
   font-size: 12px;
   color: var(--muted);
   flex-shrink: 0;
 }
+.chat-history-refresh {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  margin: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+.chat-history-refresh::after { content: ""; position: absolute; inset: -6px; }
+.chat-history-refresh:hover:not(:disabled) { background: var(--mint); color: var(--brand); }
+.chat-history-refresh:disabled { opacity: 0.5; cursor: wait; }
+.chat-history-refresh svg { width: 14px; height: 14px; }
 .chat-recent-list {
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -204,7 +221,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 38px;
+  min-height: 44px;
   border: 0;
   border-radius: 4px;
   background: none;
@@ -351,7 +368,7 @@
 }
 .chat-workspace--full .chat-messages {
   /* Keep text clear of overlay scrollbars, including macOS scroll thumbs. */
-  padding: 6px 24px 16px 0;
+  padding: 32px 24px 16px 0;
 }
 .chat-workspace--full .chat-welcome {
   margin-inline: 64px 0;
@@ -573,7 +590,7 @@
     max-height: min(520px, calc(100dvh - 290px));
   }
   .chat-workspace--full .chat-messages {
-    padding: 8px 16px 16px 0;
+    padding: 24px 16px 16px 0;
   }
   .chat-workspace--full .chat-welcome {
     margin-inline: 46px 0;

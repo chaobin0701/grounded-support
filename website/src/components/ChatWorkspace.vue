@@ -72,6 +72,7 @@ function send() {
     state.notice = "请先选择产品，或按 Esc 关闭产品列表后发送。";
     return;
   }
+  productPicker.value?.close();
   following.value = true;
   void chat.send();
 }
@@ -308,14 +309,14 @@ onBeforeUnmount(() => {
             <ChatHistoryMenu />
           </template>
           <ChatQuota />
-          <ProductReferencePicker ref="productPicker" :selected="state.products" :disabled="busy || state.unresolved"
-            :draft="encodedDraft" :composer="composer?.element || null" @select="attachProduct" />
         </div>
         <form class="chat-composer" :class="{ 'chat-composer--compact': compactComposer, 'chat-composer--with-products': state.products.length }" @submit.prevent="send">
           <InlineComposer ref="composer" :id="`chat-input-${mode}`" :text="state.draft" :products="state.products"
             :document-key="state.activeId || 'new'" :disabled="state.loading || state.switching" :references-disabled="busy || state.unresolved"
             :expanded="productPicker?.opened || false" :list-id="productPicker?.listId" :active-descendant="productPicker?.activeDescendant"
             @change="edit" @caret="syncProductCommand" @keydown="keyboard" @compact="compactComposer = $event" @notice="state.notice = $event" />
+          <ProductReferencePicker ref="productPicker" :selected="state.products" :disabled="busy || state.unresolved"
+            :draft="encodedDraft" :composer="composer?.element || null" @select="attachProduct" />
           <div class="chat-composer-actions"><button
             type="submit"
             :disabled="busy || state.unresolved || readableDraft.length < 2 || readableDraft.length > 2000"
