@@ -32,31 +32,12 @@
 - **流式交互**：通过 SSE 返回公开处理说明、工具进度和回答文本，会话和未完成请求可以恢复。
 - **基础支撑能力**：后台配置模型、Embedding、Agent 人设与记忆、知识库和产品数据；同时提供网站接入与服务端 API 接入能力。
 
-## 系统结构
-
-```mermaid
-flowchart LR
-    W[企业官网 website] --> API[NestJS API]
-    C[客服与管理后台 web] --> API
-    API --> A[Agent Runtime]
-    A --> L[OpenAI Compatible 模型]
-    A --> T[产品与知识库工具]
-    T --> DB[(PostgreSQL + pgvector)]
-    API --> DB
-    API --> Q[pg-boss 任务队列]
-    Q --> WK[文档处理 Worker]
-    WK --> DB
-    WK --> E[Embedding 服务]
-```
-
-前端不持有模型密钥。API 负责访客身份、权限、会话、配额和 Agent 编排；Worker 负责文档处理与向量生成。回答模型使用 OpenAI Compatible 接口；Embedding 可配置火山方舟、OpenAI 或其他兼容服务。
-
 ## 技术栈
 
 ### Agent 与后端
 
 - **NestJS + TypeScript**：提供模块化 API、会话、权限、配额和后台管理能力。
-- **Agent Runtime**：独立的 Agent Loop、Agent Runner、上下文构建器和运行结果模型，便于使用 fake provider 或 fake tools 进行测试和扩展。
+- **Agent Runtime**：由 Agent Loop、Agent Runner 和上下文构建器组成，负责组织模型规划、工具执行、资料复用与最终回答；会话持久化和 HTTP 接入由外层服务处理。
 - **Tool Registry**：统一注册工具、定义参数 Schema、执行策略、超时、权限和结果格式；当前接入知识库检索和产品目录工具，并保留 MCP Adapter 扩展点。
 - **Skill Registry**：将专项业务流程作为可加载指导，与基础 Agent 提示词和工具执行逻辑分离。
 - **RAG**：PostgreSQL + pgvector 保存文档、片段和向量，支持词法、向量与 RRF 融合检索；pg-boss 负责异步文档处理。
