@@ -9,6 +9,7 @@ import type { PublicProgressEvent } from './chat.service';
 import { isProductDetail } from './product-context';
 import { z } from 'zod';
 import type { AgentTool } from '../ai/tools/agent-tool';
+import { productResources } from '../ai/context/context-contribution';
 
 export type ProductPreparation = {
   requestedIds: string[];
@@ -23,10 +24,10 @@ export type ProductPreparation = {
 export class ProductContextPreparer {
   constructor(private readonly catalog: ProductCatalogService, private readonly tools: ToolExecutionService) {}
 
-  async prepare(question: string, ids: string[], prior: unknown[], configuration: AgentConfiguration, emit?: (event: PublicProgressEvent) => void): Promise<ProductPreparation> {
+  async prepare(question: string, ids: string[], prior: unknown[], configuration: AgentConfiguration, emit?: (event: PublicProgressEvent) => void, scope: { conversationId?: string; traceId?: string } = {}): Promise<ProductPreparation> {
     const runtime = configuration.runtime;
     const executionState = this.tools.createStateForAgent(runtime.allowedTools, runtime.maxToolCalls, { timeoutMs: runtime.toolTimeoutMs, maxResultChars: runtime.maxToolResultChars });
-    const toolContext: ToolContext = { permissions: runtime.allowedTools, enabledSkillIds: configuration.enabledSkills, state: new Map() };
+    const toolContext: ToolContext = { sessionId: scope.conversationId, traceId: scope.traceId, permissions: runtime.allowedTools, enabledSkillIds: configuration.enabledSkills, state: new Map() };
     const prepared: ProductPreparation = { requestedIds: ids, products: [], evidence: [], entries: [], executionState, toolContext };
     const detailName = runtime.allowedTools.find(name => ['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(name)) ?? 'get_product_detail';
     const allowed = runtime.allowedTools.includes(detailName);
@@ -60,6 +61,7 @@ export class ProductContextPreparer {
       // One bounded SQL read is one execution, not five requests hidden from the budget.
       const batch: AgentTool = {
         name: detailName, description: '后端产品上下文批量预加载，不向模型暴露新的工具协议',
+        contributeContext: productResources,
         inputSchema: z.object({ productIds: z.array(z.string().min(1).max(80)).min(1).max(5) }),
         execute: async args => {
           const ids = (args as { productIds: string[] }).productIds;

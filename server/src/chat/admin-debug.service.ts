@@ -267,10 +267,11 @@ export class AdminDebugService {
         if (trace.refused === true && toolCalls.length === 0 && looksLikeToolIntent(trace.rawModelOutput)) {
           add({ code: 'planner_tool_not_executed', severity: 'error', title: '模型请求了工具但未执行', detail: `轨迹 ${trace.id} 的原始模型输出包含工具请求，但执行步骤中没有对应的工具调用，随后进入了拒答。`, traceId: trace.id });
         }
-        const actualTools = steps.filter(step => (asRecord(step).type === 'tool_call' || asRecord(step).origin === 'preload') && !asRecord(step).reused);
+        const actualTools = steps.filter(step => (asRecord(step).type === 'tool_call' || asRecord(step).origin === 'preload') && !asRecord(step).reused && !asRecord(step).deferred);
         const failedTools = actualTools.filter((step) => asRecord(step).ok === false);
         if (failedTools.length) add({ code: 'tool_failed', severity: 'error', title: '工具调用失败', detail: `轨迹 ${trace.id} 有 ${failedTools.length} 次工具调用失败。`, traceId: trace.id });
-        if (toolCalls.length >= 5) add({ code: 'tool_call_limit_risk', severity: 'warning', title: '工具调用次数较多', detail: `轨迹 ${trace.id} 共调用 ${toolCalls.length} 次工具。`, traceId: trace.id });
+        const attemptedToolCount = toolCalls.filter(step => !asRecord(step).deferred).length;
+        if (attemptedToolCount >= 5) add({ code: 'tool_call_limit_risk', severity: 'warning', title: '工具调用次数较多', detail: `轨迹 ${trace.id} 共调用 ${attemptedToolCount} 次工具。`, traceId: trace.id });
         const callKeys = actualTools.map((step) => JSON.stringify({ name: asRecord(step).name, arguments: asRecord(step).arguments }));
         if (new Set(callKeys).size < callKeys.length) add({ code: 'duplicate_tool_call', severity: 'warning', title: '存在重复工具调用', detail: `轨迹 ${trace.id} 有完全相同的工具参数被重复调用。`, traceId: trace.id });
         const preflight = asRecord(context.preflight);

@@ -4,6 +4,7 @@ import { SearchService } from '../../documents/search.service';
 import { AgentTool } from './agent-tool';
 import { ToolContext } from './tool-context';
 import { ToolResult } from './tool-result';
+import { knowledgeResources } from '../context/context-contribution';
 
 const inputSchema = z.object({
   query: z.string().trim().min(2).max(200),
@@ -16,6 +17,7 @@ export class KnowledgeSearchTool implements AgentTool<z.infer<typeof inputSchema
   readonly description = '查询已上传的商家资料，只返回资料中可以验证的内容。';
   readonly inputSchema = inputSchema;
   readonly planning = { canBatch: true } as const;
+  readonly contributeContext = knowledgeResources;
 
   constructor(private readonly search: SearchService) {}
 

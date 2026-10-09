@@ -79,13 +79,23 @@ test('native batches execute sequentially, emit one model commentary before tool
   assert.equal(result.result.answer, '可以复用已有资料直接回答。');
 });
 
-test('non-batch tools retain the existing scheduling boundary', async () => {
+test('replanning boundary retains every native call and result instead of dropping a batch tail', async () => {
   const r = runtime([
-    native([call('search', 'search_knowledge'), call('detail', 'get_product_detail')]),
-    native([call('detail-next', 'get_product_detail')]), final(),
-  ], [{ name: 'search_knowledge' }, { name: 'get_product_detail', canBatch: false }]);
+    native([call('search', 'search_knowledge'), call('skill', 'load_skill'), call('detail', 'get_product_detail', { productId: 'one' })]),
+    native([call('detail-next', 'get_product_detail', { productId: 'one' })]), final(),
+  ], [{ name: 'search_knowledge' }, { name: 'load_skill', canBatch: false }, { name: 'get_product_detail' }]);
   const result = await r.runner.run(input);
-  assert.deepEqual(result.contextSnapshot.executionSteps.filter(step => step.type === 'tool_call').map(step => `${step.plannerRound}:${step.name}`), ['1:search_knowledge', '2:get_product_detail']);
+  assert.deepEqual(r.executions, ['search_knowledge', 'load_skill', 'get_product_detail']);
+  const steps = result.contextSnapshot.executionSteps.filter(step => step.type === 'tool_call');
+  assert.deepEqual(steps.map(step => `${step.plannerRound}:${step.name}`), ['1:search_knowledge', '1:load_skill', '1:get_product_detail', '2:get_product_detail']);
+  assert.equal(steps[2].deferred, true);
+  assert.equal(steps[2].errorCode, 'tool_requires_replanning');
+  const transcript = r.requests[1].messages;
+  assert.deepEqual(transcript.find(m => m.role === 'assistant' && m.toolCalls)?.toolCalls.map(c => c.id), ['search', 'skill', 'detail']);
+  assert.deepEqual(transcript.filter(m => m.role === 'tool').map(m => m.toolCallId), ['search', 'skill', 'detail']);
+  assert.equal(JSON.parse(transcript.find(m => m.toolCallId === 'detail').content).requiresReplanning, true);
+  assert.equal(steps[3].ok, true, 'deferred arguments are not poisoned by duplicate protection');
+  assert.equal(result.result.refused, false);
 });
 
 test('direct answer/refusal need no tools or commentary; failures have a different public error code', async () => {

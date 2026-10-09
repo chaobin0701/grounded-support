@@ -35,7 +35,8 @@ export class VersionSearchService {
         COALESCE(p.ordinal,c.ordinal) AS ordinal,COALESCE(p.heading_path,c.heading_path) AS "headingPath",
         COALESCE(p.content,c.content) AS content,
         (COALESCE(p.source_locator,c.source_locator)->>'start')::int AS "sourceStartLine",
-        (COALESCE(p.source_locator,c.source_locator)->>'end')::int AS "sourceEndLine"`;
+        (COALESCE(p.source_locator,c.source_locator)->>'end')::int AS "sourceEndLine",
+        'published' AS "indexKind",c.version_id::int AS "indexVersionId",d.knowledge_base_id::int AS "knowledgeBaseId"`;
       const joins = `FROM index_chunks c JOIN documents d ON d.id=c.document_id
         JOIN knowledge_bases kb ON kb.id=d.knowledge_base_id LEFT JOIN index_chunks p ON p.id=c.parent_chunk_id`;
       const where = `c.version_id=$1 AND c.kind <> 'parent' AND d.archived_at IS NULL AND d.enabled_for_retrieval

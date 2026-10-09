@@ -20,6 +20,7 @@ export interface AgentConfigurationView {
   enabledSkills: string[];
   settings: AgentEditableConfiguration;
   memory: {
+    toolResults: { enabled: boolean; products: boolean; knowledge: boolean };
     recentTurns: number; snapshotTurns: number;
     transcriptMaxMessages: number; transcriptMaxTraces: number;
     summaryTriggerTurns: number; summaryKeepRecentTurns: number;

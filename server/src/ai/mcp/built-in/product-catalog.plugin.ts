@@ -2,12 +2,16 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ProductCatalogService } from '../../tools/product-catalog/product-catalog.service';
 import type { McpPluginDefinition } from '../mcp-plugin.types';
+import { productDetailPlanning } from '../../tools/product-catalog/product-tool-planning';
+import { productResources } from '../../context/context-contribution';
 
 export function createProductCatalogPlugin(catalog: ProductCatalogService): McpPluginDefinition {
   return {
     id: 'product_catalog',
     version: '1.0.0',
     enabled: true,
+    toolPlanning: { get_product_detail: productDetailPlanning },
+    toolContextProjectors: { get_product_detail: productResources },
     createServer: () => {
       const server = new McpServer({ name: 'product_catalog', version: '1.0.0' });
       server.registerTool('list_product_categories', { description: '读取产品目录中的产品分类。', inputSchema: {} }, async () => {

@@ -25,6 +25,8 @@ export const agentConfigurationSchema = z.object({
     }
   }),
   memory: z.object({
+    toolResults: z.object({ enabled: z.boolean(), products: z.boolean(), knowledge: z.boolean() }).strict()
+      .default({ enabled: true, products: true, knowledge: true }),
     recentTurns: z.number().int().min(1).max(20),
     snapshotTurns: z.number().int().min(1).max(50),
     transcriptMaxMessages: z.number().int().min(10).max(500),
@@ -93,4 +95,15 @@ export function readAgentConfiguration(filePath = process.env.AGENT_CONFIG_PATH?
 
 export function agentConfigurationRevision(config: AgentConfiguration): string {
   return createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 12);
+}
+
+/** Preserve old persisted concurrency tokens until an administrator explicitly saves the new fields. */
+export function storedAgentConfigurationRevision(value: unknown): string {
+  const configuration = parseAgentConfiguration(value);
+  const memory = (value as { memory?: Record<string, unknown> }).memory;
+  if (memory && !Object.prototype.hasOwnProperty.call(memory, 'toolResults')) {
+    const { toolResults: _defaults, ...oldMemory } = configuration.memory;
+    return createHash('sha256').update(JSON.stringify({ ...configuration, memory: oldMemory })).digest('hex').slice(0, 12);
+  }
+  return agentConfigurationRevision(configuration);
 }

@@ -20,10 +20,11 @@ import { IntegrationModule } from '../integrations/integration.module';
 import { IntegrationChatGateway } from './integration-chat.gateway';
 import { AgentApiController } from './agent-api.controller';
 import { ProductContextPreparer } from './product-context-preparer';
+import { ContextMemoryService } from './context-memory.service';
 
 @Module({
   imports: [DocumentModule, AdminModule, AgentModule, SkillsModule, IntegrationModule],
   controllers: [ChatController, AgentApiController, AdminChatTraceController, AdminConversationController, AdminDebugController, AdminAgentConfigController],
-  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, AdminDebugService, AdminConversationService, AgentSettingsService, IntegrationChatGateway, ProductContextPreparer],
+  providers: [ChatService, ChatRateLimitService, ConversationService, ChatOrchestratorService, ChatApplicationService, AdminDebugService, AdminConversationService, AgentSettingsService, IntegrationChatGateway, ProductContextPreparer, ContextMemoryService],
 })
 export class ChatModule {}

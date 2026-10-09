@@ -56,6 +56,7 @@ export class ContextBuilder {
       summary,
       history,
       toolResults: input.toolResults.map(result => {
+        if (Array.isArray(result.evidenceRefs)) return { tool: result.tool, evidenceRefs: result.evidenceRefs };
         if (['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(String(result.tool))) {
           if (typeof result.productRef === 'string' && (input.products ?? []).some(p => p.id === result.productRef)) return { tool: result.tool, productRef: result.productRef };
           try {

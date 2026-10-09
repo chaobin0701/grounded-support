@@ -25,6 +25,7 @@
     "maxToolResultChars": 12000
   },
   "memory": {
+    "toolResults": { "enabled": true, "products": true, "knowledge": true },
     "recentTurns": 3,
     "snapshotTurns": 6,
     "transcriptMaxMessages": 120,

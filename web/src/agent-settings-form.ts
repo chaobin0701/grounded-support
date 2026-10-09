@@ -33,6 +33,9 @@ export function validateAgentSettings(settings: AgentEditableConfiguration): Rec
   text('identity.persona', settings.identity.persona, 8000); text('answeringInstructions', settings.answeringInstructions, 12000);
   text('welcome.title', settings.welcome.title, 200); text('welcome.description', settings.welcome.description, 500);
   text('memory.summaryInstructions', settings.memory.summaryInstructions, 8000);
+  for (const key of ['enabled', 'products', 'knowledge'] as const) {
+    if (typeof settings.memory.toolResults?.[key] !== 'boolean') errors[`memory.toolResults.${key}`] = '请选择开启或关闭。';
+  }
   if (!settings.welcome.suggestedQuestions.length || settings.welcome.suggestedQuestions.length > 6 || settings.welcome.suggestedQuestions.some(question => question.trim().length < 2 || question.trim().length > 200)) errors['welcome.suggestedQuestions'] = '推荐问题为 1–6 条，每条 2–200 个字符。';
   for (const [section, fields] of [['memory', [...memoryFields, ...advancedMemoryFields]], ['runtime', runtimeFields]] as const) {
     for (const field of fields) {

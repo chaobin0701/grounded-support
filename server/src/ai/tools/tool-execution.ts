@@ -5,6 +5,7 @@ import { ToolPolicy, ToolExecutionState } from './tool-policy';
 import { ToolRegistry } from './tool-registry';
 import { ToolResult } from './tool-result';
 import type { LlmToolDefinition } from '../providers/provider.types';
+import type { ContextResource } from '../context/context-contribution';
 
 export type ToolExecutionTrace = {
   name: string;
@@ -14,11 +15,13 @@ export type ToolExecutionTrace = {
   errorCode?: string;
   resultChars?: number;
   reused?: boolean;
+  deferred?: boolean;
 };
 
 export type ToolExecutionOutcome = {
   result: ToolResult;
   trace: ToolExecutionTrace;
+  contextResources?: ContextResource[];
 };
 
 @Injectable()
@@ -94,6 +97,19 @@ export class ToolExecutionService {
     return this.executeWithTool(name, args, context, state);
   }
 
+  /** Close the native call pair explicitly; the model may reissue it after reading fresh guidance. */
+  deferUntilReplanning(name: string, args: Record<string, unknown>, state: ToolExecutionState): ToolExecutionOutcome {
+    const trace: ToolExecutionTrace = { name, arguments: args, ok: false, durationMs: 0 };
+    const failure = this.policy.checkCall(state, name, args);
+    if (failure) return this.failure(failure, trace);
+    let tool: AgentTool;
+    try { tool = this.registry.get(name); }
+    catch { return this.failure('unknown_tool', trace); }
+    const validation = this.policy.validateInput(tool, args);
+    if (!validation.ok) return this.failure(validation.errorCode, trace);
+    return this.failure('tool_requires_replanning', { ...trace, deferred: true });
+  }
+
   /** Trusted backend-only batch adapter. Retains the registered capability's permission and budget. */
   async executePreflight(tool: AgentTool, args: Record<string, unknown>, context: ToolContext, state: ToolExecutionState): Promise<ToolExecutionOutcome> {
     return this.executeWithTool(tool.name, args, context, state, tool);
@@ -109,7 +125,7 @@ export class ToolExecutionService {
         const parsed = !preflightTool ? this.registry.get(name).inputSchema.safeParse(args) : { success: false as const };
         const id = parsed.success ? (parsed.data as { productId: string }).productId : undefined;
         const cached = id ? state.productResults?.get(id) : undefined;
-        if (cached) return { result: this.policy.normalizeResult(cached, state.maxResultChars), trace: { ...baseTrace(), ok: true, reused: true, resultChars: cached.content.length } };
+        if (cached) return this.outcome(this.registry.get(name), this.policy.normalizeResult(cached, state.maxResultChars), { ...baseTrace(), ok: true, reused: true, resultChars: cached.content.length });
       } catch { /* The normal path safely reports unknown tools. */ }
     }
     const policyFailure = this.policy.beforeCall(state, name, args);
@@ -140,11 +156,17 @@ export class ToolExecutionService {
         ...(normalized.errorCode ? { errorCode: normalized.errorCode } : {}),
         resultChars: normalized.content.length,
       };
-      return { result: normalized, trace };
+      return this.outcome(tool, normalized, trace);
     } catch (error) {
       const errorCode = error instanceof ToolTimeoutError ? 'tool_timeout' : 'tool_execution_failed';
       return this.failure(errorCode, { ...baseTrace(), errorCode });
     }
+  }
+
+  private outcome(tool: AgentTool, result: ToolResult, trace: ToolExecutionTrace): ToolExecutionOutcome {
+    // Projection failures cannot change a successfully executed business operation.
+    try { return { result, trace, ...(result.success && tool.contributeContext ? { contextResources: tool.contributeContext(result) } : {}) }; }
+    catch { return { result, trace }; }
   }
 
   private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

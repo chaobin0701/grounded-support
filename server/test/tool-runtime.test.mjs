@@ -72,3 +72,18 @@ test('tool execution enforces the Agent tool allowlist and call limit', async ()
   const limited = await runtime.execute('allowed-again', {}, context, state);
   assert.equal(limited.result.errorCode, 'tool_not_allowed');
 });
+test('deferred calls validate policy/schema without consuming budget or duplicate history, and can execute next round', async () => {
+  let executions = 0;
+  const tool = { name: 'example', inputSchema: { safeParse: input => input.ok ? { success: true, data: input } : { success: false } }, execute: async () => { executions++; return { success: true, content: 'ok' }; } };
+  const runtime = new ToolExecutionService({ get: name => { if (name !== tool.name) throw Error('missing'); return tool; } }, new ToolPolicy());
+  const state = runtime.createStateForAgent(['example', 'missing'], 1);
+  assert.equal(runtime.deferUntilReplanning('blocked', {}, state).result.errorCode, 'tool_not_allowed');
+  assert.equal(runtime.deferUntilReplanning('missing', {}, state).result.errorCode, 'unknown_tool');
+  assert.equal(runtime.deferUntilReplanning('example', { ok: false }, state).result.errorCode, 'invalid_arguments');
+  const deferred = runtime.deferUntilReplanning('example', { ok: true }, state);
+  assert.equal(deferred.result.errorCode, 'tool_requires_replanning'); assert.equal(deferred.trace.deferred, true);
+  assert.equal(state.callCount, 0); assert.equal(state.seenCalls.size, 0); assert.equal(executions, 0);
+  assert.equal((await runtime.execute('example', { ok: true }, context, state)).result.success, true);
+  assert.equal(executions, 1); assert.equal(state.callCount, 1);
+  assert.equal(runtime.deferUntilReplanning('example', { ok: true }, state).result.errorCode, 'tool_call_limit_exceeded');
+});

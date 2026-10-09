@@ -23,3 +23,18 @@ test('capability toggle treats local and MCP aliases as one operation; system en
   toggleCapability(value, group, true); assert.equal(value.runtime.allowedTools.filter(n => n === 'list_products').length, 1);
   toggleCapability(value, { system: true, tools: [{ name: 'load_skill' }] }, false); assert.ok(value.runtime.allowedTools.includes('load_skill'));
 });
+test('context memory switches remain independent booleans; disabling reuse never rewrites tool permissions', () => {
+  const value = settings(), allowed = [...value.runtime.allowedTools];
+  assert.deepEqual(value.memory.toolResults, { enabled: true, products: true, knowledge: true });
+  value.memory.toolResults.enabled = false;
+  assert.deepEqual(validateAgentSettings(value), {});
+  assert.deepEqual(value.runtime.allowedTools, allowed);
+  value.memory.toolResults.products = 'false';
+  assert.ok(validateAgentSettings(value)['memory.toolResults.products']);
+});
+test('the existing memory panel contains accessible master/product/RAG switches inside the read-only fieldset', () => {
+  const source = readFileSync(new URL('../src/AgentConfigAdmin.vue', import.meta.url), 'utf8');
+  assert.match(source, /fieldset[^>]+:disabled="!canEdit/);
+  for (const key of ['enabled', 'products', 'knowledge']) assert.ok(source.includes(`v-model="draft.memory.toolResults.${key}"`));
+  assert.match(source, /aria-label="跨轮复用工具资料"/);
+});

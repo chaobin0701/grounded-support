@@ -8,6 +8,7 @@ import { AgentLoop } from './agent-loop';
 import { AppConfigService } from '../../config/config.service';
 import { DEFAULT_AGENT_CONFIGURATION } from '../../config/agent-config';
 import { TRANSCRIPT_VERSION, transcriptMessageBase, type AgentTranscriptMessage } from '../../chat/agent-transcript';
+import { makeContextBlock, readContextBlocks, canUseContextSource } from '../context/context-contribution';
 
 @Injectable()
 export class AgentRunner {
@@ -40,6 +41,22 @@ export class AgentRunner {
       transcript,
     });
     const state = this.createState(initialContext, input, transcript, [userMessage]);
+    state.contextSnapshot.runtimeContextBlocks = state.contextBlocks;
+    for (const product of input.restoredContext?.products ?? []) state.products.set(product.id, product);
+    for (const hit of input.restoredContext?.evidence ?? []) state.hits.set(hit.chunkId, hit);
+    state.contextSnapshot.contextMemory = input.restoredContext?.diagnostics;
+    let hostContextChars = 0;
+    for (const block of readContextBlocks(input.initialContextBlocks, input.conversationId ?? '').slice(0, 20)) {
+      if (!canUseContextSource(block.source, agent.runtime.allowedTools)) continue;
+      const size = JSON.stringify(block.resources).length;
+      if (hostContextChars + size > Math.min(24000, agent.runtime.maxToolResultChars * 2)) continue;
+      hostContextChars += size;
+      state.contextBlocks.push(block);
+      for (const resource of block.resources) {
+        if (resource.kind === 'product') state.products.set(resource.data.id, resource.data);
+        else state.hits.set(resource.data.chunkId, resource.data);
+      }
+    }
     if (input.productPreparation) {
       state.executionState = input.productPreparation.executionState;
       state.toolContext = input.productPreparation.toolContext;
@@ -51,7 +68,14 @@ export class AgentRunner {
         reused: entry.outcome.trace.reused ?? false, errorCode: entry.outcome.trace.errorCode,
         detail: entry.outcome.trace.reused ? '复用已校验版本的产品详情' : '第一次模型调用前准备上下文',
       });
+      for (const entry of input.productPreparation.entries) {
+        const block = makeContextBlock(entry.outcome.contextResources ?? [], { conversationId: input.conversationId ?? '', traceId: input.traceId, source: entry.name, origin: 'preload' }, agent.runtime.maxToolResultChars);
+        if (block) state.contextBlocks.push(block);
+      }
       state.contextSnapshot.productPreparation = state.executionSteps.filter(step => step.origin === 'preload');
+    }
+    for (const product of input.restoredContext?.products ?? []) if (!state.executionState.productResults?.has(product.id)) {
+      state.executionState.productResults?.set(product.id, { success: true, content: JSON.stringify(product), data: product });
     }
     for (const hit of input.initialEvidence ?? []) state.hits.set(hit.chunkId, hit);
     state.contextSnapshot.preflight = input.preflight;
@@ -99,6 +123,8 @@ export class AgentRunner {
     return {
       configuration: agent,
       toolContext: {
+        sessionId: input.conversationId,
+        traceId: input.traceId,
         permissions: runtime.allowedTools,
         enabledSkillIds: agent.enabledSkills,
         state: new Map([['knownProductIds', new Set<string>()]]),
@@ -111,7 +137,7 @@ export class AgentRunner {
       hits: new Map(),
       products: new Map(),
       contextSnapshot: {
-        promptVersion: 'agent-native-tools-public-commentary-v3',
+        promptVersion: 'agent-runtime-context-memory-v5',
         systemPrompt: this.loop.systemPromptFor(input.availableSkills ?? [], [...loadedSkills.values()], agent),
         agentConfigurationRevision: input.configurationSnapshot?.revision,
         agentConfigurationVersion: input.configurationSnapshot?.configurationVersion,
@@ -140,6 +166,7 @@ export class AgentRunner {
       plannerRound: 0,
       transcript,
       traceTranscript,
+      contextBlocks: [],
     };
   }
 
@@ -153,6 +180,7 @@ export class AgentRunner {
     state.contextSnapshot.toolCalls ??= state.toolCalls;
     state.contextSnapshot.toolResults ??= state.toolResults;
     state.contextSnapshot.agentTranscript = state.traceTranscript;
+    state.contextSnapshot.runtimeContextBlocks = state.contextBlocks;
     state.contextSnapshot.transcriptVersion = TRANSCRIPT_VERSION;
     state.contextSnapshot.executionSteps = state.executionSteps;
     state.contextSnapshot.modelCalls = state.modelCalls;

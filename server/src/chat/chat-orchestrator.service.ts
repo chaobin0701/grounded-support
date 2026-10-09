@@ -13,6 +13,7 @@ import { agentConfigurationRevision, DEFAULT_AGENT_CONFIGURATION, effectiveAgent
 import { AgentSettingsService } from '../config/agent-settings.service';
 import type { ChatAgentContext } from './chat.service';
 import { ProductContextPreparer } from './product-context-preparer';
+import { ContextMemoryService } from './context-memory.service';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
 
@@ -26,6 +27,7 @@ export class ChatOrchestratorService {
     @Optional() private readonly config?: AppConfigService,
     @Optional() private readonly settings?: AgentSettingsService,
     @Optional() private readonly productPreparer?: ProductContextPreparer,
+    @Optional() private readonly contextMemory?: ContextMemoryService,
   ) {}
 
   async askDetailed(
@@ -56,8 +58,12 @@ export class ChatOrchestratorService {
     // Retain explicit internal requests for real specialist guides only.
     if (requestedSkillId && (!this.skillRegistry?.has(requestedSkillId) || !agentConfig.enabledSkills.includes(requestedSkillId))) throw new BadRequestException('Unknown or unavailable skill');
     const initialSkills = requestedSkillId ? [this.skillRegistry!.get(requestedSkillId)] : [];
+    const restoredContext = agentContext?.conversationId && this.contextMemory
+      ? await this.contextMemory.restore(agentContext.conversationId, agentContext.contextBlocks ?? [], configurationSnapshot.configuration)
+      : undefined;
+    const reuseProducts = configurationSnapshot.configuration.memory.toolResults.enabled && configurationSnapshot.configuration.memory.toolResults.products;
     const productPreparation = agentContext?.requestContext?.productIds?.length && this.productPreparer
-      ? await this.productPreparer.prepare(question, agentContext.requestContext.productIds, agentContext.priorProducts ?? [], configurationSnapshot.configuration, emitProgress)
+      ? await this.productPreparer.prepare(question, agentContext.requestContext.productIds, reuseProducts ? restoredContext?.products ?? agentContext.priorProducts ?? [] : [], configurationSnapshot.configuration, emitProgress, agentContext)
       : undefined;
     const result = await this.agentRunner.run(
       {
@@ -72,6 +78,8 @@ export class ChatOrchestratorService {
         priorTranscript: agentContext?.priorTranscript,
         requestContext: agentContext?.requestContext,
         productPreparation,
+        restoredContext,
+        initialContextBlocks: agentContext?.currentContextBlocks,
         initialEvidence: productPreparation?.evidence,
       },
       { onContext, onProgress: emitProgress, onCommentary: emitCommentary },

@@ -22,7 +22,8 @@ export class McpModule implements OnModuleInit, OnApplicationShutdown {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    this.plugins.register(createProductCatalogPlugin(this.catalog));
+    const plugin = createProductCatalogPlugin(this.catalog);
+    this.plugins.register(plugin);
     const client = await this.plugins.start('product_catalog');
     if (!client) return;
     const discovered = await client.listTools();
@@ -40,7 +41,7 @@ export class McpModule implements OnModuleInit, OnApplicationShutdown {
         toolName: event.toolName,
         ...(event.errorCode ? { errorCode: event.errorCode } : {}),
       });
-    }));
+    }, plugin.toolPlanning?.[tool.name], plugin.toolContextProjectors?.[tool.name]));
   }
 
   async onApplicationShutdown(): Promise<void> { await this.plugins.stopAll(); }

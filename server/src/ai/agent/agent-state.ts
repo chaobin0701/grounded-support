@@ -8,6 +8,7 @@ import type { SkillDefinition } from '../skills/skill.types';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 import type { ContextBudget } from '../../chat/context-governor';
 import type { LlmResponseFormat, LlmToolCall, LlmToolDefinition } from '../providers/provider.types';
+import type { RuntimeContextBlock } from '../context/context-contribution';
 
 export type AgentModelCall = {
   id: string;
@@ -60,6 +61,7 @@ export type AgentExecutionStep = {
   toolIndex?: number;
   origin?: 'preload' | 'model';
   reused?: boolean;
+  deferred?: boolean;
 };
 
 export type AgentState = {
@@ -83,4 +85,5 @@ export type AgentState = {
   plannerRound: number;
   transcript: AgentTranscriptMessage[];
   traceTranscript: AgentTranscriptMessage[];
+  contextBlocks: RuntimeContextBlock[];
 };

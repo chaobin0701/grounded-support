@@ -7,6 +7,7 @@ import { knowledgeConfigSchema } from './knowledge-config';
 import { AppConfigService } from '../config/config.service';
 import { embeddingFingerprint, embeddingProfileSchema } from './profile-embedding';
 import { embedForProfile } from './embedding-runtime';
+import { evidenceDigest } from '../ai/context/context-contribution';
 
 @Injectable()
 export class SearchService {
@@ -40,13 +41,45 @@ export class SearchService {
       vector.push(...(result.vectorResults ?? []));
       vectorIndexedChunks += result.vectorIndexedChunks;
     }
-    const liveHits = fuseSearchResults(lexical, vector, limit);
+    const liveHits = fuseSearchResults(lexical, vector, limit).map(hit => ({ ...hit, indexKind: 'live' as const }));
     const versioned = this.versionSearch ? await this.versionSearch.search(query, limit) : null;
     return {
       hits: versioned ? fuseSearchResults(liveHits, versioned.hits, limit) : liveHits,
       retrievalMode: vectorIndexedChunks || versioned?.vectorIndexedChunks ? 'hybrid' : 'lexical-only',
       vectorIndexedChunks: vectorIndexedChunks + (versioned?.vectorIndexedChunks ?? 0),
     };
+  }
+
+  /** Validate original evidence against current retrieval visibility; no embedding or new search. */
+  async restoreEvidence(prior: SearchHit[]): Promise<SearchHit[]> {
+    const ids = [...new Set(prior.slice(0, 24).map(hit => hit.chunkId))];
+    if (!ids.length) return [];
+    const live = (await this.database.query<SearchHit>(`
+      SELECT c.id::int AS "chunkId",d.id::int AS "documentId",d.title AS "documentTitle",
+        d.original_filename AS "originalFilename",c.ordinal,c.heading_path AS "headingPath",c.content,
+        c.source_start_line AS "sourceStartLine",c.source_end_line AS "sourceEndLine",0::float AS score,
+        'live' AS "indexKind",kb.id::int AS "knowledgeBaseId"
+      FROM document_chunks c JOIN documents d ON d.id=c.document_id JOIN knowledge_bases kb ON kb.id=d.knowledge_base_id
+      WHERE c.id=ANY($1::bigint[]) AND d.archived_at IS NULL AND d.enabled_for_retrieval AND d.status='ready'
+        AND d.source_type='file' AND kb.archived_at IS NULL AND kb.enabled_for_chat AND kb.active_index_version_id IS NULL`, [ids])).rows;
+    const published = (await this.database.query<SearchHit>(`
+      SELECT c.id::int AS "chunkId",d.id::int AS "documentId",c.document_title AS "documentTitle",
+        c.original_filename AS "originalFilename",c.ordinal,c.heading_path AS "headingPath",c.content,
+        (c.source_locator->>'start')::int AS "sourceStartLine",(c.source_locator->>'end')::int AS "sourceEndLine",0::float AS score,
+        'published' AS "indexKind",c.version_id::int AS "indexVersionId",kb.id::int AS "knowledgeBaseId"
+      FROM index_chunks c JOIN documents d ON d.id=c.document_id JOIN knowledge_bases kb ON kb.id=d.knowledge_base_id
+        JOIN knowledge_index_versions v ON v.id=c.version_id AND v.status='ready'
+      WHERE c.id=ANY($1::bigint[]) AND c.version_id=kb.active_index_version_id AND d.archived_at IS NULL
+        AND d.enabled_for_retrieval AND kb.archived_at IS NULL AND kb.enabled_for_chat`, [ids])).rows;
+    const candidates = [...live, ...published];
+    return prior.slice(0, 24).flatMap(old => {
+      const current = candidates.find(hit => hit.chunkId === old.chunkId && hit.documentId === old.documentId
+        && (!old.indexKind || hit.indexKind === old.indexKind)
+        && (!old.indexVersionId || hit.indexVersionId === old.indexVersionId)
+        && evidenceDigest(hit) === evidenceDigest(old));
+      // The old score belongs to the old question, not a fresh retrieval ranking.
+      return current ? [{ ...current, score: old.score }] : [];
+    });
   }
 
   async recallTest(knowledgeBaseId: number, rawQuery: unknown, limit: number, rawMode?: unknown) {

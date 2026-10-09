@@ -5,7 +5,8 @@ import { ChatOrchestratorService } from './chat-orchestrator.service';
 import type { AgentTranscriptMessage } from './agent-transcript';
 import type { AgentConfigurationSnapshot } from '../config/agent-config';
 import type { RequestContext } from './request-context';
-export type ChatAgentContext = { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot; requestContext?: RequestContext; priorProducts?: unknown[] };
+import type { RuntimeContextBlock } from '../ai/context/context-contribution';
+export type ChatAgentContext = { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot; requestContext?: RequestContext; priorProducts?: unknown[]; contextBlocks?: RuntimeContextBlock[]; currentContextBlocks?: RuntimeContextBlock[] };
 export { validateAnswer } from '../ai/agent/citation-validation';
 
 export type Citation = Pick<SearchHit, 'chunkId' | 'documentId' | 'documentTitle' | 'originalFilename' | 'sourceStartLine' | 'sourceEndLine'>;

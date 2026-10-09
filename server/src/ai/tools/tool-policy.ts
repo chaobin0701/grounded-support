@@ -37,12 +37,19 @@ export class ToolPolicy {
   }
 
   beforeCall(state: ToolExecutionState, name: string, args: Record<string, unknown>): ToolPolicyFailure | null {
+    const failure = this.checkCall(state, name, args);
+    if (failure) return failure;
+    state.seenCalls.add(JSON.stringify({ name, arguments: args }));
+    state.callCount += 1;
+    return null;
+  }
+
+  /** Inspect a deferred request without charging or marking an unexecuted call as seen. */
+  checkCall(state: ToolExecutionState, name: string, args: Record<string, unknown>): ToolPolicyFailure | null {
     if (state.allowedTools && !state.allowedTools.has(name)) return 'tool_not_allowed';
     if (state.callCount >= (state.maxToolCalls ?? this.maxToolCalls)) return 'tool_call_limit_exceeded';
     const key = JSON.stringify({ name, arguments: args });
     if (state.seenCalls.has(key)) return 'duplicate_tool_call';
-    state.seenCalls.add(key);
-    state.callCount += 1;
     return null;
   }
 

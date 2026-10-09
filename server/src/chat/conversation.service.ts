@@ -14,6 +14,7 @@ import { AgentSettingsService } from '../config/agent-settings.service';
 import { INTERNAL_APP_ID, type IntegrationRequest } from '../integrations/integration.types';
 import { IntegrationService } from '../integrations/integration.service';
 import { contextFingerprint, messageContext, normalizeRequestContext, type RequestContext, type MessageContext } from './request-context';
+import { legacyContextBlocks, readContextBlocks } from '../ai/context/context-contribution';
 
 const COOKIE_NAME = 'grounded_visitor';
 const COOKIE_AGE_MS = 180 * 24 * 60 * 60 * 1000;
@@ -106,8 +107,12 @@ export class ConversationService {
        FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [id, memory.snapshotTurns * 2],
     );
     const recentMessages = recent.rows.reverse();
-    const transcriptRows = await this.database.query<{ agentTranscript: unknown; products?: unknown }>(
-      `SELECT context_snapshot->'agentTranscript' AS "agentTranscript", context_snapshot->'products' AS products
+    const transcriptRows = await this.database.query<{ id?: string; agentTranscript: unknown; products?: unknown; contextSnapshot?: Record<string, unknown> }>(
+      `SELECT id,CASE WHEN context_snapshot ? 'runtimeContextBlocks'
+         THEN jsonb_build_object('runtimeContextBlocks',context_snapshot->'runtimeContextBlocks')
+         ELSE jsonb_build_object('products',context_snapshot->'products','productPreparation',context_snapshot->'productPreparation',
+           'agentTranscript',context_snapshot->'agentTranscript') END AS "contextSnapshot",
+         context_snapshot->'agentTranscript' AS "agentTranscript", context_snapshot->'products' AS products
        FROM chat_traces
        WHERE conversation_id = $1 AND kind = 'answer' AND context_snapshot ? 'agentTranscript'
        ORDER BY created_at DESC LIMIT $2`, [id, memory.transcriptMaxTraces],
@@ -131,6 +136,11 @@ export class ConversationService {
       history,
       agentTranscript,
       priorProducts: transcriptRows.rows.flatMap(row => Array.isArray(row.products) ? row.products : []),
+      contextBlocks: transcriptRows.rows.flatMap(row => {
+        const snapshot = row.contextSnapshot ?? {};
+        return ('runtimeContextBlocks' in snapshot ? readContextBlocks(snapshot.runtimeContextBlocks, id)
+          : legacyContextBlocks(snapshot, id, row.id)).reverse();
+      }).slice(0, 100),
     };
   }
 
@@ -254,6 +264,7 @@ export class ConversationService {
         configurationSnapshot,
         requestContext,
         priorProducts: snapshot.priorProducts,
+        contextBlocks: snapshot.contextBlocks,
       });
       await this.saveResult(id, question, run, Date.now() - started, runId);
       void this.updateSummary(id, snapshot.summary, configurationSnapshot).catch(() => this.logger.warn('Conversation summary update failed'));

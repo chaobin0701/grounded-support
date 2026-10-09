@@ -1,5 +1,6 @@
 import { PreviousTurnDto } from './chat.dto';
 import type { AgentTranscriptMessage } from './agent-transcript';
+import type { RuntimeContextBlock } from '../ai/context/context-contribution';
 
 export type SnapshotMessage = {
   id: number;
@@ -17,4 +18,5 @@ export interface ConversationSnapshot {
   history: PreviousTurnDto[];
   agentTranscript: AgentTranscriptMessage[];
   priorProducts?: unknown[];
+  contextBlocks?: RuntimeContextBlock[];
 }

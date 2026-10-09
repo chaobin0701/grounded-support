@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, OnModuleInit } from
 import { z } from 'zod';
 import { DatabaseService } from '../database.service';
 import { AppConfigService } from './config.service';
-import { agentConfigurationRevision, agentEditableSchema, parseAgentConfiguration, type AgentConfiguration, type AgentConfigurationSnapshot } from './agent-config';
+import { agentConfigurationRevision, storedAgentConfigurationRevision, agentEditableSchema, parseAgentConfiguration, type AgentConfiguration, type AgentConfigurationSnapshot } from './agent-config';
 import { SkillRegistry } from '../ai/skills/skill-registry';
 import { ToolExecutionService } from '../ai/tools/tool-execution';
 
@@ -60,7 +60,7 @@ export class AgentSettingsService implements OnModuleInit {
 
   private fromRow(row: Row): AgentConfigurationSnapshot {
     const configuration = parseAgentConfiguration(row.configuration);
-    if (agentConfigurationRevision(configuration) !== row.revision) throw new Error('Agent settings revision mismatch');
+    if (storedAgentConfigurationRevision(row.configuration) !== row.revision) throw new Error('Agent settings revision mismatch');
     return Object.freeze({ configuration, revision: row.revision, configurationVersion: row.version,
       updatedAt: new Date(row.updatedAt).toISOString(), updatedBy: row.updatedBy });
   }

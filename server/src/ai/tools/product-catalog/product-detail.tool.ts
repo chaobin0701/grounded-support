@@ -4,6 +4,8 @@ import { AgentTool } from '../agent-tool';
 import { ToolContext } from '../tool-context';
 import { ToolResult } from '../tool-result';
 import { ProductCatalogService } from './product-catalog.service';
+import { productDetailPlanning } from './product-tool-planning';
+import { productResources } from '../../context/context-contribution';
 
 const inputSchema = z.object({ productId: z.string().trim().min(1).max(80) });
 
@@ -12,7 +14,8 @@ export class ProductDetailTool implements AgentTool<z.infer<typeof inputSchema>>
   readonly name = 'get_product_detail';
   readonly description = '按产品 ID 读取官网产品目录中的完整规格。只读、数据库数据。';
   readonly inputSchema = inputSchema;
-  readonly planning = { canBatch: false, dependency: '需要有效的 productId' } as const;
+  readonly planning = productDetailPlanning;
+  readonly contributeContext = productResources;
 
   constructor(private readonly catalog: ProductCatalogService) {}
 

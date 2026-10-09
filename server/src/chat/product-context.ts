@@ -22,3 +22,19 @@ export function projectProductTranscript(transcript: AgentTranscriptMessage[], c
     return { ...message, content: JSON.stringify({ productRef: id, detailLocation: 'productContext.products', note: '历史结果，当前有效详情或不可用状态见 productContext' }) };
   });
 }
+
+/** Keep native call/result pairs while the governed evidence set owns the only result body. */
+export function projectEvidenceTranscript(transcript: AgentTranscriptMessage[], evidenceIds: ReadonlySet<number>): AgentTranscriptMessage[] {
+  const calls = new Map(transcript.flatMap(m => (m.toolCalls ?? []).map(call => [call.id, call] as const)));
+  return transcript.map(message => {
+    if (message.role !== 'tool' || !message.toolCallId || calls.get(message.toolCallId)?.name !== 'search_knowledge') return message;
+    try {
+      const result = JSON.parse(message.content ?? '{}');
+      if (result.error || !Array.isArray(result.hits)) return message;
+      const ids: number[] = result.hits.map((hit: { chunkId?: number }) => hit?.chunkId).filter((id: unknown): id is number => Number.isSafeInteger(id));
+      return { ...message, content: JSON.stringify({ evidenceRefs: ids.filter(id => evidenceIds.has(id)),
+        unavailableEvidenceIds: ids.filter(id => !evidenceIds.has(id)), detailLocation: 'initialEvidence',
+        note: '仅本轮提供的片段可作为当前资料；历史片段未恢复时可补充检索' }) };
+    } catch { return message; }
+  });
+}

@@ -9,6 +9,9 @@ export interface SearchHit {
   sourceStartLine: number;
   sourceEndLine: number;
   score: number;
+  indexKind?: 'live' | 'published';
+  indexVersionId?: number;
+  knowledgeBaseId?: number;
 }
 
 export function fuseSearchResults(lexical: SearchHit[], vector: SearchHit[], limit: number): Array<SearchHit & {
