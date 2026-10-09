@@ -86,7 +86,7 @@ const views: { id: View; label: string; permissions: string[]; icon: Component }
   { id: 'conversations', label: '会话管理', icon: MessageSquareText, permissions: ['conversations.read'] },
   { id: 'agent-config', label: 'Agent 配置', icon: Bot, permissions: ['agent_config.read', 'agent_config.manage'] },
   { id: 'model-services', label: '模型服务', icon: Cpu, permissions: ['model_profiles.read', 'model_profiles.manage'] },
-  { id: 'embedding-services', label: 'Embedding 服务', icon: Database, permissions: ['embedding_profiles.read', 'embedding_profiles.manage'] },
+  { id: 'embedding-services', label: '向量服务', icon: Database, permissions: ['embedding_profiles.read', 'embedding_profiles.manage'] },
   { id: 'integrations', label: '接入管理', icon: Plug, permissions: ['integrations.read', 'integrations.manage'] },
   { id: 'admins', label: '管理员', icon: Users, permissions: ['admins.manage'] },
   { id: 'roles', label: '角色权限', icon: ShieldCheck, permissions: ['roles.manage'] },

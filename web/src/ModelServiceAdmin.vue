@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue';
-import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, LockKeyhole, Play, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
+import { computed, onMounted, ref } from 'vue';
+import { Check, CheckCircle2, ChevronRight, Code2, LoaderCircle, Play, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
 import { adminApi, type LlmConnectionTestResult, type LlmProfileItem } from './admin-api';
 import { modelPlatforms, modelPlatformOptions, type ModelPlatformKey } from './model-platforms';
 import { groupModelProfiles, modelProfileStatus } from './model-profile-presentation';
@@ -16,7 +16,6 @@ const loading = ref(false);
 const saving = ref(false);
 const dialogOpen = ref(false);
 const editingId = ref<number | null>(null);
-const replacingProfile = ref<Pick<LlmProfileItem, 'id' | 'name' | 'isDefault'> | null>(null);
 const formElement = ref<HTMLFormElement | null>(null);
 const testing = ref(false);
 const resultDialogOpen = ref(false);
@@ -46,10 +45,8 @@ const form = ref({
 function resetForm() {
   form.value = { name: '火山引擎主模型', platformKey: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', model: 'deepseek-v4-1-flash-260910', apiKey: '', timeoutMs: 20000, contextWindowTokens: 32000, maxOutputTokens: 1200, supportsToolCalls: true, supportsStreaming: true };
   editingId.value = null;
-  replacingProfile.value = null;
 }
 function edit(profile: LlmProfileItem) {
-  replacingProfile.value = null;
   editingId.value = profile.id;
   form.value = { name: profile.name, platformKey: profile.platformKey, baseUrl: profile.baseUrl, model: profile.model, apiKey: '', timeoutMs: profile.timeoutMs, contextWindowTokens: profile.contextWindowTokens, maxOutputTokens: profile.maxOutputTokens, supportsToolCalls: profile.supportsToolCalls, supportsStreaming: profile.supportsStreaming };
   dialogOpen.value = true;
@@ -63,29 +60,17 @@ async function load() {
 async function save() {
   if (working.value) return;
   const creating = editingId.value === null;
-  const replacement = replacingProfile.value;
   saving.value = true;
   try {
     const input = { ...form.value, ...(form.value.apiKey.trim() ? {} : { apiKey: undefined }) };
     if (creating) {
-      const created = await adminApi.createLlmProfile(props.token, input);
-      if (replacement?.isDefault) {
-        // Creation and activation are separate requests. On activation failure,
-        // open the saved record so retrying cannot create duplicate configurations.
-        try { await adminApi.activateLlmProfile(props.token, created.id); }
-        catch (cause) {
-          await load();
-          edit(created);
-          emit('error', `新配置已保存，但切换未完成：${cause instanceof Error ? cause.message : '请重试'}。可点击“设为当前”重试，原配置未删除。`);
-          return;
-        }
-      }
+      await adminApi.createLlmProfile(props.token, input);
     } else {
       const { platformKey: _platformKey, ...changes } = input;
       await adminApi.updateLlmProfile(props.token, editingId.value!, changes);
     }
     dialogOpen.value = false;
-    emit('notice', replacement?.isDefault ? '新配置已创建并设为当前，原配置已保留' : creating ? '模型配置已创建' : '模型配置已更新');
+    emit('notice', creating ? '模型配置已创建' : '模型配置已更新');
     await load();
   } catch (cause) { emit('error', cause instanceof Error ? cause.message : '保存失败'); }
   finally { saving.value = false; }
@@ -137,13 +122,6 @@ async function removeProfile() {
   finally { deleting.value = false; }
 }
 function openCreate() { if (working.value) return; resetForm(); dialogOpen.value = true; }
-function openReplacement() {
-  const profile = selectedProfile.value;
-  if (!profile || working.value) return;
-  openCreate();
-  replacingProfile.value = { id: profile.id, name: profile.name, isDefault: profile.isDefault };
-  void nextTick(() => formElement.value?.querySelector<HTMLButtonElement>('.platform-option')?.focus());
-}
 function selectPlatform(key: ModelPlatformKey) {
   if (editingId.value !== null || working.value) return;
   if (form.value.platformKey === key) return;
@@ -196,23 +174,15 @@ onMounted(load);
       </section>
     </div>
 
-    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="editingId === null ? '添加模型服务' : '编辑模型服务'" :description="editingId === null ? '选择服务平台，填写模型连接与运行参数。' : '平台创建后固定，可修改模型连接与运行参数。'" size="lg" @update:open="dialogOpen = $event">
+    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="editingId === null ? '添加模型服务' : '编辑模型服务'" size="lg" @update:open="dialogOpen = $event">
       <form ref="formElement" class="model-profile-form" @submit.prevent="save">
         <div v-if="selectedProfile" class="model-profile-state">
           <span class="model-status" :class="modelProfileStatus(selectedProfile).key">{{ modelProfileStatus(selectedProfile).label }}</span>
           <div v-if="!selectedProfile.isDefault"><button v-if="selectedProfile.enabled" type="button" class="model-text-action" :disabled="working" @click="activate(selectedProfile)"><Play :size="13" />设为当前</button><button type="button" class="model-text-action" :disabled="working" @click="toggle(selectedProfile)">{{ selectedProfile.enabled ? '停用配置' : '恢复为备用' }}</button></div>
         </div>
-        <div v-if="replacingProfile" class="model-replacement-note" role="note">
-          <p>正在为「{{ replacingProfile.name }}」新建替代配置。</p>
-          <p>{{ replacingProfile.isDefault ? '保存后将设为当前使用，原配置保留。' : '原配置保留；新配置保存后，可在配置中点击“设为当前”。' }} 请填写新平台的密钥，原密钥不会复制。</p>
-        </div>
         <section class="model-form-section" aria-labelledby="model-platform-heading">
           <h2 id="model-platform-heading">{{ editingId === null ? '选择平台' : '服务平台' }}</h2>
-          <div v-if="editingId !== null" class="model-platform-locked">
-            <div class="model-platform-identity"><ModelPlatformLogo :platform="form.platformKey" :size="25" /><strong>{{ modelPlatforms[form.platformKey].label }}</strong><span><LockKeyhole :size="12" />平台已固定</span></div>
-            <p>创建后不可修改平台。需要更换时，请新建配置并替换当前模型。</p>
-            <button type="button" class="ui-button" :disabled="working" @click="openReplacement"><Plus :size="14" />新建替代配置</button>
-          </div>
+          <div v-if="editingId !== null" class="model-platform-identity"><ModelPlatformLogo :platform="form.platformKey" :size="25" /><strong>{{ modelPlatforms[form.platformKey].label }} 配置</strong></div>
           <div v-else class="platform-options" role="group" aria-labelledby="model-platform-heading">
             <button v-for="item in modelPlatformOptions" :key="item.key" type="button" class="platform-option" :disabled="working" :class="{ selected: form.platformKey === item.key }" :aria-pressed="form.platformKey === item.key" @click="selectPlatform(item.key)">
               <ModelPlatformLogo :platform="item.key" :size="25" />
@@ -229,10 +199,10 @@ onMounted(load);
             <label class="model-field"><span class="ui-label">模型 ID</span><input v-model.trim="form.model" class="ui-input" required maxlength="200" :placeholder="modelPlatforms[form.platformKey].model || '输入平台提供的模型 ID'" spellcheck="false" /></label>
             <label class="model-field model-field-wide">
               <span class="ui-label">Base URL</span><input v-model.trim="form.baseUrl" class="ui-input" type="url" required placeholder="https://api.example.com/v1" :readonly="form.platformKey !== 'custom'" spellcheck="false" />
-              <small>{{ form.platformKey === 'custom' ? '使用已加入 LLM_ALLOWED_BASE_URLS 的 HTTPS 地址。' : editingId === null ? '已自动填写平台地址；自定义地址请选择“其他兼容平台”。' : '平台地址已固定；更换平台请新建替代配置。' }}</small>
+              <small v-if="editingId === null">{{ form.platformKey === 'custom' ? '使用已加入 LLM_ALLOWED_BASE_URLS 的 HTTPS 地址。' : '已自动填写平台地址。' }}</small>
             </label>
             <label class="model-field model-field-wide">
-              <span class="ui-label">API Key</span><input v-model="form.apiKey" class="ui-input" type="password" autocomplete="new-password" :required="!!replacingProfile" :placeholder="editingId === null ? '输入服务密钥' : '留空则保留原密钥'" />
+              <span class="ui-label">API Key</span><input v-model="form.apiKey" class="ui-input" type="password" autocomplete="new-password" :placeholder="editingId === null ? '输入服务密钥' : '留空则保留原密钥'" />
             </label>
           </div>
         </section>
@@ -249,7 +219,7 @@ onMounted(load);
 
         <footer class="model-form-footer">
           <button v-if="selectedProfile" type="button" class="model-delete-action" :disabled="working" @click="requestDelete"><Trash2 :size="15" />删除配置</button>
-          <div><button type="button" class="ui-button" :disabled="working" @click="testConnection"><LoaderCircle v-if="testing" :size="15" class="spinning" /><PlugZap v-else :size="15" />测试连接</button><button type="button" class="ui-button" :disabled="working" @click="dialogOpen = false">取消</button><button class="ui-button ui-button-primary" type="submit" :disabled="working"><LoaderCircle v-if="saving" :size="15" class="spinning" />{{ saving ? '保存中…' : replacingProfile?.isDefault ? '创建并设为当前' : '保存配置' }}</button></div>
+          <div><button type="button" class="ui-button" :disabled="working" @click="testConnection"><LoaderCircle v-if="testing" :size="15" class="spinning" /><PlugZap v-else :size="15" />测试连接</button><button type="button" class="ui-button" :disabled="working" @click="dialogOpen = false">取消</button><button class="ui-button ui-button-primary" type="submit" :disabled="working"><LoaderCircle v-if="saving" :size="15" class="spinning" />{{ saving ? '保存中…' : '保存配置' }}</button></div>
         </footer>
       </form>
     </UiDialog>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { Check, CheckCircle2, ChevronRight, Database, ExternalLink, LoaderCircle, LockKeyhole, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
+import { Check, CheckCircle2, ChevronRight, Database, ExternalLink, LoaderCircle, PlugZap, Plus, RefreshCw, Trash2, XCircle } from '@lucide/vue';
 import { adminApi, type EmbeddingConnectionResult, type EmbeddingPlatform, type EmbeddingPlatformPreset, type EmbeddingProfileInput, type EmbeddingProfileItem, type EmbeddingUsage } from './admin-api';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import ModelPlatformLogo from './ui/ModelPlatformLogo.vue';
@@ -119,7 +119,7 @@ onUnmounted(() => { mounted = false; loadSequence++; usageSequence++; form.value
 
 <template>
   <section class="embedding-services-page model-services-page">
-    <AdminPageHeader title="Embedding 服务">
+    <AdminPageHeader title="向量服务">
       <template #actions>
         <button class="ui-button" type="button" :disabled="loading || working" @click="load"><RefreshCw :size="15" :class="{spinning:loading}" />刷新</button>
         <button v-if="canManage" class="ui-button ui-button-primary" type="button" :disabled="loading || !platforms.length || working" @click="create"><Plus :size="16" />添加配置</button>
@@ -143,12 +143,12 @@ onUnmounted(() => { mounted = false; loadSequence++; usageSequence++; form.value
       </section>
     </div>
 
-    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="canManage ? editingId === null ? '添加 Embedding 服务' : '编辑 Embedding 服务' : 'Embedding 服务详情'" description="平台固定，向量空间由接口、模型和维度共同确定。" size="lg" @update:open="dialogOpen = $event">
+    <UiDialog v-if="dialogOpen" :open="dialogOpen" :title="canManage ? editingId === null ? '添加向量服务' : '编辑向量服务' : '向量服务详情'" size="lg" @update:open="dialogOpen = $event">
       <form ref="formElement" class="model-profile-form" @submit.prevent="save">
         <div v-if="selected" class="model-profile-state"><span class="model-status" :class="selected.enabled ? selected.usageCount ? 'current' : 'standby' : 'disabled'">{{ status(selected) }}</span><button v-if="canManage" type="button" class="model-text-action" :disabled="working || (selected.enabled && selected.usageCount > 0)" @click="toggle">{{ selected.enabled ? '停用配置' : '恢复配置' }}</button></div>
         <section class="model-form-section">
           <h2>{{ editingId === null ? '选择平台' : '服务平台' }}</h2>
-          <div v-if="editingId !== null" class="model-platform-locked"><div class="model-platform-identity"><ModelPlatformLogo :platform="form.platformKey" :size="25" /><strong>{{ label(form.platformKey) }}</strong><span><LockKeyhole :size="12" />平台已固定</span></div><p>{{ geometryLocked ? '配置已被引用，接口、模型和维度已锁定。替换模型请新建配置，再到知识库构建并应用新索引。' : '更换平台请新建配置；现有密钥不会复制。' }}</p><button v-if="canManage" type="button" class="ui-button" :disabled="working" @click="create"><Plus :size="14" />新建替代配置</button></div>
+          <div v-if="editingId !== null" class="model-platform-identity"><ModelPlatformLogo :platform="form.platformKey" :size="25" /><strong>{{ label(form.platformKey) }} 配置</strong></div>
           <div v-else class="platform-options embedding-platform-options" role="group" aria-label="Embedding 平台"><button v-for="p in platforms" :key="p.key" type="button" class="platform-option" :class="{selected:form.platformKey === p.key}" :aria-pressed="form.platformKey === p.key" :disabled="working" @click="selectPlatform(p.key)"><ModelPlatformLogo :platform="p.key" :size="25" /><span class="platform-option-copy"><strong>{{ p.label }}</strong><small>{{ p.key === 'volcengine' ? '标准 / 多模态向量接口' : 'OpenAI Compatible 接口' }}</small></span><Check v-if="form.platformKey === p.key" :size="14" class="platform-option-check" /></button></div>
         </section>
         <fieldset class="embedding-fields" :disabled="!canManage || working">

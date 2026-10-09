@@ -1,0 +1,9 @@
+**
+!deploy/
+!deploy/Caddyfile
+!web/
+!web/dist/
+!web/dist/**
+!website/
+!website/dist/
+!website/dist/**
