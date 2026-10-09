@@ -30,9 +30,9 @@ export class AdminAuthService {
   async login(input: AdminLoginDto) {
     const email = input.email.trim().toLowerCase();
     const [admin] = await this.database.db
-      .select({ id: admins.id, email: admins.email, passwordHash: admins.passwordHash, displayName: admins.displayName, disabledAt: admins.disabledAt })
+      .select({ id: admins.id, email: admins.email, username: admins.username, passwordHash: admins.passwordHash, displayName: admins.displayName, disabledAt: admins.disabledAt })
       .from(admins)
-      .where(sql`lower(${admins.email}) = ${email}`)
+      .where(sql`lower(${admins.email}) = ${email} OR lower(${admins.username}) = ${email}`)
       .limit(1);
 
     if (!admin || admin.disabledAt || !(await compare(input.password, admin.passwordHash))) {
@@ -43,7 +43,7 @@ export class AdminAuthService {
       accessToken: await this.jwt.signAsync({ sub: String(admin.id) }),
       tokenType: 'Bearer',
       expiresIn: this.config.jwt.expiresInSeconds,
-      admin: { id: admin.id, email: admin.email, displayName: admin.displayName },
+      admin: { id: admin.id, email: admin.email, username: admin.username, displayName: admin.displayName },
     };
   }
 }

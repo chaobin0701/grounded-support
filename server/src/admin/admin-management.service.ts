@@ -74,8 +74,8 @@ export class AdminManagementService {
 
   async listAdmins() {
     const result = await this.database.query<{
-      id: number; email: string; displayName: string; disabledAt: Date | null; roles: { id: number; code: string }[];
-    }>(`SELECT a.id::int AS id, a.email, a.display_name AS "displayName", a.disabled_at AS "disabledAt",
+      id: number; email: string | null; username: string | null; displayName: string; disabledAt: Date | null; roles: { id: number; code: string }[];
+    }>(`SELECT a.id::int AS id, a.email, a.username, a.display_name AS "displayName", a.disabled_at AS "disabledAt",
               COALESCE(json_agg(json_build_object('id', r.id::int, 'code', r.code) ORDER BY r.id)
                 FILTER (WHERE r.id IS NOT NULL), '[]'::json) AS roles
        FROM admins a LEFT JOIN admin_roles ar ON ar.admin_id = a.id
@@ -87,7 +87,9 @@ export class AdminManagementService {
   async createAdmin(actorId: number, input: CreateAdminDto) {
     this.validatePassword(input.password);
     const passwordHash = await hash(input.password, 12);
-    const email = input.email.trim().toLowerCase();
+    const email = input.email?.trim().toLowerCase() || null;
+    const username = input.username?.trim().toLowerCase() || null;
+    if (!email && !username) throw new BadRequestException('Email or username is required');
     try {
       return await this.database.transaction(async (client) => {
         await this.lockManagement(client);
@@ -95,16 +97,16 @@ export class AdminManagementService {
         await this.validateAssignableRoles(client, actorId, input.roleIds);
 
         const created = await client.query<{ id: string }>(
-          'INSERT INTO admins (email, password_hash, display_name) VALUES ($1, $2, $3) RETURNING id',
-          [email, passwordHash, input.displayName.trim()],
+          'INSERT INTO admins (email, password_hash, display_name, username) VALUES ($1, $2, $3, $4) RETURNING id',
+          [email, passwordHash, input.displayName.trim(), username],
         );
         const adminId = Number(created.rows[0].id);
         await this.replaceAdminRoles(client, adminId, input.roleIds);
         await this.audit(client, actorId, 'admin.created', 'admin', adminId, { roleIds: input.roleIds });
-        return { id: adminId, email, displayName: input.displayName.trim(), roleIds: input.roleIds };
+        return { id: adminId, email, username, displayName: input.displayName.trim(), roleIds: input.roleIds };
       });
     } catch (error) {
-      if ((error as DbError).code === '23505') throw new ConflictException('Email already exists');
+      if ((error as DbError).code === '23505') throw new ConflictException('Email or username already exists');
       throw error;
     }
   }

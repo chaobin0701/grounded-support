@@ -31,8 +31,8 @@ type View = 'dashboard' | 'knowledge' | 'products' | 'documents' | 'conversation
 const route = useRoute();
 const router = useRouter();
 const session = ref<{ token: string; me: AdminMe } | null>(null);
-const email = ref('');
-const password = ref('');
+const email = ref('demo-user');
+const password = ref('demo123456');
 const loginBusy = ref(false);
 const loginError = ref('');
 const view = ref<View>('documents');
@@ -177,7 +177,7 @@ async function signIn() {
       } else await openView(target);
     }
   } catch (cause) {
-    loginError.value = cause instanceof AdminApiError && cause.status === 401 ? '邮箱或密码不正确。' : describeError(cause);
+    loginError.value = cause instanceof AdminApiError && cause.status === 401 ? '邮箱、账号或密码不正确。' : describeError(cause);
   } finally {
     loginBusy.value = false;
   }
@@ -186,6 +186,8 @@ async function signIn() {
 function signOut() {
   session.value = null;
   clearAdminSession();
+  email.value = 'demo-user';
+  password.value = 'demo123456';
   documents.value = [];
   selectedDocument.value = null;
   admins.value = [];
@@ -356,7 +358,7 @@ async function saveAdminRoles(id: number) {
 
 async function toggleAdmin(item: AdminItem) {
   const disable = !item.disabledAt;
-  confirmDialog.value = { title: `${disable ? '停用' : '启用'}管理员`, description: `确定${disable ? '停用' : '启用'}「${item.displayName}」(${item.email})？`, confirmLabel: disable ? '确认停用' : '确认启用', run: async () => {
+  confirmDialog.value = { title: `${disable ? '停用' : '启用'}管理员`, description: `确定${disable ? '停用' : '启用'}「${item.displayName}」(${item.username || item.email})？`, confirmLabel: disable ? '确认停用' : '确认启用', run: async () => {
     await action((token) => adminApi.setStatus(token, item.id, disable), disable ? '管理员已停用。' : '管理员已启用。', async () => {
       if (session.value) admins.value = await adminApi.admins(session.value.token);
     });
@@ -445,16 +447,13 @@ function sourceLocation(filename: string, start: number, end: number): string {
     <main class="admin-login-main">
       <p class="section-label">{{ siteBrand.name }} · 管理中心</p>
       <h1>欢迎回来</h1>
-      <p>登录状态保存在当前浏览器，直至服务端会话到期、主动退出或账号被停用。</p>
       <form @submit.prevent="signIn">
-        <label>邮箱<input v-model.trim="email" type="email" autocomplete="username" required placeholder="admin@example.com" /></label>
+        <label>邮箱或账号<input v-model.trim="email" type="text" autocomplete="username" required maxlength="320" placeholder="邮箱或账号" /></label>
         <label>密码<input v-model="password" type="password" autocomplete="current-password" required placeholder="输入管理员密码" /></label>
         <p v-if="loginError" class="admin-error" role="alert">{{ loginError }}</p>
         <button class="admin-primary" type="submit" :disabled="loginBusy">{{ loginBusy ? '正在登录…' : '登录后台' }}</button>
       </form>
-      <a href="/">← 返回访客问答</a>
     </main>
-    <p class="admin-login-foot">仅授权管理员可访问资料与权限操作。</p>
   </div>
 
   <div v-else class="admin-shell">
@@ -472,7 +471,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
           </div>
         </section>
       </nav>
-      <div class="admin-sidebar-bottom"><a href="/">访客页面 ↗</a><button type="button" @click="signOut">退出登录</button></div>
+      <div class="admin-sidebar-bottom"><button type="button" @click="signOut">退出登录</button></div>
     </aside>
 
     <main class="admin-main">
@@ -533,21 +532,21 @@ function sourceLocation(filename: string, start: number, end: number): string {
             </template>
           </AdminPageHeader>
           <div class="access-toolbar">
-            <label class="access-search"><Search :size="16" aria-hidden="true" /><input v-model="adminQuery" class="ui-input" type="search" placeholder="搜索名称、邮箱或角色代码" aria-label="搜索管理员" /></label>
+            <label class="access-search"><Search :size="16" aria-hidden="true" /><input v-model="adminQuery" class="ui-input" type="search" placeholder="搜索名称、账号、邮箱或角色代码" aria-label="搜索管理员" /></label>
             <select v-model="adminStatus" class="ui-input access-filter" aria-label="管理员状态"><option value="all">全部状态</option><option value="enabled">正常</option><option value="disabled">已停用</option></select>
           </div>
           <UiMasterDetail list-label="账号列表" :count="`${filteredAdmins.length} / ${admins.length} 位`" :busy="busy" :empty="!filteredAdmins.length" :empty-text="admins.length ? '没有匹配的管理员' : '暂无管理员'" detail-label="管理员详情">
             <template #list>
               <button v-for="item in filteredAdmins" :key="item.id" type="button" class="management-item access-record" :class="{ selected: selectedAdminId === item.id }" :aria-pressed="selectedAdminId === item.id" :disabled="busy" @click="selectAdmin(item)">
                 <span class="access-avatar" aria-hidden="true">{{ item.displayName.slice(0, 1) }}</span>
-                <span class="access-record-copy"><strong>{{ item.displayName }}<small v-if="item.id === session.me.id" class="access-self">当前账号</small></strong><span>{{ item.email }}</span><small>{{ item.roles.map(role => roleName(role.id, role.code)).join(' · ') || '未分配角色' }}</small></span>
+                <span class="access-record-copy"><strong>{{ item.displayName }}<small v-if="item.id === session.me.id" class="access-self">当前账号</small></strong><span>{{ item.username || item.email }}</span><small>{{ item.roles.map(role => roleName(role.id, role.code)).join(' · ') || '未分配角色' }}</small></span>
                 <UiStatusBadge :tone="item.disabledAt ? 'neutral' : 'success'">{{ item.disabledAt ? '已停用' : '正常' }}</UiStatusBadge>
               </button>
             </template>
             <template #detail>
               <template v-if="selectedAdmin">
                 <div class="access-detail-heading"><div><p>账号详情 · #{{ selectedAdmin.id }}</p><h2>{{ selectedAdmin.displayName }}</h2></div><UiStatusBadge :tone="selectedAdmin.disabledAt ? 'neutral' : 'success'">{{ selectedAdmin.disabledAt ? '已停用' : '正常' }}</UiStatusBadge></div>
-                <dl class="access-facts"><dt>邮箱</dt><dd>{{ selectedAdmin.email }}</dd><dt>角色</dt><dd>{{ selectedAdmin.roles.length }} 个</dd><dt>权限范围</dt><dd>{{ selectedAdminPermissionCount }} 项权限</dd><template v-if="selectedAdmin.disabledAt"><dt>停用时间</dt><dd>{{ formatDate(selectedAdmin.disabledAt) }}</dd></template></dl>
+                <dl class="access-facts"><dt>账号</dt><dd>{{ selectedAdmin.username || '—' }}</dd><dt>邮箱</dt><dd>{{ selectedAdmin.email || '—' }}</dd><dt>角色</dt><dd>{{ selectedAdmin.roles.length }} 个</dd><dt>权限范围</dt><dd>{{ selectedAdminPermissionCount }} 项权限</dd><template v-if="selectedAdmin.disabledAt"><dt>停用时间</dt><dd>{{ formatDate(selectedAdmin.disabledAt) }}</dd></template></dl>
                 <div class="access-detail-actions">
                   <button v-if="canAdjustSelectedAdmin" type="button" class="ui-button" :disabled="busy" @click="openAssignRoles"><Pencil :size="14" aria-hidden="true" />调整角色</button>
                   <button v-if="selectedAdmin.id !== session.me.id" type="button" class="ui-button" :class="{ 'access-danger': !selectedAdmin.disabledAt }" :disabled="busy" @click="toggleAdmin(selectedAdmin)"><component :is="selectedAdmin.disabledAt ? Check : Ban" :size="14" aria-hidden="true" />{{ selectedAdmin.disabledAt ? '启用账号' : '停用账号' }}</button>
@@ -600,8 +599,8 @@ function sourceLocation(filename: string, start: number, end: number): string {
 
         <UiDialog :open="adminDialog === 'createAdmin'" title="新建管理员" @update:open="!$event && closeAdminDialog()">
           <form class="access-dialog-form" :aria-busy="busy" @submit.prevent="createAdmin">
-            <div class="access-form-grid"><label class="access-field">显示名称<input v-model.trim="newAdmin.displayName" class="ui-input" required maxlength="120" :disabled="busy" placeholder="管理员姓名" autocomplete="off" /></label><label class="access-field">邮箱<input v-model.trim="newAdmin.email" class="ui-input" type="email" required :disabled="busy" placeholder="name@example.com" autocomplete="off" /></label></div>
-            <label class="access-field">初始密码<input v-model="newAdmin.password" class="ui-input" type="password" minlength="12" maxlength="72" autocomplete="new-password" required :disabled="busy" placeholder="12–72 个字符" /></label>
+            <div class="access-form-grid"><label class="access-field">显示名称<input v-model.trim="newAdmin.displayName" class="ui-input" required maxlength="120" :disabled="busy" placeholder="管理员姓名" autocomplete="off" /></label><label class="access-field">邮箱或账号<input v-model.trim="newAdmin.email" class="ui-input" type="text" required maxlength="320" :disabled="busy" placeholder="name@example.com 或 demo-user" autocomplete="off" /><small>账号为 3–64 位字母、数字、点、下划线或短横线，首位为字母或数字。</small></label></div>
+            <label class="access-field">初始密码<input v-model="newAdmin.password" class="ui-input" type="password" minlength="10" maxlength="72" autocomplete="new-password" required :disabled="busy" placeholder="10–72 个字符" /></label>
             <UiChoiceList v-model="newAdmin.roleIds" title="分配角色" :options="roleOptions" :disabled="busy" :bulk="false" />
             <p v-if="!assignableRoles.length" class="access-empty-text">当前账号没有可分配的角色。</p>
             <p v-if="error" class="access-form-error" role="alert">{{ error }}</p>
@@ -610,7 +609,7 @@ function sourceLocation(filename: string, start: number, end: number): string {
         </UiDialog>
         <UiDialog :open="adminDialog === 'assignRoles'" title="调整角色" @update:open="!$event && closeAdminDialog()">
           <form class="access-dialog-form" :aria-busy="busy" @submit.prevent="selectedAdmin && saveAdminRoles(selectedAdmin.id)">
-            <div class="access-dialog-account"><strong>{{ selectedAdmin?.displayName }}</strong><span>{{ selectedAdmin?.email }}</span></div>
+            <div class="access-dialog-account"><strong>{{ selectedAdmin?.displayName }}</strong><span>{{ selectedAdmin?.username || selectedAdmin?.email }}</span></div>
             <UiChoiceList v-model="editingRoleIds" title="分配角色" :options="roleOptions" :disabled="busy" :bulk="false" />
             <p v-if="error" class="access-form-error" role="alert">{{ error }}</p>
             <footer class="access-dialog-actions"><button type="button" class="ui-button" :disabled="busy" @click="closeAdminDialog">取消</button><button class="ui-button ui-button-primary" type="submit" :disabled="busy">{{ busy ? '保存中…' : '保存角色' }}</button></footer>

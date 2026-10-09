@@ -1,6 +1,7 @@
 export interface AdminMe {
   id: number;
-  email: string;
+  email: string | null;
+  username?: string | null;
   displayName: string;
   roles: { id: number; code: string; name: string }[];
   permissionCodes: string[];
@@ -111,7 +112,8 @@ export interface RoleItem {
 
 export interface AdminItem {
   id: number;
-  email: string;
+  email: string | null;
+  username?: string | null;
   displayName: string;
   disabledAt: string | null;
   roles: { id: number; code: string }[];
@@ -474,7 +476,11 @@ export const adminApi = {
   createRole: (token: string, input: { code: string; name: string; permissionCodes: string[] }) => request('/roles', { method: 'POST', body: JSON.stringify(input) }, token),
   updateRole: (token: string, id: number, input: { name: string; permissionCodes: string[] }) => request(`/roles/${id}`, { method: 'PATCH', body: JSON.stringify(input) }, token),
   admins: (token: string) => request<AdminItem[]>('/admins', {}, token),
-  createAdmin: (token: string, input: { email: string; displayName: string; password: string; roleIds: number[] }) => request('/admins', { method: 'POST', body: JSON.stringify(input) }, token),
+  createAdmin: (token: string, input: { email: string; displayName: string; password: string; roleIds: number[] }) => {
+    const { email: identity, ...rest } = input;
+    const identifier = identity.trim();
+    return request('/admins', { method: 'POST', body: JSON.stringify({ ...rest, ...(identifier.includes('@') ? { email: identifier } : { username: identifier }) }) }, token);
+  },
   assignRoles: (token: string, id: number, roleIds: number[]) => request(`/admins/${id}/roles`, { method: 'PATCH', body: JSON.stringify({ roleIds }) }, token),
   setStatus: (token: string, id: number, disabled: boolean) => request(`/admins/${id}/status`, { method: 'PATCH', body: JSON.stringify({ disabled }) }, token),
   audit: (token: string) => request<AuditItem[]>('/audit?limit=50', {}, token),

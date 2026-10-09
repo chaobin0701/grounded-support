@@ -20,12 +20,13 @@ import { sql } from 'drizzle-orm';
 
 export const admins = pgTable('admins', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),
-  email: varchar('email', { length: 320 }).notNull(),
+  email: varchar('email', { length: 320 }),
+  username: varchar('username', { length: 64 }),
   passwordHash: text('password_hash').notNull(),
   displayName: varchar('display_name', { length: 120 }).notNull(),
   disabledAt: timestamp('disabled_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [uniqueIndex('admins_email_lower_unique').on(sql`lower(${table.email})`)]);
+}, (table) => [uniqueIndex('admins_email_lower_unique').on(sql`lower(${table.email})`), uniqueIndex('admins_username_lower_unique').on(sql`lower(${table.username})`)]);
 
 export const roles = pgTable('roles', {
   id: bigserial('id', { mode: 'number' }).primaryKey(),

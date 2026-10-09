@@ -12,7 +12,7 @@ export function groupPermissions(permissions: readonly PermissionItem[]) {
 export function filterAdmins(items: readonly AdminItem[], query: string, status: string) {
   const keyword = query.trim().toLocaleLowerCase();
   return items.filter(item => (status === 'all' || (status === 'disabled' ? !!item.disabledAt : !item.disabledAt))
-    && `${item.displayName} ${item.email} ${item.roles.map(role => role.code).join(' ')}`.toLocaleLowerCase().includes(keyword));
+    && `${item.displayName} ${item.email ?? ''} ${item.username ?? ''} ${item.roles.map(role => role.code).join(' ')}`.toLocaleLowerCase().includes(keyword));
 }
 export function filterRoles(items: readonly RoleItem[], query: string, kind: string) {
   const keyword = query.trim().toLocaleLowerCase();

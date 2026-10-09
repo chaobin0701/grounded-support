@@ -1,6 +1,7 @@
 export interface AdminPrincipal {
   id: number;
-  email: string;
+  email: string | null;
+  username?: string | null;
   displayName: string;
 }
 

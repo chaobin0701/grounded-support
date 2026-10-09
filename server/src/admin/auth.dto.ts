@@ -1,7 +1,10 @@
-import { ArrayNotEmpty, ArrayUnique, IsArray, IsEmail, IsInt, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayNotEmpty, ArrayUnique, IsArray, IsEmail, IsInt, IsString, IsOptional, Matches, MaxLength, Min, MinLength } from 'class-validator';
 
 export class AdminLoginDto {
-  @IsEmail()
+  // Keep the legacy field name for existing integrations; accepts a login identity.
+  @IsString()
+  @MinLength(1)
+  @MaxLength(320)
   email!: string;
 
   @IsString()
@@ -9,11 +12,18 @@ export class AdminLoginDto {
 }
 
 export class CreateAdminDto {
+  @IsOptional()
   @IsEmail()
-  email!: string;
+  @MaxLength(320)
+  email?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9][A-Za-z0-9_.-]{2,63}$/)
+  username?: string;
 
   @IsString()
-  @MinLength(12)
+  @MinLength(10)
   @MaxLength(72)
   password!: string;
 

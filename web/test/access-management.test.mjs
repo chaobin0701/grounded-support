@@ -13,6 +13,12 @@ const roles = [
   { id: 2, name: '资料编辑员', code: 'knowledge_editor', isSystem: false, permissionCodes: ['documents.read'] },
 ];
 
+test('username-only administrator is searchable without a fabricated email', () => {
+  const user = { id: 4, displayName: '体验账号', email: null, username: 'demo-user', disabledAt: null, roles: [] };
+  assert.deepEqual(filterAdmins([user], ' DEMO-USER ', 'enabled'), [user]);
+  assert.deepEqual(filterAdmins([user], 'null', 'all'), []);
+});
+
 test('admin search matches name, email and role code, normalizes case and combines with status', () => {
   assert.deepEqual(filterAdmins(admins, ' OWNER@EXAMPLE ', 'all').map(item => item.id), [1]);
   assert.deepEqual(filterAdmins(admins, '编辑', 'enabled').map(item => item.id), [2]);

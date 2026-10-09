@@ -32,13 +32,13 @@ export class AdminAuthGuard implements CanActivate {
     }
 
     const [admin] = await this.database.db
-      .select({ id: admins.id, email: admins.email, displayName: admins.displayName, disabledAt: admins.disabledAt })
+      .select({ id: admins.id, email: admins.email, username: admins.username, displayName: admins.displayName, disabledAt: admins.disabledAt })
       .from(admins)
       .where(eq(admins.id, adminId))
       .limit(1);
 
     if (!admin || admin.disabledAt) throw new UnauthorizedException('Administrator is unavailable');
-    request.admin = { id: admin.id, email: admin.email, displayName: admin.displayName };
+    request.admin = { id: admin.id, email: admin.email, username: admin.username, displayName: admin.displayName };
     return true;
   }
 }
