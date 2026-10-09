@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from "vue";
-import { Check, LoaderCircle, Package, Search, X } from "@lucide/vue";
+import { Check, ChevronRight, LoaderCircle, Package, Plus, Search, X } from "@lucide/vue";
 import { fetchProducts, type Product } from "../catalog";
 import { createProductReferencePicker, productSubtitle, type ProductSelection } from "../chat/product-reference";
 import ProductImage from "./ProductImage.vue";
@@ -19,6 +19,8 @@ const root = ref<HTMLElement | null>(null);
 const panel = ref<HTMLElement | null>(null);
 const search = ref<HTMLInputElement | null>(null);
 const trigger = ref<HTMLButtonElement | null>(null);
+const addAction = ref<HTMLButtonElement | null>(null);
+const menuOpened = ref(false);
 const availableHeight = ref(340);
 const rows = computed(picker.rows);
 const optionId = (productId: string) => `${id}-${encodeURIComponent(productId)}`;
@@ -26,22 +28,30 @@ const activeDescendant = computed(() => state.opened && state.activeId ? optionI
 let observer: ResizeObserver | undefined;
 
 function measure() {
-  const toolbar = root.value?.closest(".chat-toolbar");
+  const composer = root.value?.closest(".chat-composer");
   const workspace = root.value?.closest(".chat-workspace");
-  if (toolbar && workspace) {
+  if (composer && workspace) {
     const top = Math.max(workspace.getBoundingClientRect().top, window.visualViewport?.offsetTop || 0);
-    availableHeight.value = Math.max(0, toolbar.getBoundingClientRect().top - top - 8);
+    availableHeight.value = Math.max(0, composer.getBoundingClientRect().top - top - 8);
   }
 }
 async function toggle() {
-  if (state.opened) { picker.close(); trigger.value?.focus(); return; }
+  if (props.disabled) return;
+  if (state.opened || menuOpened.value) { close(true); return; }
+  menuOpened.value = true;
+  await nextTick();
+  addAction.value?.focus();
+}
+async function browse() {
+  menuOpened.value = false;
   picker.openBrowse();
   await nextTick();
   measure();
   search.value?.focus();
 }
 function close(focus = false) {
-  const slash = state.source === "slash";
+  const slash = state.opened && state.source === "slash";
+  menuOpened.value = false;
   picker.close();
   if (focus) (slash ? props.composer : trigger.value)?.focus();
 }
@@ -52,6 +62,11 @@ function select(product: Product) {
   picker.close();
 }
 function keyboard(event: KeyboardEvent) {
+  if (menuOpened.value && ["Escape", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+    event.preventDefault(); event.stopPropagation();
+    if (event.key === "Escape") close(true); else addAction.value?.focus();
+    return true;
+  }
   // Retry/close buttons keep their native Enter/Space action; only text inputs navigate the list.
   if (event.target instanceof HTMLButtonElement && event.key !== "Escape") return false;
   const action = picker.key(event.key, { composing: event.isComposing || event.keyCode === 229, shift: event.shiftKey });
@@ -63,6 +78,7 @@ function keyboard(event: KeyboardEvent) {
 }
 function syncInput(element: { value: string; selectionStart: number; selectionEnd: number }, composing = false) {
   picker.syncInput(element.value, element.selectionStart, element.selectionEnd, composing);
+  if (state.opened) menuOpened.value = false;
 }
 function outside(event: PointerEvent) {
   if (!(event.target instanceof Node) || root.value?.contains(event.target)) return;
@@ -113,12 +129,20 @@ defineExpose({ syncInput, keyboard, close, opened: computed(() => state.opened),
 
 <template>
   <div ref="root" class="chat-product-picker">
-    <button ref="trigger" class="chat-product-trigger" type="button" :disabled="disabled"
-      :aria-expanded="state.opened" :aria-controls="`${id}-list`" aria-haspopup="listbox" @click="toggle">
-      <Package :size="14" /><span>引用产品</span><kbd aria-hidden="true">/</kbd>
+    <button ref="trigger" class="chat-product-trigger" type="button" :disabled="disabled" aria-label="添加内容" title="添加内容"
+      :aria-expanded="menuOpened || state.opened" :aria-controls="menuOpened ? `${id}-menu` : state.opened ? `${id}-panel` : undefined"
+      :aria-haspopup="state.opened ? 'dialog' : 'menu'" @keydown="keyboard" @click="toggle">
+      <Plus :size="20" />
     </button>
     <Transition name="product-reference">
-      <section v-if="state.opened" ref="panel" class="chat-product-popover" aria-label="选择引用产品"
+      <div v-if="menuOpened" :id="`${id}-menu`" class="chat-add-menu" role="menu" aria-label="添加内容" @keydown="keyboard">
+        <button ref="addAction" class="chat-add-product" type="button" role="menuitem" @click="browse">
+          <Package :size="17" /><span>添加产品</span><ChevronRight :size="14" />
+        </button>
+      </div>
+    </Transition>
+    <Transition name="product-reference">
+      <section v-if="state.opened" :id="`${id}-panel`" ref="panel" class="chat-product-popover" role="dialog" aria-label="选择引用产品"
         :style="{ maxHeight: `${availableHeight}px` }" @keydown="keyboard">
         <header><span>引用产品</span><button class="chat-product-close" type="button" aria-label="关闭产品选择" @click="close(true)"><X :size="16" /></button></header>
         <label v-if="state.source === 'button'" class="chat-product-search"><Search :size="15" />

@@ -573,7 +573,7 @@
   min-height: 62px;
   border: 1px solid var(--line);
   border-radius: 24px;
-  padding: 14px 64px 14px 16px;
+  padding: 14px 64px;
   background: var(--white);
   box-shadow: 0 2px 8px #202b2805;
 }
@@ -615,7 +615,7 @@
 .chat-composer textarea:focus-visible {
   outline: none;
 }
-.chat-composer button {
+.chat-composer-actions > button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -627,7 +627,7 @@
   background: var(--brand);
   color: var(--white);
 }
-.chat-composer button:disabled {
+.chat-composer-actions > button:disabled {
   cursor: not-allowed;
   background: #e3ebe6;
   color: #65746c;

@@ -218,3 +218,20 @@ test("双模式共用选择器，无嵌套按钮链接，浮层不撑开布局�
   assert.match(await read("src/product-reference.css"), /\.chat-product-popover\s*\{[^}]*position: absolute;/);
   assert.match(await read("src/product-reference.css"), /prefers-reduced-motion/);
 });
+test('添加入口位于输入框左下角，先展开菜单再选择产品，保留斜杠与引用插入能力', async () => {
+  const read = path => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
+  const workspace = await read('src/components/ChatWorkspace.vue');
+  const toolbar = workspace.slice(workspace.indexOf('class="chat-toolbar"'), workspace.indexOf('<form class="chat-composer"'));
+  assert.doesNotMatch(toolbar, /ProductReferencePicker/);
+  assert.ok(workspace.indexOf('<form class="chat-composer"') < workspace.indexOf('<ProductReferencePicker'));
+  const picker = await read('src/components/ProductReferencePicker.vue');
+  assert.match(picker, /<Plus :size="20"/);
+  assert.match(picker, /role="menu"/);
+  assert.match(picker, /role="menuitem" @click="browse"/);
+  assert.match(picker, /添加产品/);
+  assert.match(picker, /picker\.openBrowse\(\)/);
+  assert.match(picker, /composer\.getBoundingClientRect\(\)\.top/);
+  const css = await read('src/product-reference.css');
+  assert.match(css, /\.chat-product-trigger\s*\{[^}]*position: absolute;[^}]*left: 10px;[^}]*bottom: 8px;[^}]*width: 44px;[^}]*height: 44px;/);
+  assert.match(css, /\.chat-add-menu\s*\{[^}]*position: absolute;/);
+});

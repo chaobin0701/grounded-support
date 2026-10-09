@@ -12,6 +12,7 @@ const props = defineProps<{
 type Caret = { value: string; selectionStart: number; selectionEnd: number; composing: boolean };
 const emit = defineEmits<{ change: [document: InlineDocument]; caret: [caret: Caret]; keydown: [event: KeyboardEvent]; compact: [compact: boolean]; notice: [text: string] }>();
 const element = ref<HTMLElement | null>(null);
+const empty = ref(true);
 let composing = false, draggingId = "", lastSelection = { from: 0, to: 0 };
 let lastDocumentKey: string | undefined;
 let snapshots: Array<{ document: InlineDocument; from: number; to: number }> = [], historyIndex = 0;
@@ -19,6 +20,13 @@ const CLIPBOARD_TYPE = "application/x-hexu-product-references";
 function current() { return normalizeDocument(props.text, props.products); }
 function selected() { return element.value && editorSelection(element.value) || lastSelection; }
 function measure() { if (element.value) emit("compact", resizeComposer(element.value)); }
+function syncPlaceholder() {
+  if (!element.value) return;
+  const doc = readEditor(element.value);
+  empty.value = !doc.text && !doc.products.length;
+  // IME text exists in the DOM before it is committed to the parent draft.
+  element.value.dataset.empty = String(empty.value);
+}
 function caret() {
   if (!element.value) return;
   const selection = editorSelection(element.value);
@@ -38,6 +46,7 @@ function commit(doc: InlineDocument, selection: { from: number; to: number }, re
   if (doc.text.length > 2000) { emit("notice", "问题最多输入 2000 个字符"); return false; }
   if (props.referencesDisabled && JSON.stringify(doc.products.map(p => p.id).sort()) !== JSON.stringify(props.products.map(p => p.id).sort())) return false;
   renderEditor(element.value, doc, props.referencesDisabled);
+  syncPlaceholder();
   element.value.focus(); setEditorSelection(element.value, selection.from, selection.to);
   lastSelection = selection;
   if (record) remember(doc, selection);
@@ -59,6 +68,7 @@ function insertProduct(selection: ProductSelection) {
   return replace({ text: "", products: [{ id: selection.product.id, name: selection.product.name, offset: 0 }] }, selection.replace || selected());
 }
 function input() {
+  syncPlaceholder();
   if (!element.value || composing) return;
   const doc = normalizeDocument(readEditor(element.value).text, readEditor(element.value).products);
   lastSelection = editorSelection(element.value) || lastSelection;
@@ -104,7 +114,7 @@ function beforeInput(event: InputEvent) {
   }
   if (props.referencesDisabled && element.value && sliceDocument(readEditor(element.value), range.from, range.to).products.length) event.preventDefault();
 }
-function compositionStart() { composing = true; }
+function compositionStart() { composing = true; syncPlaceholder(); }
 function compositionEnd() { composing = false; input(); }
 function copy(event: ClipboardEvent, cut = false) {
   if (!element.value || !event.clipboardData) return;
@@ -149,6 +159,7 @@ function external() {
   lastDocumentKey = props.documentKey;
   const hadFocus = element.value.contains(element.value.ownerDocument.activeElement);
   renderEditor(element.value, doc, props.referencesDisabled);
+  syncPlaceholder();
   lastSelection = { from: encodeDocument(doc).length, to: encodeDocument(doc).length };
   snapshots = [{ document: doc, ...lastSelection }]; historyIndex = 0;
   if (hadFocus) setEditorSelection(element.value, lastSelection.from);
@@ -161,6 +172,7 @@ watch(() => [props.text, JSON.stringify(props.products), props.documentKey], ext
 watch(() => props.referencesDisabled, () => {
   if (!element.value || composing) return;
   const range = selected(); renderEditor(element.value, current(), props.referencesDisabled);
+  syncPlaceholder();
   if (element.value === element.value.ownerDocument.activeElement) setEditorSelection(element.value, range.from, range.to);
 }, { flush: "post" });
 onMounted(() => { external(); measure(); document.addEventListener("selectionchange", selectionChanged); window.addEventListener("resize", measure); });
@@ -171,7 +183,7 @@ defineExpose({ element, insertProduct, focus: () => element.value?.focus(), meas
   <div :id="id" ref="element" class="chat-inline-editor" :contenteditable="disabled ? 'false' : 'true'" role="combobox"
     aria-label="输入问题，可输入 / 引用产品" aria-multiline="true" aria-autocomplete="list" aria-haspopup="listbox"
     :aria-disabled="disabled" :aria-expanded="expanded" :aria-controls="expanded ? listId : undefined" :aria-activedescendant="activeDescendant"
-    data-placeholder="输入问题，或输入 / 引用产品…" :data-empty="!text && !products.length" spellcheck="false"
+    data-placeholder="输入问题…" :data-empty="empty" spellcheck="false"
     @keydown="keyboard" @keyup="caret" @click="caret" @input="input" @beforeinput="beforeInput"
     @compositionstart="compositionStart" @compositionend="compositionEnd" @copy="copy($event)" @cut="copy($event, true)" @paste="paste"
     @dragstart="dragStart" @dragover.prevent @drop="drop" @dragend="draggingId = ''" />

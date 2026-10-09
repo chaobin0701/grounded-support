@@ -7,7 +7,7 @@ const routeSurface = { template: '<span />' };
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
-    { path: '/', name: 'chat', component: routeSurface },
+    { path: '/', redirect: '/admin' },
     { path: '/docs/integration', name: 'integration-docs', component: routeSurface },
     { path: '/admin', name: 'admin-login', component: routeSurface },
     { path: '/admin/documents', redirect: '/admin/knowledge' },
@@ -21,6 +21,6 @@ export const router = createRouter({
     { path: '/admin/knowledge/:baseId(\\d+)/:subview(documents|settings|recall-test)', name: 'admin-knowledge-subview', component: routeSurface },
     { path: '/admin/conversations/:conversationId', name: 'admin-conversation-detail', component: routeSurface },
     { path: '/admin/:section(dashboard|knowledge|products|conversations|agent-config|model-services|embedding-services|integrations|admins|roles|audit)', name: 'admin-section', component: routeSurface },
-    { path: '/:pathMatch(.*)*', redirect: '/' },
+    { path: '/:pathMatch(.*)*', redirect: '/admin' },
   ],
 });

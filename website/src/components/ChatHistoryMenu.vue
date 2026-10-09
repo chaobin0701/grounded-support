@@ -19,6 +19,7 @@ import {
 } from "@lucide/vue";
 import { chat } from "../chat/service";
 const opened = ref(false);
+const refreshing = ref(false);
 const allOpened = ref(false);
 const query = ref("");
 const anchor = ref<HTMLElement | null>(null);
@@ -55,11 +56,13 @@ async function select(id: string) {
   await chat.openConversation(id);
 }
 async function refresh() {
+  if (refreshing.value) return;
+  refreshing.value = true;
   try {
     await chat.refreshList();
   } catch {
     chat.state.notice = "会话列表暂时无法加载，请稍后重试。";
-  }
+  } finally { refreshing.value = false; }
 }
 function outside(event: PointerEvent) {
   if (event.target instanceof Node && !anchor.value?.contains(event.target))
@@ -136,13 +139,13 @@ onBeforeUnmount(() => {
       <header>
         <span>最近 10 条</span
         ><button
-          class="icon-button"
+          class="chat-history-refresh"
           type="button"
           aria-label="刷新会话"
-          :disabled="chat.busy()"
+          :disabled="chat.busy() || refreshing"
           @click="refresh"
         >
-          <RefreshCw :size="15" />
+          <RefreshCw :size="14" :class="{ spinner: refreshing }" />
         </button>
       </header>
       <div class="chat-recent-list">

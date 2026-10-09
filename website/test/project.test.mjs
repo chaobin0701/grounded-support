@@ -128,11 +128,23 @@ test("额度位于最近会话旁，详情向上覆盖且支持焦点、关闭�
 });
 test("完整助手为滚动条预留右侧空间，输入框保持同一网格", async () => {
   const css = await read("src/chat-layout.css");
-  assert.match(css, /\.chat-workspace--full \.chat-messages\s*\{[^}]*padding: 6px 24px 16px 0;/);
+  assert.match(css, /\.chat-workspace--full \.chat-messages\s*\{[^}]*padding: 32px 24px 16px 0;/);
   assert.match(css, /\.chat-workspace--full \.chat-composer-area\s*\{[^}]*padding: 12px 24px 10px 64px;/);
-  assert.match(css, /\.chat-workspace--full \.chat-messages\s*\{[^}]*padding: 8px 16px 16px 0;/);
+  assert.match(css, /\.chat-workspace--full \.chat-messages\s*\{[^}]*padding: 24px 16px 16px 0;/);
   assert.match(css, /\.chat-workspace--full \.chat-composer-area\s*\{[^}]*padding: 12px 16px 8px 46px;/);
   assert.match(await read("src/chat.css"), /\.chat-messages\s*\{[^}]*overflow-y: auto;[^}]*scrollbar-gutter: stable;/);
+});
+test('最近会话使用小型无边框刷新控件，额度声明始终提示合理测试使用', async () => {
+  const history = await read('src/components/ChatHistoryMenu.vue');
+  assert.match(history, /class="chat-history-refresh"/);
+  assert.match(history, /<RefreshCw :size="14" :class="\{ spinner: refreshing \}"/);
+  assert.match(history, /finally \{ refreshing.value = false; \}/);
+  const css = await read('src/chat-layout.css');
+  assert.match(css, /\.chat-history-refresh\s*\{[^}]*width: 32px;[^}]*height: 32px;[^}]*border: 0;/);
+  assert.match(css, /\.chat-history-refresh::after\s*\{[^}]*inset: -6px;/);
+  const quota = await read('src/components/ChatQuota.vue');
+  assert.match(quota, /本服务仅供测试体验，请合理使用共享额度，勿频繁请求或滥用。/);
+  assert.doesNotMatch(quota, /部分用量为保守估算|不等同于供应商账单/);
 });
 test("双模式消息只用头像区分角色，不展示名称和时间，保留未完成提示", async () => {
   const source = await read("src/components/ChatWorkspace.vue");

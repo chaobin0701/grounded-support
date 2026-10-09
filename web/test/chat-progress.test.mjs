@@ -1,20 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-test('独立聊天页展示具体操作说明，不渲染耗时或结果数量；后台调试仍显示耗时', async () => {
-  const source = await readFile(new URL('../src/ChatWorkspace.vue', import.meta.url), 'utf8');
-  assert.match(source, /const activeStatus = computed/);
-  assert.match(source, /\{\{ activeStatus \}\}/);
-  assert.doesNotMatch(source, /formatDuration|event\.durationMs|event\.resultCount/);
+test('后台移除独立聊天入口，保留会话管理与轨迹耗时诊断', async () => {
+  const source = await readFile(new URL('../src/App.vue', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /ChatWorkspace/);
   const admin = await readFile(new URL('../src/ConversationTraceAdmin.vue', import.meta.url), 'utf8');
   assert.match(admin, /durationMs/);
 });
-test('执行过程在历史和流式正文之前，紧凑组件不再显示重复分类和状态列', async () => {
-  const source = await readFile(new URL('../src/ChatWorkspace.vue', import.meta.url), 'utf8');
-  const history = source.slice(source.indexOf('<template v-else><BrandMark'), source.indexOf('<div v-if="isSending"'));
-  const pending = source.slice(source.indexOf('<div v-if="isSending"'));
-  assert.ok(history.indexOf('<ChatProgress') < history.indexOf('class="answer-text"'));
-  assert.ok(pending.indexOf('<ChatProgress') < pending.indexOf('class="answer-text"'));
+test('官网保留历史和流式正文之前的执行过程，后台无重复访客工作区', async () => {
+  const source = await readFile(new URL('../../website/src/components/ChatWorkspace.vue', import.meta.url), 'utf8');
+  const history = source.slice(source.indexOf('v-for="message in state.messages"'), source.indexOf('v-if="state.isSending ||'));
+  const pending = source.slice(source.indexOf('v-if="state.isSending ||'));
+  assert.ok(history.indexOf('<ChatProgress') < history.indexOf('<ChatMarkdown'));
+  assert.ok(pending.indexOf('<ChatProgress') < pending.indexOf('<ChatMarkdown'));
   assert.doesNotMatch(source, /process-step-meta|process-step-copy|process-panel pending-process/);
   const css = await readFile(new URL('../src/design.css', import.meta.url), 'utf8');
   assert.match(css, /\.process-collapsible \.process-content\s*\{[^}]*border:0/);

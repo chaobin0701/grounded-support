@@ -1,4 +1,4 @@
-/* Product attachment UI: one light list, anchored above the composer toolbar.
+/* Product attachment UI: one light list, anchored above the composer.
    It overlays content; only the result list scrolls, never the surrounding page. */
 .chat-product-picker { min-width: 0; }
 .chat-inline-editor { position: relative; display: block; width: 100%; min-width: 0; min-height: 24px; height: 24px; max-height: min(240px, 35dvh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 15px; line-height: 24px; padding: 0; background: transparent; color: var(--ink); outline: none; }
@@ -10,24 +10,37 @@
 .chat-inline-product > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .chat-user-text-segment { vertical-align: middle; }
 .chat-product-trigger {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 32px;
-  padding: 6px 8px;
+  position: absolute;
+  left: 10px;
+  bottom: 8px;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 50%;
   background: transparent;
   color: var(--muted);
-  font-size: 12px;
-  white-space: nowrap;
-  position: relative;
 }
-.chat-product-trigger::after { content: ""; position: absolute; inset: -6px 0; }
-.chat-product-trigger kbd { font: inherit; opacity: 0.65; }
 .chat-product-trigger:hover:not(:disabled),
 .chat-product-trigger[aria-expanded="true"] { background: var(--mint); color: var(--brand); }
 .chat-product-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
+.chat-add-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 8;
+  width: min(240px, 100%);
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--white);
+  box-shadow: 0 8px 28px #202b281a;
+}
+.chat-add-product { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 10px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font-size: 13px; text-align: left; }
+.chat-add-product > span { flex: 1; }
+.chat-add-product:hover, .chat-add-product:focus-visible { background: var(--mint); color: var(--brand); }
 .chat-product-popover {
   position: absolute;
   left: 0;
@@ -94,7 +107,7 @@
 @media (max-width: 600px) {
   .chat-toolbar { gap: 4px; flex-wrap: wrap; }
   .chat-toolbar .chat-new, .chat-history-trigger { padding-inline: 6px; }
-  .chat-product-trigger kbd, .chat-product-key-hint { display: none; }
+  .chat-product-key-hint { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .product-reference-enter-active, .product-reference-leave-active { transition: none; }

@@ -73,10 +73,10 @@ onBeforeUnmount(() => {
           </dl>
           <div v-if="available" class="chat-quota-track" role="progressbar" :aria-label="label" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(percent)"><span :style="{ width: `${percent}%` }"></span></div>
           <p class="chat-quota-hint">所有访客共享 · 北京时间 {{ resetTime }} 重置</p>
-          <p v-if="quota.unknownModelCalls" class="chat-quota-hint">部分用量为保守估算，不等同于供应商账单。</p>
           <p v-if="status" class="chat-quota-status" role="status">{{ status }}</p>
         </template>
         <p v-else-if="!state.quotaError" class="chat-quota-hint" role="status">正在查询额度…</p>
+        <p class="chat-quota-hint">本服务仅供测试体验，请合理使用共享额度，勿频繁请求或滥用。</p>
       </div>
       <footer><button type="button" :disabled="state.quotaLoading" @click="chat.refreshQuota(true)"><RefreshCw :size="13" />{{ state.quotaLoading ? '刷新中…' : '刷新额度' }}</button></footer>
     </section>
