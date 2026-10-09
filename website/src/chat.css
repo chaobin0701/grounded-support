@@ -806,3 +806,105 @@
 .chat-product-tags button { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 44px; height: 44px; margin: -4px -8px -4px 0; border: 0; background: transparent; color: inherit; cursor: pointer; }
 .chat-product-tags button:focus-visible { outline: 2px solid var(--brand); outline-offset: -3px; border-radius: 8px; }
 .chat-commentary { margin: 0 0 8px; color: var(--muted); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+
+/* Mobile assistant: use the viewport as the dialog and keep the writing grid tight. */
+@media (max-width: 600px) {
+  .assistant-overlay--mobile {
+    inset: 0;
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .assistant-overlay--mobile .assistant-window {
+    width: 100vw;
+    max-width: none;
+    height: 100dvh;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .assistant-overlay--mobile .assistant-window-header {
+    min-height: 56px;
+    padding-top: max(8px, env(safe-area-inset-top));
+  }
+
+  .assistant-overlay--mobile .chat-workspace {
+    min-height: 0;
+  }
+
+  .assistant-overlay--mobile .chat-messages,
+  .assistant-overlay--mobile .chat-workspace--widget .chat-messages {
+    padding: 16px 14px 10px;
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-message {
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-message--user {
+    max-width: 100%;
+    padding-bottom: 30px;
+    margin-bottom: 10px;
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-message--user .chat-message-body {
+    padding: 10px 12px;
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-markdown {
+    font-size: 14px;
+    line-height: 1.72;
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-composer-area {
+    padding: 8px 8px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .assistant-overlay--mobile .chat-workspace--widget .chat-toolbar {
+    padding: 2px 0 6px;
+  }
+
+  .assistant-overlay--mobile .chat-composer {
+    width: 100%;
+    min-height: 58px;
+    padding-inline: 52px 58px;
+  }
+
+  .assistant-overlay--mobile .chat-product-popover {
+    left: 0;
+    right: 0;
+    width: 100%;
+    border-radius: 12px 12px 0 0;
+  }
+
+  /* The full assistant shares the same mobile edge grid; do not reserve the desktop avatar rail. */
+  .site-shell--assistant .chat-workspace--full .chat-messages {
+    padding: 16px 12px 10px;
+  }
+
+  .site-shell--assistant .chat-workspace--full .chat-welcome {
+    margin-inline: 0;
+  }
+
+  .site-shell--assistant .chat-workspace--full .chat-composer-area {
+    padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+  }
+
+  .site-shell--assistant .chat-workspace--full .chat-composer {
+    width: 100%;
+  }
+
+  .site-shell--assistant .chat-workspace--full .chat-message {
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .site-shell--assistant .chat-workspace--full .chat-message--user {
+    max-width: 100%;
+    padding-bottom: 30px;
+    margin-bottom: 10px;
+  }
+}
