@@ -5,7 +5,7 @@
 
   面向产品咨询与企业知识服务的智能客服示例项目。
 
-  [官网 Demo](https://hexu.7410000.xyz/) · [在线对话 Demo](https://hexu-admin.7410000.xyz/) · [接入文档](https://hexu-admin.7410000.xyz/docs/integration)
+  [企业官网](https://hexu.7410000.xyz/) · [管理后台](https://hexu-admin.7410000.xyz/admin)
 </div>
 
 ## 项目简介
@@ -18,10 +18,8 @@
 
 | 入口 | 地址 | 可以体验什么 |
 | --- | --- | --- |
-| 企业官网 | [hexu.7410000.xyz](https://hexu.7410000.xyz/) | 首页、产品筛选与详情、悬浮助手、完整对话页 |
-| 独立客服 | [hexu-admin.7410000.xyz](https://hexu-admin.7410000.xyz/) | 会话、产品引用、流式回答与公开处理过程 |
-| 管理后台 | [后台登录页](https://hexu-admin.7410000.xyz/admin) | 产品、知识库、模型与接入配置；需管理员账号 |
-| 开发接入 | [在线接入文档](https://hexu-admin.7410000.xyz/docs/integration) | 网站接入和服务端 API 接入说明 |
+| 企业官网 | [hexu.7410000.xyz](https://hexu.7410000.xyz/) | 首页、产品筛选与详情、站内助手 |
+| 管理后台 | [hexu-admin.7410000.xyz/admin](https://hexu-admin.7410000.xyz/admin) | 产品、知识库、模型与接入配置；需管理员账号 |
 
 ## 核心能力
 
@@ -56,7 +54,7 @@ flowchart LR
 | 目录 | 技术 | 主要职责 |
 | --- | --- | --- |
 | [`website/`](website/) | Vue 3、TypeScript、Vite、GSAP | 企业官网、产品展示和站内助手 |
-| [`web/`](web/) | Vue 3、TypeScript、Vite、Tailwind CSS | 独立客服、管理后台和接入文档 |
+| [`web/`](web/) | Vue 3、TypeScript、Vite、Tailwind CSS | 管理后台与客服运行界面 |
 | [`server/`](server/) | NestJS、TypeScript、Drizzle ORM、pg-boss | API、Agent、工具、权限、索引 Worker |
 | [`infra/`](infra/) | PostgreSQL、pgvector | 数据库初始化 |
 | [`deploy/`](deploy/) | Docker Compose、Caddy | 生产部署与检查脚本 |
@@ -72,7 +70,7 @@ cp .env.example .env
 
 至少设置 `.env` 中的 `POSTGRES_PASSWORD` 和长度不少于 32 字节的 `JWT_SECRET`。要使用实际模型回答和向量检索，还需在后台配置相应服务，或填写本地模型／Embedding 环境变量；不要将密钥提交到 Git。
 
-**Docker 启动独立客服与后台：**
+**Docker 启动后台服务：**
 
 ```bash
 docker compose up --build -d
@@ -91,12 +89,12 @@ cd ..
 node scripts/dev-supervisor.mjs
 ```
 
-开发监督进程使用 Docker 数据库，保持 API、Worker 和 `web` 在线；独立客服与后台访问 [http://localhost:8848](http://localhost:8848/)。另开终端运行 `cd website && npm run dev`，官网访问 [http://localhost:8849](http://localhost:8849/)；官网的产品和对话依赖 API 在线。开发与生产部署细节见 [官网说明](website/README.md) 和 [生产部署文档](docs/production-deployment.md)。
+开发监督进程使用 Docker 数据库，保持 API、Worker 和 `web` 在线；管理后台访问 [http://localhost:8848/admin](http://localhost:8848/admin)。另开终端运行 `cd website && npm run dev`，企业官网访问 [http://localhost:8849](http://localhost:8849/)；官网的产品和对话依赖 API 在线。开发与生产部署细节见 [官网说明](website/README.md) 和 [生产部署文档](docs/production-deployment.md)。
 
 ## 关键流程
 
 1. 管理员维护产品，并将企业资料上传到知识库；Worker 生成可检索的片段与向量。
-2. 访客从官网或独立客服提问，可附带产品引用；API 校验产品 ID，预先准备相关产品资料和检索结果。
+2. 访客从企业官网提问，可附带产品引用；API 校验产品 ID，预先准备相关产品资料和检索结果。
 3. Agent 将当前问题、会话上下文和已准备的资料交给模型；模型可以直接回答，也可以调用产品或知识库工具补充信息。
 4. 页面通过 SSE 展示公开处理过程和回答；会话、轨迹与用量留在服务端，后续追问可复用有效的上下文资料。
 
@@ -108,7 +106,7 @@ cd ../web && npm test && npm run build
 cd ../website && npm test && npm run build
 ```
 
-这些命令分别检查后端、独立客服／后台与官网。外部模型调用、真实产品资料和生产接入还需要在对应环境单独验证。
+这些命令分别检查后端、管理后台与官网。外部模型调用、真实产品资料和生产接入还需要在对应环境单独验证。
 
 ## 深入阅读
 
