@@ -10,6 +10,7 @@ import { isProductDetail } from './product-context';
 import { z } from 'zod';
 import type { AgentTool } from '../ai/tools/agent-tool';
 import { productResources } from '../ai/context/context-contribution';
+import { hasToolCapability } from '../ai/tools/tool-capabilities';
 
 export type ProductPreparation = {
   requestedIds: string[];
@@ -29,7 +30,7 @@ export class ProductContextPreparer {
     const executionState = this.tools.createStateForAgent(runtime.allowedTools, runtime.maxToolCalls, { timeoutMs: runtime.toolTimeoutMs, maxResultChars: runtime.maxToolResultChars });
     const toolContext: ToolContext = { sessionId: scope.conversationId, traceId: scope.traceId, permissions: runtime.allowedTools, enabledSkillIds: configuration.enabledSkills, state: new Map() };
     const prepared: ProductPreparation = { requestedIds: ids, products: [], evidence: [], entries: [], executionState, toolContext };
-    const detailName = runtime.allowedTools.find(name => ['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(name)) ?? 'get_product_detail';
+    const detailName = runtime.allowedTools.find(name => hasToolCapability(name, 'product-detail')) ?? 'get_product_detail';
     const allowed = runtime.allowedTools.includes(detailName);
     let revisions = new Map<string, string>();
     if (allowed) {

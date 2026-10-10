@@ -14,12 +14,12 @@ export const PLANNER_RESPONSE_FORMAT: LlmResponseFormat = {
     schema: {
       type: 'object',
       properties: {
-        commentary: { type: 'string', maxLength: 160 },
+        commentary: { type: 'string' },
         type: { type: 'string', enum: ['final'] },
         status: { type: 'string', enum: ['answered', 'refused'] },
-        answer: { type: 'string', maxLength: 1200 },
-        citationIds: { type: 'array', items: { type: 'integer' }, maxItems: 5 },
-        productIds: { type: 'array', items: { type: 'string' }, maxItems: 50 },
+        answer: { type: 'string' },
+        citationIds: { type: 'array', items: { type: 'integer' } },
+        productIds: { type: 'array', items: { type: 'string' } },
       },
       additionalProperties: false,
     },

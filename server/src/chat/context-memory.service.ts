@@ -4,6 +4,7 @@ import { SearchService } from '../documents/search.service';
 import type { AgentConfiguration } from '../config/agent-config';
 import { readContextBlocks, canUseContextSource, evidenceDigest, type ContextResource, type RestoredContext } from '../ai/context/context-contribution';
 import { ContextGovernor } from './context-governor';
+import { hasToolCapability } from '../ai/tools/tool-capabilities';
 
 @Injectable()
 export class ContextMemoryService {
@@ -41,7 +42,7 @@ export class ContextMemoryService {
       finally { if (timer) clearTimeout(timer); }
     };
     await Promise.all([
-      flags.products && products.length && (allowed.has('get_product_detail') || allowed.has('mcp_product_catalog_get_product_detail'))
+      flags.products && products.length && [...allowed].some(name => hasToolCapability(name, 'product-detail'))
         ? bounded(this.catalog.revisions(products.map(r => r.data.id)), revisions).then(value => { revisions = value; }) : undefined,
       flags.knowledge && knowledge.length && allowed.has('search_knowledge')
         ? bounded(this.search.restoreEvidence(knowledge.map(r => r.data)), evidence).then(value => { evidence = value; }) : undefined,

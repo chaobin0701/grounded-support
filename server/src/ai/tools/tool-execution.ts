@@ -6,6 +6,7 @@ import { ToolRegistry } from './tool-registry';
 import { ToolResult } from './tool-result';
 import type { LlmToolDefinition } from '../providers/provider.types';
 import type { ContextResource } from '../context/context-contribution';
+import { hasToolCapability, type AgentToolCapability } from './tool-capabilities';
 
 export type ToolExecutionTrace = {
   name: string;
@@ -37,15 +38,22 @@ export class ToolExecutionService {
 
   capabilities() {
     const definitions = this.toolDefinitions();
-    const groups = [
-      { id: 'knowledge', name: '知识库检索', description: '检索已启用知识库的资料，返回可引用片段。', names: ['search_knowledge'], source: '知识库', system: false },
-      { id: 'categories', name: '产品分类', description: '查看当前产品目录分类。', names: ['list_product_categories', 'mcp_product_catalog_list_product_categories'], source: '产品数据库', system: false },
-      { id: 'products', name: '产品列表', description: '按分类或关键词查询官网共用的产品目录。', names: ['list_products', 'mcp_product_catalog_list_products'], source: '产品数据库', system: false },
-      { id: 'detail', name: '产品详情', description: '读取准确产品 ID 对应的规格与详细信息。', names: ['get_product_detail', 'mcp_product_catalog_get_product_detail'], source: '产品数据库', system: false },
-      { id: 'skills', name: '专项指导读取', description: '模型按需读取可用专项指导，不改变 Agent 权限。', names: ['load_skill'], source: '静态 Skill 注册表', system: true },
+    const registryWithList = this.registry as ToolRegistry & { list?: () => AgentTool[] };
+    const registered = typeof registryWithList.list === 'function' ? registryWithList.list() : [];
+    const byName = new Map(registered.map(tool => [tool.name, tool]));
+    const hasCapability = (name: string, capability: AgentToolCapability) => {
+      const tool = byName.get(name);
+      return tool?.capabilities?.includes(capability) || hasToolCapability(name, capability);
+    };
+    const groups: Array<{ id: string; name: string; description: string; capability: AgentToolCapability; source: string; system: boolean }> = [
+      { id: 'knowledge', name: '知识库检索', description: '检索已启用知识库的资料，返回可引用片段。', capability: 'knowledge-search', source: '知识库', system: false },
+      { id: 'categories', name: '产品分类', description: '查看当前产品目录分类。', capability: 'product-category', source: '产品数据库', system: false },
+      { id: 'products', name: '产品列表', description: '按分类或关键词查询官网共用的产品目录。', capability: 'product-list', source: '产品数据库', system: false },
+      { id: 'detail', name: '产品详情', description: '读取准确产品 ID 对应的规格与详细信息。', capability: 'product-detail', source: '产品数据库', system: false },
+      { id: 'skills', name: '专项指导读取', description: '模型按需读取可用专项指导，不改变 Agent 权限。', capability: 'skill', source: '静态 Skill 注册表', system: true },
     ];
-    return groups.map(({ names, ...group }) => ({ ...group, tools: definitions.filter(tool => names.includes(tool.name)).map(tool => ({
-      ...tool, source: tool.name.startsWith('mcp_') ? 'MCP' : '本地', canBatch: this.canBatch(tool.name), dependency: this.registry.get(tool.name).planning?.dependency ?? '',
+    return groups.map(({ capability, ...group }) => ({ ...group, names: definitions.filter(tool => hasCapability(tool.name, capability)).map(tool => tool.name), tools: definitions.filter(tool => hasCapability(tool.name, capability)).map(tool => ({
+      ...tool, source: tool.name.startsWith('mcp_') ? 'MCP' : '本地', canBatch: this.canBatch(tool.name), dependency: byName.get(tool.name)?.planning?.dependency ?? '',
     })) })).filter(group => group.tools.length);
   }
 
@@ -76,7 +84,7 @@ export class ToolExecutionService {
       .map((tool) => ({
         name: tool.name,
         description: tool.description,
-        parameters: nativeParametersFor(tool.name),
+        parameters: nativeParametersFor(tool),
       }));
   }
 
@@ -118,7 +126,7 @@ export class ToolExecutionService {
   private async executeWithTool(name: string, args: Record<string, unknown>, context: ToolContext, state: ToolExecutionState, preflightTool?: AgentTool): Promise<ToolExecutionOutcome> {
     const started = Date.now();
     const baseTrace = (): ToolExecutionTrace => ({ name, arguments: args, ok: false, durationMs: Date.now() - started });
-    const detail = name === 'get_product_detail' || name === 'mcp_product_catalog_get_product_detail';
+    const detail = hasToolCapability(name, 'product-detail');
     // Successful, revision-checked product details only. Never cache errors or arbitrary tools.
     if (detail && (!state.allowedTools || state.allowedTools.has(name))) {
       try {
@@ -191,33 +199,32 @@ export class ToolExecutionService {
   }
 }
 
-function nativeParametersFor(name: string): Record<string, unknown> {
-  switch (name) {
-    case 'load_skill':
-      return { type: 'object', properties: { skillId: { type: 'string', description: '可用 Skill 摘要中的准确 ID' } }, required: ['skillId'], additionalProperties: false };
-    case 'search_knowledge':
-      return {
-        type: 'object',
-        properties: { query: { type: 'string', description: '要检索的资料问题' }, topK: { type: 'integer', minimum: 1, maximum: 8 } },
-        required: ['query'],
-        additionalProperties: false,
-      };
-    case 'list_products':
-    case 'mcp_product_catalog_list_products':
-      return {
-        type: 'object',
-        properties: { categoryId: { type: 'string' }, search: { type: 'string' } },
-        additionalProperties: false,
-      };
-    case 'get_product_detail':
-    case 'mcp_product_catalog_get_product_detail':
-      return { type: 'object', properties: { productId: { type: 'string' } }, required: ['productId'], additionalProperties: false };
-    case 'list_product_categories':
-    case 'mcp_product_catalog_list_product_categories':
-      return { type: 'object', properties: {}, additionalProperties: false };
-    default:
-      return { type: 'object', additionalProperties: true };
+function nativeParametersFor(tool: AgentTool): Record<string, unknown> {
+  const capabilities = new Set(tool.capabilities ?? []);
+  // The registry is the source of the business capability. The fallback map in
+  // hasToolCapability only exists for older adapters that have not yet declared
+  // metadata; product aliases therefore do not leak into this schema mapping.
+  if (capabilities.has('skill') || hasToolCapability(tool.name, 'skill')) {
+    return { type: 'object', properties: { skillId: { type: 'string', description: '可用 Skill 摘要中的准确 ID' } }, required: ['skillId'], additionalProperties: false };
   }
+  if (capabilities.has('knowledge-search') || hasToolCapability(tool.name, 'knowledge-search')) {
+    return {
+      type: 'object',
+      properties: { query: { type: 'string', description: '要检索的资料问题' }, topK: { type: 'integer', minimum: 1, maximum: 8 } },
+      required: ['query'],
+      additionalProperties: false,
+    };
+  }
+  if (capabilities.has('product-list') || hasToolCapability(tool.name, 'product-list')) {
+    return { type: 'object', properties: { categoryId: { type: 'string' }, search: { type: 'string' } }, additionalProperties: false };
+  }
+  if (capabilities.has('product-detail') || hasToolCapability(tool.name, 'product-detail')) {
+    return { type: 'object', properties: { productId: { type: 'string' } }, required: ['productId'], additionalProperties: false };
+  }
+  if (capabilities.has('product-category') || hasToolCapability(tool.name, 'product-category')) {
+    return { type: 'object', properties: {}, additionalProperties: false };
+  }
+  return { type: 'object', additionalProperties: true };
 }
 
 class ToolTimeoutError extends Error {

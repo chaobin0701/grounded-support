@@ -72,7 +72,7 @@ function isProgress(value: unknown): value is ProgressEvent {
 }
 function isCommentary(value: unknown): value is CommentaryEvent {
   return object(value) && value.type === "commentary" && typeof value.id === "string"
-    && typeof value.text === "string" && !!value.text.trim() && value.text.length <= 160;
+    && typeof value.text === "string" && !!value.text.trim();
 }
 async function request(
   path: string,
@@ -147,7 +147,6 @@ export async function readAnswerStream(
   function emitCommentary(id: string, text: string, replace = false) {
     if (!id || typeof text !== "string") return;
     const next = replace ? text : `${commentaryBuffers.get(id) ?? ""}${text}`;
-    if (next.length > 160) throw new ChatApiError(502, "处理说明格式异常，请检查上一轮状态。");
     if (next === commentaryBuffers.get(id)) return;
     commentaryBuffers.set(id, next);
     if (next.trim()) callbacks.commentary?.({ type: "commentary", id, text: next });

@@ -7,6 +7,7 @@ import type { SkillDefinition, SkillSummary } from '../ai/skills/skill.types';
 import type { AgentTranscriptMessage } from './agent-transcript';
 import type { ProductDetail } from '../ai/tools/product-catalog/product-catalog.service';
 import type { RequestContext } from './request-context';
+import { hasToolCapability } from '../ai/tools/tool-capabilities';
 
 export interface ContextBuildInput {
   configuration?: AgentConfiguration;
@@ -49,7 +50,7 @@ export class ContextBuilder {
     const summary = input.summary.slice(0, memory.summaryMaxChars);
     const history = input.recentHistory.slice(-memory.recentTurns).map((turn) => ({
       question: turn.question.trim().slice(0, 2000),
-      answer: turn.answer.trim().slice(0, 1200),
+      answer: turn.answer.trim(),
     }));
     const payload = {
       question,
@@ -57,7 +58,7 @@ export class ContextBuilder {
       history,
       toolResults: input.toolResults.map(result => {
         if (Array.isArray(result.evidenceRefs)) return { tool: result.tool, evidenceRefs: result.evidenceRefs };
-        if (['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(String(result.tool))) {
+        if (hasToolCapability(String(result.tool), 'product-detail')) {
           if (typeof result.productRef === 'string' && (input.products ?? []).some(p => p.id === result.productRef)) return { tool: result.tool, productRef: result.productRef };
           try {
             const data = typeof result.result === 'string' ? JSON.parse(result.result) : null;

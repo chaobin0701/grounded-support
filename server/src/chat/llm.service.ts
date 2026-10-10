@@ -192,6 +192,11 @@ export class LlmService {
           toolCalls.push({ id: call.id, name: call.name, arguments: parsed as Record<string, unknown> });
         }
         if (!content && toolCalls.length === 0) throw new ModelStreamProtocolError('empty_response');
+        // Removing application-level answer length caps does not make a model
+        // truncation a complete answer. A provider finish reason of `length`
+        // means the configured max output token budget was reached; callers
+        // must keep the partial text as interrupted and never emit completed.
+        if (purpose === 'answer' && finishReason === 'length') throw new ModelStreamProtocolError('output_truncated');
         if (toolCalls.length && finishReason !== null && finishReason !== 'tool_calls') throw new ModelStreamProtocolError('invalid_tool_finish_reason');
         if (!toolCalls.length && finishReason === 'tool_calls') throw new ModelStreamProtocolError('missing_tool_calls');
         settling = true;

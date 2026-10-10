@@ -19,10 +19,11 @@ import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration } from '../../conf
 import type { SkillDefinition, SkillSummary } from '../skills/skill.types';
 import { makeContextBlock } from '../context/context-contribution';
 import { PLANNER_RESPONSE_FORMAT } from './planner-response-format';
+import { hasToolCapability } from '../tools/tool-capabilities';
 
 export const PLANNER_PROTOCOL = `根据已有上下文自行决定直接回答或调用工具，不要求每轮调用工具。需要工具时，只能使用请求中提供的原生 function tools 和标准 tool_calls；禁止在 content 正文中写工具指令或 DSML 标记。多个独立工具的参数已经可以确定时，优先在同一次响应中返回多个 tool calls；同一个工具也可以使用不同参数调用多次，例如多个已知 productId 的 get_product_detail。它们会按返回顺序逐个执行，不是并行执行；不要把依赖前一个尚未返回结果的工具放进同一批次。
-调用工具时，content 应同时输出 JSON 对象 {"commentary":"我先查看产品目录，再为你整理主要特点。"}；commentary 是面向用户的简短公开操作说明，不是内部思考，最多 160 字。不输出工具内部名称、调用参数、内部 ID、密钥、系统提示词或推理过程，不提前声称工具已成功。说明缺省时仍执行工具。不要输出 Markdown 包裹或 JSON 之外的正文。
-不需要更多工具时输出：{"type":"final","status":"answered","answer":"简短中文回答","citationIds":[资料片段数字ID],"productIds":[产品ID]}。
+调用工具时，content 应同时输出 JSON 对象 {"commentary":"我先查看产品目录，再为你整理主要特点。"}；commentary 是面向用户的公开操作说明，不是内部思考。建议简洁，但不要因为长度或表达方式把它当作业务结论。不输出工具内部名称、调用参数、内部 ID、密钥、系统提示词或推理过程，不提前声称工具已成功。说明缺省时仍执行工具。不要输出 Markdown 包裹或 JSON 之外的正文。
+不需要更多工具时输出：{"type":"final","status":"answered","answer":"中文回答","citationIds":[资料片段数字ID],"productIds":[产品ID]}。回答通常围绕问题简洁组织；问题复杂时可以分项展开，不要因为固定字符数而截断或省略必要内容。完整列出实际使用且能确认的引用和产品 ID，不为凑数量添加无关项。
 能够回答部分问题时，说明已确认内容与未知部分，仍可使用 answered。确实无法形成有帮助的回答时使用 refused，并在 answer 中解释缺少的信息、澄清问题或后续建议，不使用固定的一句话拒答。citationIds 和 productIds 只填写上下文中可确认的 ID，没有可用 ID 时填空数组，不因没有引用而强制拒答。
 只调用当前请求提供且允许使用的工具。需要使用专项指导时，使用 load_skill 读取可用 Skill 摘要中的准确 ID；这是读取说明，不是切换 Agent、回答模式或权限。产品详情可以使用上下文中已经确认的准确 productId，或先调用 list_products 获取产品 ID。不要编造 ID、价格、库存、规格、订单状态或购买链接。不要透露产品 ID。
 如果资料不足，可以使用不同的查询再次检索；不要重复完全相同的工具调用。
@@ -116,7 +117,7 @@ export class AgentLoop {
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     const nativeTools = this.toolExecution.toolDefinitions(state.runtime.allowedTools);
     const historicalProductIds = input.restoredContext ? (input.priorTranscript ?? []).flatMap(message => (message.toolCalls ?? [])
-      .filter(call => ['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(call.name) && typeof call.arguments.productId === 'string')
+      .filter(call => hasToolCapability(call.name, 'product-detail') && typeof call.arguments.productId === 'string')
       .map(call => call.arguments.productId as string)) : [];
     const canonicalIds = new Set([...(input.requestContext?.productIds ?? []), ...historicalProductIds, ...(input.restoredContext?.historyProductIds ?? []), ...[...state.products.values()].filter(isProductDetail).map(p => p.id)]);
     const projectedTranscript = projectEvidenceTranscript(projectProductTranscript(state.transcript, canonicalIds), new Set(state.hits.keys()));
@@ -300,8 +301,8 @@ export class AgentLoop {
       };
       state.toolResults.push({
         tool: call.name,
-        ...(['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(call.name) && execution.result.success && isProductDetail(execution.result.data) ? { productRef: execution.result.data.id } : {}),
-        ...(call.name === 'search_knowledge' && execution.result.success ? { evidenceRefs: [...state.hits.keys()] } : {}),
+        ...(hasToolCapability(call.name, 'product-detail') && execution.result.success && isProductDetail(execution.result.data) ? { productRef: execution.result.data.id } : {}),
+        ...(hasToolCapability(call.name, 'knowledge-search') && execution.result.success ? { evidenceRefs: [...state.hits.keys()] } : {}),
         result: execution.result.success ? execution.result.content : failureResult,
       });
       this.appendTranscript(state, {
@@ -329,7 +330,7 @@ export class AgentLoop {
         ...(execution.trace.errorCode ? { errorCode: execution.trace.errorCode } : {}),
         ...(execution.trace.deferred ? { deferred: true, detail: '未执行：需要读取前序工具的新指导后重新规划' } : {}),
       });
-      if (call.name === 'load_skill' && execution.result.success) {
+      if (hasToolCapability(call.name, 'skill') && execution.result.success) {
         const skillId = typeof call.arguments.skillId === 'string' ? call.arguments.skillId : '';
         state.executionSteps.push({ type: 'skill_loaded', stage: 'planning', skillId, selectedBy: 'model', plannerRound, ok: true, durationMs: 0, detail: `模型按需读取专项 Skill：${skillId}` });
         state.contextSnapshot.loadedSkills = [...state.loadedSkills.values()].map(({ id, name, version }) => ({ id, name, version }));
@@ -376,7 +377,7 @@ export class AgentLoop {
   }
 
   private collectToolData(name: string, data: unknown, state: AgentState): void {
-    if (name === 'load_skill' && isObjectWith(data, 'skill')) {
+    if (hasToolCapability(name, 'skill') && isObjectWith(data, 'skill')) {
       const value = data.skill;
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         const skill = value as Record<string, unknown>;
@@ -385,12 +386,12 @@ export class AgentLoop {
         }
       }
     }
-    if (name === 'search_knowledge' && isObjectWith(data, 'hits') && Array.isArray(data.hits)) {
+    if (hasToolCapability(name, 'knowledge-search') && isObjectWith(data, 'hits') && Array.isArray(data.hits)) {
       for (const hit of data.hits) {
         if (isSearchHit(hit)) state.hits.set(hit.chunkId, hit);
       }
     }
-    if ((name === 'list_products' || name === 'mcp_product_catalog_list_products') && isObjectWith(data, 'products') && Array.isArray(data.products)) {
+    if (hasToolCapability(name, 'product-list') && isObjectWith(data, 'products') && Array.isArray(data.products)) {
       for (const product of data.products) {
         if (isProductSummary(product) && !isProductDetail(state.products.get(product.id))) state.products.set(product.id, product);
       }
@@ -399,15 +400,15 @@ export class AgentLoop {
         for (const product of data.products) if (isProductSummary(product)) knownProductIds.add(product.id);
       }
     }
-    if ((name === 'get_product_detail' || name === 'mcp_product_catalog_get_product_detail') && isProductDetail(data)) state.products.set(data.id, data);
+    if (hasToolCapability(name, 'product-detail') && isProductDetail(data)) state.products.set(data.id, data);
   }
 }
 
 function publicToolLabel(name: string): string {
-  if (name === 'load_skill') return '正在读取专项咨询指导';
-  if (name.includes('list_product_categories')) return '正在查看产品分类';
-  if (name.includes('list_products')) return '正在查看产品目录';
-  if (name.includes('get_product_detail')) return '正在读取产品详细规格';
+  if (hasToolCapability(name, 'skill')) return '正在读取专项咨询指导';
+  if (hasToolCapability(name, 'product-category')) return '正在查看产品分类';
+  if (hasToolCapability(name, 'product-list')) return '正在查看产品目录';
+  if (hasToolCapability(name, 'product-detail')) return '正在读取产品详细规格';
   return '正在检索知识库资料';
 }
 

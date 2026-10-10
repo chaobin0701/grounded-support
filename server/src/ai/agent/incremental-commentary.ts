@@ -1,6 +1,6 @@
 import { publicCommentary } from './model-response';
 
-/** A bounded JSON-string decoder. Only the sole top-level commentary field is public. */
+/** An incremental JSON-string decoder. Only the sole top-level commentary field is public. */
 export class IncrementalCommentary {
   private raw = '';
   private emitted = '';
@@ -11,7 +11,6 @@ export class IncrementalCommentary {
   push(delta: string): string {
     if (this.blocked) return '';
     this.raw += delta;
-    if (this.raw.length > 4096) { this.blocked = true; return ''; }
     let index = 0;
     const whitespace = () => { while (/\s/u.test(this.raw[index] ?? '') && index < this.raw.length) index++; };
     whitespace();
@@ -36,7 +35,6 @@ export class IncrementalCommentary {
     if (!value.closed) text = text.replace(/[\x21-\x7e]+$/u, '');
     if (!text) return '';
     if (!publicCommentary(text) || this.privateNames.some(name => text.includes(name))) { this.blocked = true; return ''; }
-    if (text.length > 160) { this.blocked = true; return ''; }
     const next = text.slice(this.emitted.length);
     this.emitted = text;
     return next;

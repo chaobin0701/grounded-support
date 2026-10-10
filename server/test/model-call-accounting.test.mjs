@@ -54,6 +54,19 @@ test('stream interruption is settled as missing usage without losing already del
   assert.deepEqual(deltas,['部分回答']); assert.equal(settlements.length,1); assert.equal(settlements[0].tokens.totalTokens,null);
 });
 
+test('provider output truncation keeps the answer stream unfinished', async () => {
+  const deltas = [];
+  const llm = new LlmService({ model: 'fixture', async *stream() {
+    yield { type: 'text_delta', delta: '部分回答' };
+    yield { type: 'completed', usage, finishReason: 'length' };
+  } });
+  await assert.rejects(
+    withModelCallAccounting({ reserve: async () => ({ settle: async () => {} }) }, () => llm.streamText('s', 'q', text => deltas.push(text))),
+    error => error instanceof ModelStreamProtocolError && error.reason === 'output_truncated',
+  );
+  assert.deepEqual(deltas, ['部分回答']);
+});
+
 test('planner stream assembles complete native calls before returning them', async () => {
   const llm = new LlmService({ model: 'fixture', async *stream() {
     yield { type: 'tool_call_delta', index: 1, id: 'call-b', name: 'get_product_detail', argumentsDelta: '{"productId":"two"' };

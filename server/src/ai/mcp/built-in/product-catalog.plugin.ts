@@ -4,6 +4,7 @@ import { ProductCatalogService } from '../../tools/product-catalog/product-catal
 import type { McpPluginDefinition } from '../mcp-plugin.types';
 import { productDetailPlanning } from '../../tools/product-catalog/product-tool-planning';
 import { productResources } from '../../context/context-contribution';
+import type { AgentToolCapability } from '../../tools/tool-capabilities';
 
 export function createProductCatalogPlugin(catalog: ProductCatalogService): McpPluginDefinition {
   return {
@@ -12,6 +13,11 @@ export function createProductCatalogPlugin(catalog: ProductCatalogService): McpP
     enabled: true,
     toolPlanning: { get_product_detail: productDetailPlanning },
     toolContextProjectors: { get_product_detail: productResources },
+    toolCapabilities: {
+      list_product_categories: ['product-category'],
+      list_products: ['product-list'],
+      get_product_detail: ['product-detail'],
+    } satisfies Readonly<Record<string, readonly AgentToolCapability[]>>,
     createServer: () => {
       const server = new McpServer({ name: 'product_catalog', version: '1.0.0' });
       server.registerTool('list_product_categories', { description: '读取产品目录中的产品分类。', inputSchema: {} }, async () => {

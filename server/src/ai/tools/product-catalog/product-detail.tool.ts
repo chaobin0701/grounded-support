@@ -12,6 +12,7 @@ const inputSchema = z.object({ productId: z.string().trim().min(1).max(80) });
 @Injectable()
 export class ProductDetailTool implements AgentTool<z.infer<typeof inputSchema>> {
   readonly name = 'get_product_detail';
+  readonly capabilities = ['product-detail'] as const;
   readonly description = '按产品 ID 读取官网产品目录中的完整规格。只读、数据库数据。';
   readonly inputSchema = inputSchema;
   readonly planning = productDetailPlanning;

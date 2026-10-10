@@ -1,5 +1,6 @@
 import type { ProductDetail } from '../ai/tools/product-catalog/product-catalog.service';
 import type { AgentTranscriptMessage } from './agent-transcript';
+import { hasToolCapability } from '../ai/tools/tool-capabilities';
 
 export function isProductDetail(value: unknown): value is ProductDetail {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -15,7 +16,7 @@ export function projectProductTranscript(transcript: AgentTranscriptMessage[], c
   return transcript.map(message => {
     if (message.role !== 'tool' || !message.toolCallId) return message;
     const call = calls.get(message.toolCallId);
-    if (!call || !['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(call.name)) return message;
+    if (!call || !hasToolCapability(call.name, 'product-detail')) return message;
     const id = call.arguments.productId;
     if (typeof id !== 'string' || !canonicalIds.has(id)) return message;
     try { if (JSON.parse(message.content ?? '{}')?.error) return message; } catch { /* Truncated successful JSON is still replaced by a reference. */ }

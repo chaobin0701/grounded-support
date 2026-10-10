@@ -1,6 +1,6 @@
 import { Type } from 'class-transformer';
 import { Transform } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsInt, IsObject, IsOptional, IsString, Length, Max, Min, ValidateNested } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsInt, IsObject, IsOptional, IsString, Length, Max, Min, MinLength, ValidateNested } from 'class-validator';
 
 export class PreviousTurnDto {
   @IsString()
@@ -8,7 +8,7 @@ export class PreviousTurnDto {
   question!: string;
 
   @IsString()
-  @Length(1, 1200)
+  @MinLength(1)
   answer!: string;
 }
 
