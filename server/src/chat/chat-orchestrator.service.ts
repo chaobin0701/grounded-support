@@ -41,6 +41,13 @@ export class ChatOrchestratorService {
     callbacks?: ChatStreamCallbacks,
     agentContext?: ChatAgentContext,
   ): Promise<ChatRun> {
+    const runStarted = Date.now();
+    let runContext: Record<string, unknown> | undefined;
+    const receiveContext = (context: Record<string, unknown>) => {
+      runContext = context;
+      context.runStartedAt = runStarted;
+      onContext?.(context);
+    };
     const configured = agentContext?.configurationSnapshot ?? await this.settings?.snapshot();
     const agentConfig = configured?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION;
     const configurationSnapshot = { ...(configured ?? { revision: agentConfigurationRevision(agentConfig), configurationVersion: 0, updatedAt: null, updatedBy: null }), configuration: effectiveAgentConfiguration(agentConfig) };
@@ -54,6 +61,7 @@ export class ChatOrchestratorService {
       callbacks?.onCommentary?.(event);
       onCommentary?.(event);
     };
+    const emitCommentaryDelta = (event: CommentaryEvent) => callbacks?.onCommentaryDelta?.(event);
     // Ordinary turns have no current/default Skill and no keyword routing.
     // Retain explicit internal requests for real specialist guides only.
     if (requestedSkillId && (!this.skillRegistry?.has(requestedSkillId) || !agentConfig.enabledSkills.includes(requestedSkillId))) throw new BadRequestException('Unknown or unavailable skill');
@@ -82,8 +90,9 @@ export class ChatOrchestratorService {
         initialContextBlocks: agentContext?.currentContextBlocks,
         initialEvidence: productPreparation?.evidence,
       },
-      { onContext, onProgress: emitProgress, onCommentary: emitCommentary },
+      { onContext: receiveContext, onProgress: emitProgress, onCommentary: emitCommentary, onCommentaryDelta: emitCommentaryDelta },
     ).catch(error => {
+      if (runContext) ((runContext.timing ??= {}) as Record<string, unknown>).totalMs = Date.now() - runStarted;
       // The runtime has no HTTP concerns; the chat adapter maps a domain error.
       if (error instanceof AgentProtocolError) throw new BadGatewayException({ code: error.code, message: '模型响应格式异常，请稍后重试。' });
       throw error;
@@ -112,11 +121,24 @@ export class ChatOrchestratorService {
         result.contextSnapshot.contextBudgets = budgets;
         result.contextSnapshot.contextBudget = answerBudget;
       }
+      let partialAnswer = '';
+      const answerStarted = Date.now();
+      const timing = (result.contextSnapshot.timing ??= {}) as Record<string, unknown>;
       const streamed = await this.llm.streamText(
         answerSystemPrompt,
         answerUserPrompt,
-        callbacks.onAnswerDelta,
-      );
+        text => {
+          timing.answerTtftMs ??= Date.now() - answerStarted;
+          partialAnswer += text;
+          callbacks.onAnswerDelta?.(text);
+        },
+      ).catch(error => {
+        timing.totalMs = Date.now() - runStarted;
+        result.contextSnapshot.partialAnswer = partialAnswer;
+        result.contextSnapshot.answerStreamStatus = 'interrupted';
+        throw error;
+      });
+      result.contextSnapshot.answerStreamStatus = 'completed';
       const modelCalls = Array.isArray(result.contextSnapshot.modelCalls)
         ? result.contextSnapshot.modelCalls.filter(isAgentModelCall)
         : [];
@@ -137,6 +159,7 @@ export class ChatOrchestratorService {
       if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-complete`, operationId: answerOperationId, stage: 'answer', status: 'completed', text: '回答生成完成', durationMs: streamed.durationMs });
     }
     result.result = { ...result.result, progressEvents: [...(result.result.progressEvents ?? []), ...progressEvents] };
+    ((result.contextSnapshot.timing ??= {}) as Record<string, unknown>).totalMs = Date.now() - runStarted;
     return {
       traceId: agentContext?.traceId,
       result: result.result,

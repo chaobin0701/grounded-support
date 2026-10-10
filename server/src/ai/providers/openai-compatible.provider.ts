@@ -159,20 +159,22 @@ export class OpenAICompatibleProvider implements LlmProvider {
     if (!this.apiKey) throw new ProviderAuthenticationError();
     if (this.supportedModels.length > 0 && !this.supportedModels.includes(request.model)) throw new ProviderModelNotFoundError();
     let response: Response;
+    const streamAbort = new AbortController();
     try {
-      const fetchStream = (includeUsage: boolean) => fetch(`${this.baseUrl}/chat/completions`, {
+      const fetchStream = async (includeUsage: boolean) => {
+        const timer = setTimeout(() => streamAbort.abort(new ProviderTimeoutError()), this.timeoutMs);
+        try { return await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json', Accept: 'text/event-stream' },
         body: JSON.stringify({
-          model: request.model,
-          messages: request.messages.map((message) => ({ role: message.role, content: message.toolCalls?.length ? (message.content || null) : message.content, ...(message.name ? { name: message.name } : {}), ...(message.toolCallId ? { tool_call_id: message.toolCallId } : {}) })),
-          temperature: request.temperature ?? 0.1,
-          max_tokens: request.maxTokens ?? 1200,
+          ...this.buildChatBody(request),
           stream: true,
           ...(includeUsage ? { stream_options: { include_usage: true } } : {}),
         }),
-        signal: request.signal ? AbortSignal.any([request.signal, AbortSignal.timeout(this.timeoutMs)]) : AbortSignal.timeout(this.timeoutMs),
+        signal: request.signal ? AbortSignal.any([request.signal, streamAbort.signal]) : streamAbort.signal,
       });
+        } finally { clearTimeout(timer); }
+      };
       response = await fetchStream(true);
       // Some compatible endpoints reject stream_options. Negotiate once before
       // receiving any deltas; the resulting missing usage stays explicitly unknown.
@@ -181,13 +183,15 @@ export class OpenAICompatibleProvider implements LlmProvider {
         if (/stream[_ -]?options|include[_ -]?usage/i.test(rejected)) response = await fetchStream(false);
       }
     } catch (error) {
-      if (error instanceof DOMException && (error.name === 'AbortError' || error.name === 'TimeoutError')) throw error;
+      if (streamAbort.signal.aborted) throw new ProviderTimeoutError();
+      if (request.signal?.aborted) throw error;
       this.logger.warn('Model provider stream failed before receiving a response');
       throw new ProviderUnavailableError();
     }
     if (!response.ok || !response.body) {
       let payload: RawResponse = {};
       try { payload = await response.json() as RawResponse; } catch { /* Map the status when the provider has no JSON body. */ }
+      if (request.responseFormat && this.isUnsupportedResponseFormat(response.status, payload)) throw new ProviderUnsupportedResponseFormatError(response.status);
       throw this.mapHttpError(response.status, payload);
     }
     const reader = response.body.getReader();
@@ -197,7 +201,15 @@ export class OpenAICompatibleProvider implements LlmProvider {
     let finishReason: string | null = null;
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const timer = setTimeout(() => streamAbort.abort(new ProviderTimeoutError()), this.timeoutMs);
+        let read: ReadableStreamReadResult<Uint8Array>;
+        try { read = await reader.read(); }
+        catch (error) {
+          if (streamAbort.signal.aborted) throw new ProviderTimeoutError();
+          if (request.signal?.aborted) throw error;
+          throw new ProviderUnavailableError();
+        } finally { clearTimeout(timer); }
+        const { value, done } = read;
         buffer = (buffer + decoder.decode(value, { stream: !done })).replace(/\r\n/g, '\n');
         const frames = buffer.split('\n\n');
         buffer = frames.pop() ?? '';
@@ -206,12 +218,35 @@ export class OpenAICompatibleProvider implements LlmProvider {
           const data = frame.split('\n').filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trim()).join('');
           if (!data || data === '[DONE]') continue;
           let payload: {
-            choices?: Array<{ delta?: { content?: unknown }; finish_reason?: unknown }>;
+            choices?: Array<{
+              delta?: {
+                content?: unknown;
+                tool_calls?: Array<{
+                  index?: unknown;
+                  id?: unknown;
+                  function?: { name?: unknown; arguments?: unknown };
+                }>;
+              };
+              finish_reason?: unknown;
+            }>;
             usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; total_tokens?: unknown };
           };
-          try { payload = JSON.parse(data) as typeof payload; } catch { continue; }
+          try { payload = JSON.parse(data) as typeof payload; } catch { throw new ProviderInvalidResponseError(); }
+          if (!payload || typeof payload !== 'object' || !Array.isArray(payload.choices)) throw new ProviderInvalidResponseError();
           const choice = payload.choices?.[0];
           if (typeof choice?.delta?.content === 'string' && choice.delta.content) yield { type: 'text_delta', delta: choice.delta.content };
+          if (choice?.delta?.tool_calls !== undefined && !Array.isArray(choice.delta.tool_calls)) throw new ProviderInvalidResponseError();
+          for (const toolDelta of (choice?.delta?.tool_calls ?? [])) {
+            if (!toolDelta || typeof toolDelta !== 'object' || Array.isArray(toolDelta)) throw new ProviderInvalidResponseError();
+            const fn = toolDelta.function;
+            if (fn !== undefined && (!fn || typeof fn !== 'object' || Array.isArray(fn))) throw new ProviderInvalidResponseError();
+            if (typeof toolDelta.index !== 'number' || !Number.isInteger(toolDelta.index) || toolDelta.index < 0) throw new ProviderInvalidResponseError();
+            const index = toolDelta.index;
+            const id = typeof toolDelta.id === 'string' && toolDelta.id ? toolDelta.id : undefined;
+            const name = typeof fn?.name === 'string' && fn.name ? fn.name : undefined;
+            const argumentsDelta = typeof fn?.arguments === 'string' && fn.arguments ? fn.arguments : undefined;
+            if (id || name || argumentsDelta) yield { type: 'tool_call_delta', index, ...(id ? { id } : {}), ...(name ? { name } : {}), ...(argumentsDelta ? { argumentsDelta } : {}) };
+          }
           if (typeof choice?.finish_reason === 'string') finishReason = choice.finish_reason;
           // Usage is usually an extra choices:[] frame. Later empty frames must
           // not overwrite a previously received usage record with nulls.
@@ -224,6 +259,7 @@ export class OpenAICompatibleProvider implements LlmProvider {
         if (done) break;
       }
     } finally {
+      await reader.cancel().catch(() => {});
       reader.releaseLock();
     }
     yield { type: 'completed', usage, finishReason };

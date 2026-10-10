@@ -2,7 +2,8 @@ import { Injectable, Optional } from '@nestjs/common';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import { ContextBuilder } from '../../chat/context-builder';
 import type { ChatAnswer, CommentaryEvent, PublicProgressEvent } from '../../chat/chat.service';
-import { LlmService } from '../../chat/llm.service';
+import { LlmService, ModelStreamProtocolError } from '../../chat/llm.service';
+import { IncrementalCommentary } from './incremental-commentary';
 import type { AgentInput } from './agent-input';
 import type { AgentState, AgentExecutionStep, AgentModelCall } from './agent-state';
 import { validateAgentAnswer } from './agent-answer';
@@ -76,7 +77,7 @@ export class AgentLoop {
     return this.toolExecution.createStateForAgent(allowedTools, maxToolCalls, limits);
   }
 
-  async step(input: AgentInput, state: AgentState, onProgress?: (event: PublicProgressEvent) => void, onCommentary?: (event: CommentaryEvent) => void): Promise<AgentStepResult> {
+  async step(input: AgentInput, state: AgentState, onProgress?: (event: PublicProgressEvent) => void, onCommentary?: (event: CommentaryEvent) => void, onCommentaryDelta?: (event: CommentaryEvent) => void): Promise<AgentStepResult> {
     state.plannerRound += 1;
     const plannerRound = state.plannerRound;
     const builtContext = this.contextBuilder.build({
@@ -121,14 +122,38 @@ export class AgentLoop {
     const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, projectedTranscript);
     const responseFormat = { type: 'json_object' as const };
     try {
-      model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner', {
-        messages: plannerMessages,
-        tools: nativeTools,
-        ...(responseFormat ? { responseFormat } : {}),
-      });
+      const commentaryId = `planner-${plannerRound}-commentary`;
+      const commentary = new IncrementalCommentary(nativeTools.map(tool => tool.name));
+      const timing = (state.contextSnapshot.timing ??= {}) as Record<string, unknown>;
+      const onDelta = (delta: string) => {
+        const next = commentary.push(delta);
+        if (!next) return;
+        timing.firstCommentaryMs ??= Date.now() - Number(state.contextSnapshot.runStartedAt ?? modelStarted);
+        onCommentaryDelta?.({ type: 'commentary', id: commentaryId, text: next });
+      };
+      if (typeof this.llm.streamDetailed === 'function') {
+        model = await this.llm.streamDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner', {
+          messages: plannerMessages,
+          tools: nativeTools,
+          ...(responseFormat ? { responseFormat } : {}),
+        }, { onTextDelta: onDelta });
+        timing.plannerTtftMs ??= model.ttftMs ?? null;
+      } else {
+        model = await this.llm.completeDetailed(plannerSystemPrompt, builtContext.userPrompt, this.llm.model, 'planner', {
+          messages: plannerMessages,
+          tools: nativeTools,
+          ...(responseFormat ? { responseFormat } : {}),
+        });
+        if (model.content) onDelta(model.content);
+      }
     } catch (error) {
       state.executionSteps.push({ type: 'llm_call', stage: 'planning', plannerRound, model: this.llm.model, ok: false, durationMs: Date.now() - modelStarted, detail: '模型调用失败' });
       state.contextSnapshot.executionSteps = state.executionSteps;
+      if (error instanceof ModelStreamProtocolError) {
+        state.contextSnapshot.plannerParseMode = 'invalid';
+        state.contextSnapshot.plannerParseError = error.reason;
+        throw new AgentProtocolError(error.reason);
+      }
       throw error;
     }
     state.finalRaw = model.content;
@@ -232,7 +257,9 @@ export class AgentLoop {
 
     const toolCalls = parsed.calls;
     const toolBatchId = `planner-${plannerRound}-tools`;
-    if (parsed.commentary) onCommentary?.({ type: 'commentary', id: `${toolBatchId}-commentary`, text: parsed.commentary });
+    const timing = (state.contextSnapshot.timing ??= {}) as Record<string, unknown>;
+    timing.toolWaitMs = Number(timing.toolWaitMs ?? 0) + Date.now() - modelStarted;
+    if (parsed.commentary) onCommentary?.({ type: 'commentary', id: `planner-${plannerRound}-commentary`, text: parsed.commentary });
     const transcriptToolCalls = toolCalls.map((call) => ({
       id: call.id,
       name: call.name,
@@ -256,6 +283,7 @@ export class AgentLoop {
         ? this.toolExecution.deferUntilReplanning(call.name, call.arguments, state.executionState)
         : await this.toolExecution.execute(call.name, call.arguments, state.toolContext, state.executionState);
       const resultCount = countToolResults(execution.result.data);
+      if (!requiresReplanning) timing.toolExecutionMs = Number(timing.toolExecutionMs ?? 0) + Date.now() - toolStarted;
       if (!requiresReplanning) onProgress?.({ type: 'progress', id: `${operationId}-complete`, operationId, stage: 'tool', status: 'completed', text: execution.result.success ? `${toolLabel.replace('正在', '已')}` : '这一步未能取得有效资料', tool: call.name, durationMs: Date.now() - toolStarted, ...(resultCount === undefined ? {} : { resultCount }) });
       state.toolCalls.push(execution.trace);
       if (execution.result.success) this.collectToolData(call.name, execution.result.data, state);

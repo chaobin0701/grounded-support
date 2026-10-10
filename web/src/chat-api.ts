@@ -132,6 +132,17 @@ export async function askInConversationStream(conversationId: string, question: 
   const decoder = new TextDecoder();
   let buffer = '';
   let finalAnswer: ChatAnswer | undefined;
+  // The planner emits public commentary incrementally. Accumulate deltas by
+  // commentary id so existing consumers continue receiving a complete event.
+  const commentaryBuffers = new Map<string, string>();
+  function emitCommentary(id: string, text: string, replace = false) {
+    if (!id || typeof text !== 'string') return;
+    const next = replace ? text : `${commentaryBuffers.get(id) ?? ''}${text}`;
+    if (next.length > 160) throw new Error('Invalid stream commentary');
+    if (next === commentaryBuffers.get(id)) return;
+    commentaryBuffers.set(id, next);
+    if (next.trim()) onProgress?.({ type: 'commentary', id, text: next });
+  }
   try {
     while (true) {
       const { value, done } = await reader.read();
@@ -151,7 +162,16 @@ export async function askInConversationStream(conversationId: string, question: 
           if (progress.type === 'progress' && typeof progress.id === 'string' && typeof progress.text === 'string') onProgress?.(progress);
         } else if (data && event === 'commentary') {
           const commentary = JSON.parse(data) as CommentaryEvent;
-          if (commentary.type === 'commentary' && typeof commentary.id === 'string' && typeof commentary.text === 'string' && commentary.text.length <= 160 && commentary.text.trim()) onProgress?.(commentary);
+          if (commentary.type === 'commentary' && typeof commentary.id === 'string' && typeof commentary.text === 'string' && commentary.text.length <= 160 && commentary.text.trim()) emitCommentary(commentary.id, commentary.text, true);
+        } else if (data && event === 'commentary_started') {
+          const payload = JSON.parse(data) as { id?: unknown };
+          if (typeof payload.id === 'string') commentaryBuffers.set(payload.id, '');
+        } else if (data && event === 'commentary_delta') {
+          const payload = JSON.parse(data) as { id?: unknown; text?: unknown };
+          if (typeof payload.id === 'string' && typeof payload.text === 'string') emitCommentary(payload.id, payload.text);
+        } else if (data && event === 'commentary_completed') {
+          const payload = JSON.parse(data) as { id?: unknown; text?: unknown };
+          if (typeof payload.id === 'string' && typeof payload.text === 'string' && payload.text.length <= 160 && payload.text.trim()) emitCommentary(payload.id, payload.text, true);
         } else if (data && event === 'error') {
           const payload = JSON.parse(data) as { status?: unknown; message?: unknown; code?: unknown; retryAt?: unknown };
           throw new ChatApiError(

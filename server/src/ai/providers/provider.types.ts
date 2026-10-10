@@ -50,6 +50,13 @@ export interface LlmRequest {
 
 export type LlmStreamEvent =
   | { type: 'text_delta'; delta: string }
+  | {
+      type: 'tool_call_delta';
+      index: number;
+      id?: string;
+      name?: string;
+      argumentsDelta?: string;
+    }
   | { type: 'completed'; usage: LlmUsage; finishReason: string | null };
 
 export interface LlmResponse {

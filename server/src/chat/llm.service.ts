@@ -15,13 +15,26 @@ export type ModelResult = {
   finishReason: string | null;
   durationMs: number;
   attempts: number;
+  ttftMs?: number | null;
 };
 
 export type LlmCompletionOptions = {
   messages?: LlmMessage[];
   tools?: LlmToolDefinition[];
   responseFormat?: LlmResponseFormat;
+  toolChoice?: LlmRequest['toolChoice'];
 };
+
+export type LlmStreamCallbacks = {
+  onTextDelta?: (text: string) => void;
+};
+
+export class ModelStreamProtocolError extends Error {
+  constructor(readonly reason: string) {
+    super(`Model stream protocol error: ${reason}`);
+    this.name = 'ModelStreamProtocolError';
+  }
+}
 
 export class ModelFailure extends ServiceUnavailableException {
   constructor(readonly usage: Pick<ModelResult, 'inputTokens' | 'outputTokens' | 'totalTokens'>) {
@@ -113,32 +126,85 @@ export class LlmService {
   }
 
   async streamText(system: string, user: string, onDelta: (text: string) => void, model = this.model): Promise<ModelResult> {
+    return this.streamDetailed(system, user, model, 'answer', { messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[] }, { onTextDelta: onDelta });
+  }
+
+  async streamDetailed(
+    system: string,
+    user: string,
+    model = this.model,
+    purpose: 'answer' | 'summary' | 'planner' = 'answer',
+    options: LlmCompletionOptions = {},
+    callbacks: LlmStreamCallbacks = {},
+  ): Promise<ModelResult> {
     const started = Date.now();
-    let content = '';
-    let usage = { inputTokens: null as number | null, outputTokens: null as number | null, totalTokens: null as number | null };
-    let finishReason: string | null = null;
+    const messages = options.messages ?? [{ role: 'system', content: system }, { role: 'user', content: user } satisfies LlmMessage];
     const request: LlmRequest = {
       model,
-      messages: [{ role: 'system', content: system }, { role: 'user', content: user }] satisfies LlmMessage[],
+      messages,
+      ...(options.tools?.length ? { tools: options.tools } : {}),
+      ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
+      ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
       temperature: 0.1,
-      maxTokens: this.maxOutputTokens,
+      maxTokens: purpose === 'summary' ? Math.min(800, this.maxOutputTokens) : this.maxOutputTokens,
     };
-    const lease = await reserveModelCall(request, 'answer');
-    try {
-      for await (const event of this.provider.stream(request)) {
-        if (event.type === 'text_delta') {
-          content += event.delta;
-          onDelta(event.delta);
-        } else {
-          usage = event.usage;
-          finishReason = event.finishReason;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      let content = '';
+      let usage = { inputTokens: null as number | null, outputTokens: null as number | null, totalTokens: null as number | null };
+      let finishReason: string | null = null;
+      let completed = false;
+      let emitted = false;
+      let ttftMs: number | null = null;
+      let settling = false;
+      const calls = new Map<number, { id: string; name: string; arguments: string }>();
+      const lease = await reserveModelCall(request, purpose);
+      try {
+        for await (const event of this.provider.stream(request)) {
+          if (completed) throw new ModelStreamProtocolError('event_after_completion');
+          if (event.type !== 'completed' && ttftMs === null) ttftMs = Date.now() - started;
+          if (event.type === 'text_delta') {
+            emitted = true;
+            content += event.delta;
+            callbacks.onTextDelta?.(event.delta);
+          } else if (event.type === 'tool_call_delta') {
+            emitted = true;
+            if (!Number.isInteger(event.index) || event.index < 0) throw new ModelStreamProtocolError('invalid_tool_index');
+            const call = calls.get(event.index) ?? { id: '', name: '', arguments: '' };
+            if (event.id && call.id && event.id !== call.id) throw new ModelStreamProtocolError('conflicting_tool_id');
+            if (event.id) call.id = event.id;
+            if (event.name) call.name += event.name;
+            if (event.argumentsDelta) call.arguments += event.argumentsDelta;
+            calls.set(event.index, call);
+          } else {
+            completed = true;
+            usage = event.usage;
+            finishReason = event.finishReason;
+          }
         }
+        if (!completed) throw new ModelStreamProtocolError('missing_completion_event');
+        const toolCalls: LlmToolCall[] = [];
+        for (const call of [...calls.entries()].sort(([left], [right]) => left - right).map(([, value]) => value)) {
+          if (!call.id || !call.name || toolCalls.some(previous => previous.id === call.id)) throw new ModelStreamProtocolError('invalid_native_tool_calls');
+          let parsed: unknown;
+          try { parsed = JSON.parse(call.arguments); } catch { throw new ModelStreamProtocolError('invalid_tool_arguments'); }
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new ModelStreamProtocolError('invalid_tool_arguments');
+          toolCalls.push({ id: call.id, name: call.name, arguments: parsed as Record<string, unknown> });
+        }
+        if (!content && toolCalls.length === 0) throw new ModelStreamProtocolError('empty_response');
+        if (toolCalls.length && finishReason !== null && finishReason !== 'tool_calls') throw new ModelStreamProtocolError('invalid_tool_finish_reason');
+        if (!toolCalls.length && finishReason === 'tool_calls') throw new ModelStreamProtocolError('missing_tool_calls');
+        settling = true;
+        await lease?.settle(usage);
+        return { content, toolCalls, model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: attempt, ttftMs };
+      } catch (error) {
+        if (settling) throw error;
+        await lease?.settle(usage, error);
+        lastError = error;
+        if (emitted || error instanceof ModelStreamProtocolError || (error instanceof ProviderError && !error.retryable) || attempt === 2) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
       }
-    } catch (error) {
-      await lease?.settle(usage, error);
-      throw error;
     }
-    await lease?.settle(usage);
-    return { content, toolCalls: [], model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, totalTokens: usage.totalTokens, finishReason, durationMs: Date.now() - started, attempts: 1 };
+    throw lastError ?? new ModelStreamProtocolError('unknown');
   }
 }

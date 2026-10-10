@@ -39,4 +39,5 @@ export type AgentCallbacks = {
   eventSink?: EventSink;
   onProgress?: (event: PublicProgressEvent) => void;
   onCommentary?: (event: CommentaryEvent) => void;
+  onCommentaryDelta?: (event: CommentaryEvent) => void;
 };

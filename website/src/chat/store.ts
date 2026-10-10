@@ -518,7 +518,10 @@ export function createChatStore(
             if (!disposed) state.progress.push(event);
           },
           commentary: (event) => {
-            if (!disposed && !state.progress.some(item => item.id === event.id)) state.progress.push(event);
+            if (disposed) return;
+            const index = state.progress.findIndex(item => item.id === event.id);
+            if (index < 0) state.progress.push(event);
+            else state.progress[index] = event;
           },
         },
         controller.signal,

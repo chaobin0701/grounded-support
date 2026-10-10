@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { LlmService } from '../dist/chat/llm.service.js';
+import { LlmService, ModelStreamProtocolError } from '../dist/chat/llm.service.js';
 import { withModelCallAccounting, modelInputReservation } from '../dist/chat/model-call-accounting.js';
 import { quotaExceeded } from '../dist/integrations/quota-error.js';
 
@@ -52,4 +52,29 @@ test('stream interruption is settled as missing usage without losing already del
   const llm=new LlmService({ model:'fixture', async *stream(){yield {type:'text_delta',delta:'部分回答'};throw new Error('disconnected');} });
   await assert.rejects(withModelCallAccounting({reserve:async()=>({settle:async(tokens,error)=>settlements.push({tokens,error})})},()=>llm.streamText('s','q',text=>deltas.push(text))),/disconnected/);
   assert.deepEqual(deltas,['部分回答']); assert.equal(settlements.length,1); assert.equal(settlements[0].tokens.totalTokens,null);
+});
+
+test('planner stream assembles complete native calls before returning them', async () => {
+  const llm = new LlmService({ model: 'fixture', async *stream() {
+    yield { type: 'tool_call_delta', index: 1, id: 'call-b', name: 'get_product_detail', argumentsDelta: '{"productId":"two"' };
+    yield { type: 'tool_call_delta', index: 0, id: 'call-a', name: 'get_product_detail', argumentsDelta: '{"productId":"one"}' };
+    yield { type: 'tool_call_delta', index: 1, argumentsDelta: '}' };
+    yield { type: 'completed', usage, finishReason: 'tool_calls' };
+  } });
+  const result = await withModelCallAccounting({ reserve: async () => ({ settle: async () => {} }) }, () => llm.streamDetailed('system', 'question', 'fixture', 'planner', { tools: [] }));
+  assert.deepEqual(result.toolCalls, [
+    { id: 'call-a', name: 'get_product_detail', arguments: { productId: 'one' } },
+    { id: 'call-b', name: 'get_product_detail', arguments: { productId: 'two' } },
+  ]);
+});
+
+test('planner stream rejects incomplete tool arguments before any caller can execute them', async () => {
+  const llm = new LlmService({ model: 'fixture', async *stream() {
+    yield { type: 'tool_call_delta', index: 0, id: 'call-a', name: 'get_product_detail', argumentsDelta: '{"productId":"one"' };
+    yield { type: 'completed', usage, finishReason: 'tool_calls' };
+  } });
+  await assert.rejects(
+    withModelCallAccounting({ reserve: async () => ({ settle: async () => {} }) }, () => llm.streamDetailed('system', 'question', 'fixture', 'planner')),
+    error => error instanceof ModelStreamProtocolError && error.reason === 'invalid_tool_arguments',
+  );
 });

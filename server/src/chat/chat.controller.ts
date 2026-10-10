@@ -121,11 +121,18 @@ export class ChatController {
         this.writeEvent(response, 'run_started', { conversationId: prepared.admission.conversationId, clientRequestId: prepared.admission.clientRequestId, replayed: Boolean(prepared.admission.cached) });
         try {
           let streamed = false;
+          const commentaryIds = new Set<string>();
+          const startCommentary = (id: string) => {
+            if (commentaryIds.has(id)) return;
+            commentaryIds.add(id);
+            this.writeEvent(response, 'commentary_started', { id });
+          };
           const answer = await this.gateway!.execute(prepared, this.requestId(request), {
             onAnswerStarted: metadata => this.writeEvent(response, 'answer_started', metadata),
             onAnswerDelta: text => { streamed = true; this.writeEvent(response, 'answer_delta', { text }); },
             onProgress: event => this.writeEvent(response, 'progress', event),
-            onCommentary: event => this.writeEvent(response, 'commentary', event),
+            onCommentaryDelta: ({ id, text }) => { startCommentary(id); this.writeEvent(response, 'commentary_delta', { id, text }); },
+            onCommentary: ({ id, text }) => { startCommentary(id); this.writeEvent(response, 'commentary_completed', { id, text }); },
           });
           await this.writeAnswerStream(response, answer, streamed);
         } catch (error) { this.writeStreamError(response, error); }

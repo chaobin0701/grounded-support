@@ -30,6 +30,7 @@ export type ChatStreamCallbacks = {
   onAnswerDelta?: (text: string) => void;
   onProgress?: (event: PublicProgressEvent) => void;
   onCommentary?: (event: CommentaryEvent) => void;
+  onCommentaryDelta?: (event: CommentaryEvent) => void;
 };
 export type ChatRun = {
   traceId?: string;

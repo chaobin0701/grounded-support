@@ -28,7 +28,7 @@ export type AgentModelResponse =
 
 // Commentary is optional public copy, never raw content or a reasoning field.
 // A malformed/missing commentary must not prevent a valid native call.
-function publicCommentary(value: unknown, calls: readonly LlmToolCall[]): string | undefined {
+export function publicCommentary(value: unknown, calls: readonly LlmToolCall[] = []): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
   if (!text || text.length > 160 || /[<>\u0000-\u001f]|DSML|reasoning_content|tool_calls|productId|citationIds|api[_ -]?key|authorization|https?:\/\/|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/iu.test(text)) return undefined;

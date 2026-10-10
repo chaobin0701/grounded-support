@@ -140,6 +140,18 @@ export async function readAnswerStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let answer: ChatAnswer | undefined;
+  // Planner commentary arrives as small deltas while the model is deciding
+  // which tools to call. Keep the wire protocol incremental, but expose the
+  // same complete CommentaryEvent shape to the UI and persisted history.
+  const commentaryBuffers = new Map<string, string>();
+  function emitCommentary(id: string, text: string, replace = false) {
+    if (!id || typeof text !== "string") return;
+    const next = replace ? text : `${commentaryBuffers.get(id) ?? ""}${text}`;
+    if (next.length > 160) throw new ChatApiError(502, "处理说明格式异常，请检查上一轮状态。");
+    if (next === commentaryBuffers.get(id)) return;
+    commentaryBuffers.set(id, next);
+    if (next.trim()) callbacks.commentary?.({ type: "commentary", id, text: next });
+  }
   function frame(text: string) {
     let event = "message";
     const data: string[] = [];
@@ -155,6 +167,9 @@ export async function readAnswerStream(
         "answer_started",
         "progress",
         "commentary",
+        "commentary_started",
+        "commentary_delta",
+        "commentary_completed",
         "error",
         "done",
       ].includes(event)
@@ -181,7 +196,16 @@ export async function readAnswerStream(
     else if (event === "progress" && isProgress(payload))
       callbacks.progress(payload);
     else if (event === "commentary" && isCommentary(payload))
-      callbacks.commentary?.(payload);
+      emitCommentary(payload.id, payload.text, true);
+    else if (event === "commentary_started" && object(payload) && typeof payload.id === "string") {
+      commentaryBuffers.set(payload.id, "");
+    } else if (event === "commentary_delta" && object(payload)
+      && typeof payload.id === "string" && typeof payload.text === "string") {
+      emitCommentary(payload.id, payload.text);
+    } else if (event === "commentary_completed" && object(payload)
+      && typeof payload.id === "string" && typeof payload.text === "string") {
+      emitCommentary(payload.id, payload.text, true);
+    }
     else if (event === "answer_started" && object(payload))
       callbacks.started(citations(payload.citations));
     else if (event === "delta" || event === "answer_delta") {

@@ -41,6 +41,8 @@ export class AgentRunner {
       transcript,
     });
     const state = this.createState(initialContext, input, transcript, [userMessage]);
+    state.contextSnapshot.runStartedAt = Date.now();
+    state.contextSnapshot.timing = { plannerTtftMs: null, firstCommentaryMs: null, toolWaitMs: 0, toolExecutionMs: 0, answerTtftMs: null, totalMs: null };
     state.contextSnapshot.runtimeContextBlocks = state.contextBlocks;
     for (const product of input.restoredContext?.products ?? []) state.products.set(product.id, product);
     for (const hit of input.restoredContext?.evidence ?? []) state.hits.set(hit.chunkId, hit);
@@ -104,7 +106,7 @@ export class AgentRunner {
     callbacks.onContext?.(state.contextSnapshot);
 
     for (let round = 0; round < state.runtime.maxPlannerRounds; round += 1) {
-      const step = await this.loop.step(input, state, callbacks.onProgress, callbacks.onCommentary);
+      const step = await this.loop.step(input, state, callbacks.onProgress, callbacks.onCommentary, callbacks.onCommentaryDelta);
       if (step.type === 'complete') return this.toResult(state, step.result);
     }
 

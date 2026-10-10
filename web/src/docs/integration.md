@@ -192,14 +192,17 @@ Idempotency-Key: <本次问题的唯一请求标识>
 | --- | --- |
 | run_started | conversationId、clientRequestId、replayed；立即保存会话 ID 和请求标识 |
 | progress | 公开的阶段、状态、简短说明；仅作为过程提示，不拼进答案 |
-| commentary | `{ "type": "commentary", "id": "planner-1-tools-commentary", "text": "我先查看产品目录。" }`；模型生成的公开操作说明，在原生工具执行前发送，独立展示，不拼进答案 |
+| commentary_started | `{ "id": "planner-1-commentary" }`；说明开始，初始化同一 ID 的缓冲区 |
+| commentary_delta | `{ "id": "planner-1-commentary", "text": "我先查看" }`；模型生成的公开说明增量，按 ID 追加，不拼进答案 |
+| commentary_completed | `{ "id": "planner-1-commentary", "text": "我先查看产品目录。" }`；说明完整内容，前端可用它校准增量文本 |
+| commentary | 兼容旧客户端的完整公开说明事件；新客户端优先处理 `commentary_*` 事件 |
 | answer_started | 回答开始及引用信息 |
 | answer_delta | `{ "text": "增量文本" }`；逐段追加到回答 |
 | answer_completed | 回答文本生成结束及引用信息；仍等待 done |
 | done | 完整结果，结构同 JSON 响应；以 answer 校准最终文本并完成本轮 |
 | error | status、message，可附 code、retryAt；标记未完成并停止本轮 UI 加载状态 |
 
-根据模型决策，部分中间事件可能缺省。`commentary` 不代表步骤已成功，不是内部推理；说明缺失不影响执行。`done.progressEvents` 与历史消息保留公开过程。`model_protocol_error`（502）表示模型响应协议异常，与模型主动拒答不同。幂等重放可以直接返回 done，不伪造 answer_delta。不能把一次网络读取当作一个事件，也不能把 TCP 分块当作一个完整汉字。
+根据模型决策，部分中间事件可能缺省。`commentary_*` 不代表步骤已成功，不是内部推理；说明缺失不影响执行。原生工具参数、内部调用 ID 和未解析 JSON 不会进入客户端 SSE。`done.progressEvents` 与历史消息保留合并后的公开过程。`model_protocol_error`（502）表示模型响应协议异常，与模型主动拒答不同。幂等重放可以直接返回 done，不伪造 answer_delta。不能把一次网络读取当作一个事件，也不能把 TCP 分块当作一个完整汉字。
 
 下面的读取函数处理 UTF-8 拆包、跨块事件、多行 data 和 LF / CRLF 分隔；不依赖人为延时。
 
