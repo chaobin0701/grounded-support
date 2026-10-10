@@ -24,7 +24,7 @@ export function validateAgentAnswer(
     if (parsed.status !== 'answered' || typeof parsed.answer !== 'string' || !parsed.answer.trim() || parsed.answer.length > 1200) return refusal;
     const citationIds = parsed.citationIds;
     const productIds = parsed.productIds;
-    if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length > 5 || productIds.length > 10) return refusal;
+    if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length > 5 || productIds.length > 50) return refusal;
     const byProduct = new Map(products.map((product) => [product.id, product]));
 
     // This first version validates the response protocol only. The model may

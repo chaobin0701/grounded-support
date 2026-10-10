@@ -11,7 +11,9 @@ const finalResponse = z.object({
   status: z.enum(['answered', 'refused']),
   answer: z.string().trim().min(1).max(1200),
   citationIds: z.array(z.number().int()).max(5),
-  productIds: z.array(z.string()).max(10),
+  // The product catalog is not limited to ten records. Keep the output
+  // metadata bounded, but leave enough room for a complete catalog answer.
+  productIds: z.array(z.string()).max(50),
 }).strict();
 
 export class AgentProtocolError extends Error {

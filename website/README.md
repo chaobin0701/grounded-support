@@ -60,7 +60,7 @@ npm run dev
 复制 `.env.example` 为 `.env.local` 后按实际环境修改：
 
 ```ini
-API_PROXY_TARGET=http://127.0.0.1:3000
+API_PROXY_TARGET=http://127.0.0.1:8081
 ```
 
 `API_PROXY_TARGET` 仅用于开发和预览代理，配置变动需重启开发进程。旧 `VITE_ASSISTANT_URL` 已移除并不再读取；助手始终留在本官网。不要在前端环境变量放入密钥。

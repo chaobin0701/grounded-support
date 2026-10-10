@@ -5,7 +5,9 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
   const proxy = {
     "/api": {
-      target: env.API_PROXY_TARGET || "http://127.0.0.1:3000",
+      // The Docker API is intentionally not exposed on the host. Reuse the
+      // management web server's reverse proxy during local website development.
+      target: env.API_PROXY_TARGET || "http://127.0.0.1:8081",
       changeOrigin: true,
     },
   };

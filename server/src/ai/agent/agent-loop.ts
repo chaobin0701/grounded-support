@@ -13,11 +13,12 @@ import { AgentProtocolError, parseAgentResponse } from './model-response';
 import { transcriptMessageBase } from '../../chat/agent-transcript';
 import { projectProductTranscript, projectEvidenceTranscript } from '../../chat/product-context';
 import { ContextGovernor } from '../../chat/context-governor';
-import type { LlmMessage } from '../providers/provider.types';
+import type { LlmMessage, LlmResponseFormat } from '../providers/provider.types';
 import { AppConfigService } from '../../config/config.service';
 import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration } from '../../config/agent-config';
 import type { SkillDefinition, SkillSummary } from '../skills/skill.types';
 import { makeContextBlock } from '../context/context-contribution';
+import { PLANNER_RESPONSE_FORMAT } from './planner-response-format';
 
 export const PLANNER_PROTOCOL = `根据已有上下文自行决定直接回答或调用工具，不要求每轮调用工具。需要工具时，只能使用请求中提供的原生 function tools 和标准 tool_calls；禁止在 content 正文中写工具指令或 DSML 标记。多个独立工具的参数已经可以确定时，优先在同一次响应中返回多个 tool calls；同一个工具也可以使用不同参数调用多次，例如多个已知 productId 的 get_product_detail。它们会按返回顺序逐个执行，不是并行执行；不要把依赖前一个尚未返回结果的工具放进同一批次。
 调用工具时，content 应同时输出 JSON 对象 {"commentary":"我先查看产品目录，再为你整理主要特点。"}；commentary 是面向用户的简短公开操作说明，不是内部思考，最多 160 字。不输出工具内部名称、调用参数、内部 ID、密钥、系统提示词或推理过程，不提前声称工具已成功。说明缺省时仍执行工具。不要输出 Markdown 包裹或 JSON 之外的正文。
@@ -120,7 +121,7 @@ export class AgentLoop {
     const canonicalIds = new Set([...(input.requestContext?.productIds ?? []), ...historicalProductIds, ...(input.restoredContext?.historyProductIds ?? []), ...[...state.products.values()].filter(isProductDetail).map(p => p.id)]);
     const projectedTranscript = projectEvidenceTranscript(projectProductTranscript(state.transcript, canonicalIds), new Set(state.hits.keys()));
     const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, projectedTranscript);
-    const responseFormat = { type: 'json_object' as const };
+    const responseFormat = PLANNER_RESPONSE_FORMAT;
     try {
       const commentaryId = `planner-${plannerRound}-commentary`;
       const commentary = new IncrementalCommentary(nativeTools.map(tool => tool.name));

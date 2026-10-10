@@ -7,6 +7,7 @@ import { AgentLoop } from '../dist/ai/agent/agent-loop.js';
 import { AgentRunner } from '../dist/ai/agent/agent-runner.js';
 import { ToolExecutionService } from '../dist/ai/tools/tool-execution.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
+import { PLANNER_RESPONSE_FORMAT } from '../dist/ai/agent/planner-response-format.js';
 
 const hit = {
   chunkId: 12, documentId: 3, documentTitle: '退货政策', originalFilename: 'returns.md',
@@ -132,7 +133,7 @@ test('agent executes provider-native tool calls and preserves the call id', asyn
     model: 'test-model',
     completeDetailed: async (_system, _user, _model, _purpose, options) => {
       assert.ok(options.tools.some((item) => item.name === 'search_knowledge'));
-      assert.deepEqual(options.responseFormat, { type: 'json_object' });
+      assert.deepEqual(options.responseFormat, PLANNER_RESPONSE_FORMAT);
       return { ...responses.shift(), model: 'test-model', inputTokens: 1, outputTokens: 1, totalTokens: 2 };
     },
   };
