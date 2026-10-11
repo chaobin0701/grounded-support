@@ -59,35 +59,11 @@ export class AgentRunner {
         else state.hits.set(resource.data.chunkId, resource.data);
       }
     }
-    if (input.productPreparation) {
-      state.executionState = input.productPreparation.executionState;
-      state.toolContext = input.productPreparation.toolContext;
-      for (const product of input.productPreparation.products) state.products.set(product.id, product);
-      for (const entry of input.productPreparation.entries) state.executionSteps.push({
-        type: 'preflight', stage: 'planning', origin: 'preload', name: entry.name, arguments: entry.arguments,
-        result: entry.outcome.result.data ?? entry.outcome.result.content,
-        ok: entry.outcome.result.success, durationMs: entry.outcome.trace.durationMs,
-        reused: entry.outcome.trace.reused ?? false, errorCode: entry.outcome.trace.errorCode,
-        detail: entry.outcome.trace.reused ? '复用已校验版本的产品详情' : '第一次模型调用前准备上下文',
-      });
-      for (const entry of input.productPreparation.entries) {
-        const block = makeContextBlock(entry.outcome.contextResources ?? [], { conversationId: input.conversationId ?? '', traceId: input.traceId, source: entry.name, origin: 'preload' }, agent.runtime.maxToolResultChars);
-        if (block) state.contextBlocks.push(block);
-      }
-      state.contextSnapshot.productPreparation = state.executionSteps.filter(step => step.origin === 'preload');
-    }
     for (const product of input.restoredContext?.products ?? []) if (!state.executionState.productResults?.has(product.id)) {
       state.executionState.productResults?.set(product.id, { success: true, content: JSON.stringify(product), data: product });
     }
     for (const hit of input.initialEvidence ?? []) state.hits.set(hit.chunkId, hit);
     state.contextSnapshot.preflight = input.preflight;
-    state.executionSteps.push({
-      type: 'agent_setup',
-      stage: 'planning',
-      ok: true,
-      durationMs: 0,
-      detail: `使用 ${agent.identity.name} 的默认提示词，不预选 Skill`,
-    });
     for (const skill of input.initialSkills ?? []) state.executionSteps.push({ type: 'skill_loaded', stage: 'planning', skillId: skill.id, selectedBy: 'explicit', ok: true, durationMs: 0, detail: `显式加载 ${skill.name}` });
     if (input.preflight?.query) {
       state.executionSteps.push({

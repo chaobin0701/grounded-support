@@ -79,6 +79,11 @@ export class ChatController {
     return this.conversations.runs(await this.conversations.session(request, response), id);
   }
 
+  @Get('conversations/:id/context')
+  async context(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    return this.conversations.context(await this.conversations.session(request, response), id);
+  }
+
   @Delete('conversations/:id')
   @HttpCode(204)
   async deleteConversation(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request, @Res({ passthrough: true }) response: Response) {

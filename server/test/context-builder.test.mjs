@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ContextBuilder } from '../dist/chat/context-builder.js';
+import { ContextGovernor } from '../dist/chat/context-governor.js';
 
 test('context builder keeps summary, recent history and tool results in one bounded prompt', () => {
   const builder = new ContextBuilder();
@@ -34,4 +35,19 @@ test('context builder keeps summary, recent history and tool results in one boun
   assert.equal(context.metadata.transcriptCount, 1);
   assert.equal(context.metadata.transcriptVersion, 1);
   assert.equal(context.metadata.truncated, true);
+});
+
+test('context builder compacts lower-priority material from the active model budget', () => {
+  const governor = new ContextGovernor({ llm: { contextWindowTokens: 2_000, maxOutputTokens: 500 } });
+  const builder = new ContextBuilder(undefined, governor);
+  const context = builder.build({
+    question: '当前问题',
+    summary: '摘要'.repeat(2_000),
+    recentHistory: Array.from({ length: 20 }, (_, index) => ({ question: `问题${index}`, answer: '旧回答'.repeat(200) })),
+    toolResults: Array.from({ length: 12 }, (_, index) => ({ tool: `tool_${index}`, result: '结果'.repeat(500) })),
+    initialEvidence: Array.from({ length: 10 }, (_, index) => ({ chunkId: index, documentId: index, documentTitle: `文档${index}`, originalFilename: `f${index}.md`, content: '资料'.repeat(500), score: 0.9 })),
+  });
+  assert.equal(context.metadata.truncated, true);
+  assert.equal(JSON.parse(context.userPrompt).question, '当前问题');
+  assert.ok(context.userPrompt.length < 100_000);
 });

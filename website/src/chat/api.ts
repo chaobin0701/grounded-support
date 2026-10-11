@@ -10,6 +10,7 @@ import type {
   CommentaryEvent,
   StreamCallbacks,
   ModelUsage,
+  ContextEstimate,
 } from "./types.ts";
 import { isChatStatus, isWebsiteQuota } from "./quota.ts";
 
@@ -53,12 +54,19 @@ export function parseAnswer(value: unknown): ChatAnswer {
       ? value.progressEvents.filter(value => isProgress(value) || isCommentary(value))
       : [],
     ...(isUsage(value.usage) ? { usage: value.usage } : {}),
+    ...(isContextEstimate(value.context) ? { context: value.context } : {}),
   };
 }
 function isUsage(value: unknown): value is ModelUsage {
   return object(value)
     && ["inputTokens", "outputTokens", "totalTokens", "reservedTokens", "unknownModelCalls"].every((key) => typeof value[key] === "number" && Number.isSafeInteger(value[key]) && Number(value[key]) >= 0)
     && ["actual", "pending", "incomplete"].includes(String(value.accounting)) && typeof value.includesSummary === "boolean";
+}
+function isContextEstimate(value: unknown): value is ContextEstimate {
+  return object(value)
+    && ["contextWindowTokens", "inputBudgetTokens", "estimatedInputTokens", "remainingInputTokens", "usagePercent"].every((key) => typeof value[key] === "number" && Number.isFinite(value[key]) && value[key] >= 0)
+    && ["normal", "elevated", "high", "overflow"].includes(String(value.pressure))
+    && value.measurementSource === "heuristic";
 }
 function isProgress(value: unknown): value is ProgressEvent {
   return (
@@ -248,6 +256,12 @@ export const chatApi: ChatApi = {
   async quota() {
     const data = await json("/quota");
     if (!isWebsiteQuota(data)) throw new ChatApiError(502, "额度数据格式异常。");
+    return data;
+  },
+  async context(id) {
+    const data = await json(`/conversations/${encodeURIComponent(id)}/context`);
+    if (data === null) return null;
+    if (!isContextEstimate(data)) throw new ChatApiError(502, "上下文估算格式异常。");
     return data;
   },
   async list() {

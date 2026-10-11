@@ -39,8 +39,9 @@ watch(
   },
 );
 const context = computed(() => props.trace?.contextSnapshot ?? {});
+const visibleExecutionSteps = computed(() => context.value.executionSteps ?? []);
 const groups = computed(() =>
-  groupTraceSteps(context.value.executionSteps ?? []),
+  groupTraceSteps(visibleExecutionSteps.value),
 );
 const toolSteps = computed(
   () =>
@@ -59,7 +60,7 @@ const snapshot = computed(
 );
 const skill = computed(
   () =>
-    context.value.executionSteps?.find(
+    visibleExecutionSteps.value.find(
       (step) => step.type === 'skill_selection',
     )?.skillId ?? '—',
 );
@@ -83,7 +84,6 @@ function stepLabel(step: TraceStep) {
   if (step.type === 'preflight') return '预检索';
   if (step.type === 'skill_selection') return '选择能力';
   if (step.type === 'skill_loaded') return '读取专项 Skill';
-  if (step.type === 'agent_setup') return 'Agent 默认配置';
   return '格式校验';
 }
 async function loadDebug() {

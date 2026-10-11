@@ -10,6 +10,7 @@ import type {
   WebsiteQuota,
   ChatStatus,
   ModelUsage,
+  ContextEstimate,
   ProductRequestContext,
 } from "./types.ts";
 
@@ -66,6 +67,7 @@ export function createChatStore(
     quota: null as WebsiteQuota | null,
     quotaStatus: null as ChatStatus | null,
     lastUsage: null as ModelUsage | null,
+    lastContext: null as ContextEstimate | null,
     quotaLoading: false,
     quotaError: "",
   });
@@ -235,6 +237,10 @@ export function createChatStore(
   async function refreshList() {
     state.conversations = await api.list();
   }
+  async function refreshContext(id: string) {
+    if (!api.context) return;
+    try { state.lastContext = await api.context(id); } catch { /* Context diagnostics are optional and never block chat. */ }
+  }
   function newConversation() {
     if (busy()) return false;
     stopPolling();
@@ -242,6 +248,7 @@ export function createChatStore(
     state.messages = [];
     state.error = "";
     state.unresolved = false;
+    state.lastContext = null;
     resetPartial();
     put(ACTIVE_KEY, "new");
     state.draft = get(draftKey(null)) || "";
@@ -258,6 +265,7 @@ export function createChatStore(
       if (disposed) return;
       state.activeId = id;
       state.messages = messages;
+      await refreshContext(id);
       state.draft = get(draftKey(id)) || "";
       state.products = readProducts(id);
       put(ACTIVE_KEY, id);
@@ -418,6 +426,7 @@ export function createChatStore(
           state.activeId = preferred;
           try {
             state.messages = await api.messages(preferred);
+            await refreshContext(preferred);
             put(ACTIVE_KEY, preferred);
             state.draft = get(draftKey()) || "";
             await checkRecovery();
@@ -529,6 +538,7 @@ export function createChatStore(
       );
       if (disposed) return;
       state.lastUsage = answer.usage ?? null;
+      state.lastContext = answer.context ?? null;
       state.messages.push({
         id: localId--,
         role: "assistant",

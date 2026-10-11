@@ -12,7 +12,7 @@ import { ToolExecutionService } from '../tools/tool-execution';
 import { AgentProtocolError, parseAgentResponse } from './model-response';
 import { transcriptMessageBase } from '../../chat/agent-transcript';
 import { projectProductTranscript, projectEvidenceTranscript } from '../../chat/product-context';
-import { ContextGovernor } from '../../chat/context-governor';
+import { ContextGovernor, estimateTokens } from '../../chat/context-governor';
 import type { LlmMessage, LlmResponseFormat } from '../providers/provider.types';
 import { AppConfigService } from '../../config/config.service';
 import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration } from '../../config/agent-config';
@@ -117,11 +117,19 @@ export class AgentLoop {
     let model: Awaited<ReturnType<LlmService['completeDetailed']>>;
     const nativeTools = this.toolExecution.toolDefinitions(state.runtime.allowedTools);
     const historicalProductIds = input.restoredContext ? (input.priorTranscript ?? []).flatMap(message => (message.toolCalls ?? [])
-      .filter(call => hasToolCapability(call.name, 'product-detail') && typeof call.arguments.productId === 'string')
-      .map(call => call.arguments.productId as string)) : [];
+      .filter(call => hasToolCapability(call.name, 'product-detail'))
+      .flatMap(call => [
+        ...(typeof call.arguments.productId === 'string' ? [call.arguments.productId] : []),
+        ...(Array.isArray(call.arguments.productIds) ? call.arguments.productIds.filter((id): id is string => typeof id === 'string') : []),
+      ])) : [];
     const canonicalIds = new Set([...(input.requestContext?.productIds ?? []), ...historicalProductIds, ...(input.restoredContext?.historyProductIds ?? []), ...[...state.products.values()].filter(isProductDetail).map(p => p.id)]);
     const projectedTranscript = projectEvidenceTranscript(projectProductTranscript(state.transcript, canonicalIds), new Set(state.hits.keys()));
-    const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, projectedTranscript);
+    // Native transcript messages must obey the same dynamic window budget as
+    // the JSON context block. Keep the newest complete conversation tail; the
+    // current question/evidence remains in the final governed user message.
+    const transcriptBudget = Math.max(2048, Math.floor((contextBudget?.inputBudgetTokens ?? this.llm.contextWindowTokens * 0.8) * 0.42));
+    const boundedTranscript = this.boundTranscript(projectedTranscript, transcriptBudget);
+    const plannerMessages = this.buildPlannerMessages(plannerSystemPrompt, builtContext.userPrompt, boundedTranscript);
     const responseFormat = PLANNER_RESPONSE_FORMAT;
     try {
       const commentaryId = `planner-${plannerRound}-commentary`;
@@ -366,6 +374,24 @@ export class AgentLoop {
     return messages;
   }
 
+  private boundTranscript(transcript: AgentState['transcript'], budgetTokens: number): AgentState['transcript'] {
+    if (transcript.length < 2) return transcript;
+    const keep: AgentState['transcript'] = [];
+    let used = 0;
+    for (let index = transcript.length - 1; index >= 0; index -= 1) {
+      const item = transcript[index]!;
+      const itemTokens = estimateTokens(JSON.stringify(item));
+      if (keep.length && used + itemTokens > budgetTokens) break;
+      keep.unshift(item);
+      used += itemTokens;
+    }
+    // Never expose an orphaned tool result after trimming. The matching
+    // assistant tool-call will be retained when available; otherwise discard
+    // the leading result and let the governed context block carry its data.
+    while (keep[0]?.role === 'tool') keep.shift();
+    return keep;
+  }
+
   private transcriptBase(state: AgentState) {
     const first = state.traceTranscript[0];
     return transcriptMessageBase(first?.conversationId, first?.traceId, state.transcript.length + 1);
@@ -400,7 +426,12 @@ export class AgentLoop {
         for (const product of data.products) if (isProductSummary(product)) knownProductIds.add(product.id);
       }
     }
-    if (hasToolCapability(name, 'product-detail') && isProductDetail(data)) state.products.set(data.id, data);
+    if (hasToolCapability(name, 'product-detail')) {
+      if (isProductDetail(data)) state.products.set(data.id, data);
+      if (isObjectWith(data, 'products') && Array.isArray(data.products)) {
+        for (const product of data.products) if (isProductDetail(product)) state.products.set(product.id, product);
+      }
+    }
   }
 }
 

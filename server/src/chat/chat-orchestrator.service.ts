@@ -7,12 +7,11 @@ import { LlmService } from './llm.service';
 import { SkillRegistry } from '../ai/skills/skill-registry';
 import type { AgentModelCall } from '../ai/agent/agent-state';
 import type { AgentTranscriptMessage } from './agent-transcript';
-import { ContextGovernor } from './context-governor';
+import { ContextGovernor, contextEstimate } from './context-governor';
 import { AppConfigService } from '../config/config.service';
 import { agentConfigurationRevision, DEFAULT_AGENT_CONFIGURATION, effectiveAgentConfiguration, type AgentConfigurationSnapshot } from '../config/agent-config';
 import { AgentSettingsService } from '../config/agent-settings.service';
 import type { ChatAgentContext } from './chat.service';
-import { ProductContextPreparer } from './product-context-preparer';
 import { ContextMemoryService } from './context-memory.service';
 
 export { validateAgentAnswer } from '../ai/agent/agent-answer';
@@ -26,7 +25,6 @@ export class ChatOrchestratorService {
     @Optional() private readonly contextGovernor?: ContextGovernor,
     @Optional() private readonly config?: AppConfigService,
     @Optional() private readonly settings?: AgentSettingsService,
-    @Optional() private readonly productPreparer?: ProductContextPreparer,
     @Optional() private readonly contextMemory?: ContextMemoryService,
   ) {}
 
@@ -69,10 +67,6 @@ export class ChatOrchestratorService {
     const restoredContext = agentContext?.conversationId && this.contextMemory
       ? await this.contextMemory.restore(agentContext.conversationId, agentContext.contextBlocks ?? [], configurationSnapshot.configuration)
       : undefined;
-    const reuseProducts = configurationSnapshot.configuration.memory.toolResults.enabled && configurationSnapshot.configuration.memory.toolResults.products;
-    const productPreparation = agentContext?.requestContext?.productIds?.length && this.productPreparer
-      ? await this.productPreparer.prepare(question, agentContext.requestContext.productIds, reuseProducts ? restoredContext?.products ?? agentContext.priorProducts ?? [] : [], configurationSnapshot.configuration, emitProgress, agentContext)
-      : undefined;
     const result = await this.agentRunner.run(
       {
         question,
@@ -85,10 +79,8 @@ export class ChatOrchestratorService {
         traceId: agentContext?.traceId,
         priorTranscript: agentContext?.priorTranscript,
         requestContext: agentContext?.requestContext,
-        productPreparation,
         restoredContext,
         initialContextBlocks: agentContext?.currentContextBlocks,
-        initialEvidence: productPreparation?.evidence,
       },
       { onContext: receiveContext, onProgress: emitProgress, onCommentary: emitCommentary, onCommentaryDelta: emitCommentaryDelta },
     ).catch(error => {
@@ -159,6 +151,8 @@ export class ChatOrchestratorService {
       if (hasToolProgress) emitProgress({ type: 'progress', id: `${answerOperationId}-complete`, operationId: answerOperationId, stage: 'answer', status: 'completed', text: '回答生成完成', durationMs: streamed.durationMs });
     }
     result.result = { ...result.result, progressEvents: [...(result.result.progressEvents ?? []), ...progressEvents] };
+    const estimate = contextEstimate(result.contextSnapshot.contextBudget as Parameters<typeof contextEstimate>[0]);
+    if (estimate) result.result = { ...result.result, context: estimate };
     ((result.contextSnapshot.timing ??= {}) as Record<string, unknown>).totalMs = Date.now() - runStarted;
     return {
       traceId: agentContext?.traceId,

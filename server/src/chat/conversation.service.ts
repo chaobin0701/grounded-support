@@ -7,7 +7,8 @@ import { LlmService, ModelFailure } from './llm.service';
 import { ConversationSnapshot } from './conversation-snapshot';
 import type { AgentModelCall } from '../ai/agent/agent-state';
 import { flattenTranscript } from './agent-transcript';
-import { ContextGovernor } from './context-governor';
+import { ContextGovernor, contextEstimate, memoryLimitsForContextWindow } from './context-governor';
+import { DEFAULT_SUMMARY_INSTRUCTIONS } from '../config/agent-config';
 import { AppConfigService } from '../config/config.service';
 import { DEFAULT_AGENT_CONFIGURATION, type AgentConfiguration, type AgentConfigurationSnapshot } from '../config/agent-config';
 import { AgentSettingsService } from '../config/agent-settings.service';
@@ -100,11 +101,11 @@ export class ConversationService {
   }
 
   async snapshot(ownerId: string, id: string, configuration?: AgentConfiguration): Promise<ConversationSnapshot> {
-    const memory = (configuration ?? (await this.settings?.snapshot())?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION).memory;
+    const limits = memoryLimitsForContextWindow(Number.isFinite(this.llm.contextWindowTokens) ? this.llm.contextWindowTokens : 32_000);
     const conversation = await this.get(ownerId, id);
     const recent = await this.database.query<MessageRow>(
       `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", created_at AS "createdAt"
-       FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [id, memory.snapshotTurns * 2],
+       FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT $2`, [id, limits.snapshotMessages],
     );
     const recentMessages = recent.rows.reverse();
     const transcriptRows = await this.database.query<{ id?: string; agentTranscript: unknown; products?: unknown; contextSnapshot?: Record<string, unknown> }>(
@@ -115,9 +116,9 @@ export class ConversationService {
          context_snapshot->'agentTranscript' AS "agentTranscript", context_snapshot->'products' AS products
        FROM chat_traces
        WHERE conversation_id = $1 AND kind = 'answer' AND context_snapshot ? 'agentTranscript'
-       ORDER BY created_at DESC LIMIT $2`, [id, memory.transcriptMaxTraces],
+       ORDER BY created_at DESC LIMIT $2`, [id, limits.transcriptMaxTraces],
     );
-    const agentTranscript = flattenTranscript(transcriptRows.rows.map((row) => row.agentTranscript)).slice(-memory.transcriptMaxMessages);
+    const agentTranscript = flattenTranscript(transcriptRows.rows.map((row) => row.agentTranscript)).slice(-limits.transcriptMaxMessages);
     const history: { question: string; answer: string }[] = [];
     for (let index = 0; index + 1 < recentMessages.length; index += 2) {
       const user = recentMessages[index];
@@ -152,6 +153,16 @@ export class ConversationService {
        FROM conversation_messages WHERE conversation_id = $1 ORDER BY id ASC`, [id],
     );
     return result.rows;
+  }
+
+  async context(ownerId: string, id: string) {
+    await this.get(ownerId, id);
+    const result = await this.database.query<{ contextSnapshot: Record<string, unknown> | null }>(
+      `SELECT context_snapshot AS "contextSnapshot" FROM chat_traces
+       WHERE conversation_id = $1 AND kind = 'answer' ORDER BY created_at DESC LIMIT 1`, [id],
+    );
+    const budget = result.rows[0]?.contextSnapshot?.contextBudget;
+    return contextEstimate(budget && typeof budget === 'object' ? budget as Parameters<typeof contextEstimate>[0] : undefined) ?? null;
   }
 
   async runs(ownerId: string, id: string, limit = 20) {
@@ -421,8 +432,8 @@ export class ConversationService {
 
   private async updateSummary(conversationId: string, oldSummary: string, configurationSnapshot?: AgentConfigurationSnapshot): Promise<void> {
     const snapshot = configurationSnapshot ?? await this.settings?.snapshot();
-    const memory = (snapshot?.configuration ?? this.config?.agent ?? DEFAULT_AGENT_CONFIGURATION).memory;
-    const summaryPrompt = memory.summaryInstructions;
+    const limits = memoryLimitsForContextWindow(Number.isFinite(this.llm.contextWindowTokens) ? this.llm.contextWindowTokens : 32_000);
+    const summaryPrompt = DEFAULT_SUMMARY_INSTRUCTIONS;
     const conversation = await this.database.query<{ summaryThroughMessageId: number | null }>(
       'SELECT summary_through_message_id::int AS "summaryThroughMessageId" FROM conversations WHERE id = $1', [conversationId],
     );
@@ -431,10 +442,10 @@ export class ConversationService {
     const messages = await this.database.query<MessageRow>(
       `SELECT id::int, role, content, refused, citations, tool_steps AS "toolSteps", progress_events AS "progressEvents", created_at AS "createdAt"
        FROM conversation_messages WHERE conversation_id = $1 AND id > $2 ORDER BY id ASC LIMIT $3`,
-      [conversationId, afterId, memory.summaryBatchMaxMessages],
+      [conversationId, afterId, limits.summaryBatchMaxMessages],
     );
-    if (messages.rows.length < memory.summaryTriggerTurns * 2) return;
-    const toSummarize = messages.rows.slice(0, -memory.summaryKeepRecentTurns * 2);
+    if (messages.rows.length < limits.summaryTriggerMessages) return;
+    const toSummarize = messages.rows.slice(0, -limits.summaryKeepMessages);
     const contextSnapshot = { previousSummary: oldSummary, messages: toSummarize.map(({ role, content }) => ({ role, content })), agentConfigurationRevision: snapshot?.revision, agentConfigurationVersion: snapshot?.configurationVersion };
     const summaryUserPrompt = JSON.stringify(contextSnapshot);
     const contextBudget = this.contextGovernor?.inspect({
@@ -475,7 +486,7 @@ export class ConversationService {
         const update = await client.query(
           `UPDATE conversations SET summary = $2, summary_through_message_id = $3
            WHERE id = $1 AND coalesce(summary_through_message_id, 0) = $4`,
-          [conversationId, result.content.slice(0, memory.summaryMaxChars), toSummarize.at(-1)!.id, afterId],
+          [conversationId, result.content.slice(0, limits.summaryMaxChars), toSummarize.at(-1)!.id, afterId],
         );
         if (!update.rowCount) return;
         await client.query(
@@ -484,7 +495,7 @@ export class ConversationService {
              final_answer, status, input_tokens, output_tokens, total_tokens, duration_ms)
            VALUES ($1, 'summary', $2, '（会话摘要）', $3::jsonb, $4, $5, $6, 'completed', $7, $8, $9, $10)`,
           [randomUUID(), conversationId, JSON.stringify(traceContext), result.model,
-            result.content, result.content.slice(0, memory.summaryMaxChars), result.inputTokens,
+            result.content, result.content.slice(0, limits.summaryMaxChars), result.inputTokens,
             result.outputTokens, result.totalTokens, Date.now() - started],
         );
       });

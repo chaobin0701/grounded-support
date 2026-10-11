@@ -6,7 +6,6 @@ import { AgentLoop } from '../dist/ai/agent/agent-loop.js';
 import { ContextBuilder } from '../dist/chat/context-builder.js';
 import { ContextMemoryService } from '../dist/chat/context-memory.service.js';
 import { ChatOrchestratorService } from '../dist/chat/chat-orchestrator.service.js';
-import { ProductContextPreparer } from '../dist/chat/product-context-preparer.js';
 import { ProductDetailTool } from '../dist/ai/tools/product-catalog/product-detail.tool.js';
 import { KnowledgeSearchTool } from '../dist/ai/tools/knowledge-search.tool.js';
 import { ToolRegistry } from '../dist/ai/tools/tool-registry.js';
@@ -45,17 +44,24 @@ function fixture() {
   } };
   const builder = new ContextBuilder({ agent: cfg });
   const runner = new AgentRunner(new AgentLoop(llm, builder, execution), builder, { agent: cfg });
-  const orchestrator = new ChatOrchestratorService(runner, llm, undefined, undefined, { agent: cfg }, undefined, new ProductContextPreparer(catalog, execution), memory);
+  const orchestrator = new ChatOrchestratorService(runner, llm, undefined, undefined, { agent: cfg }, undefined, memory);
   const ask = (question, context = {}) => orchestrator.askDetailed(question, [], '', undefined, undefined, undefined, undefined, undefined,
     { conversationId: 'conversation-a', traceId: `turn-${requests.length + 1}`, ...context });
   return { cfg, data, evidence, counts, registry, execution, memory, runner, ask, replies, requests };
 }
 
-test('passive product and RAG results persist and restore on a second turn with no product IDs, exactly once', async () => {
-  const f = fixture(); const first = await f.ask('这三款有什么特点？', { requestContext: { productIds: ['1', '2', '3'] } });
-  assert.equal(first.contextSnapshot.runtimeContextBlocks.length, 2);
-  assert.ok(first.contextSnapshot.runtimeContextBlocks.every(b => b.origin === 'preload'));
-  assert.equal(first.contextSnapshot.agentTranscript.some(m => m.role === 'tool'), false, 'preload does not fabricate native tool calls');
+test('model-selected product and RAG results persist and restore on a second turn, exactly once', async () => {
+  const f = fixture();
+  f.replies.push(toolReply([
+    { id: 'p1', name: 'get_product_detail', arguments: { productId: '1' } },
+    { id: 'p2', name: 'get_product_detail', arguments: { productId: '2' } },
+    { id: 'p3', name: 'get_product_detail', arguments: { productId: '3' } },
+    { id: 'r1', name: 'search_knowledge', arguments: { query: '产品资料' } },
+  ]), final());
+  const first = await f.ask('这三款有什么特点？', { requestContext: { productIds: ['1', '2', '3'] } });
+  assert.equal(first.contextSnapshot.runtimeContextBlocks.length, 4);
+  assert.ok(first.contextSnapshot.runtimeContextBlocks.every(b => b.origin === 'model'));
+  assert.equal(first.contextSnapshot.agentTranscript.some(m => m.role === 'tool'), true);
   f.replies.push((context, messages) => {
     assert.deepEqual(context.productContext.productIds, []);
     assert.deepEqual(context.productContext.products.map(p => p.id), ['1', '2', '3']);
@@ -65,7 +71,7 @@ test('passive product and RAG results persist and restore on a second turn with 
     return final();
   });
   const second = await f.ask('价格呢？', { contextBlocks: first.contextSnapshot.runtimeContextBlocks, priorTranscript: first.contextSnapshot.agentTranscript });
-  assert.equal(f.counts.detail, 1); assert.equal(f.counts.search, 1);
+  assert.equal(f.counts.detail, 3); assert.equal(f.counts.search, 1);
   assert.equal(second.contextSnapshot.contextMemory.restored, 5);
   assert.equal(second.contextSnapshot.runtimeContextBlocks.length, 0, 'restored bodies are not journaled as new calls every turn');
   assert.equal(second.result.refused, false); assert.equal(second.result.citations.length, 1);
@@ -90,29 +96,29 @@ test('model tools and passive preload share one recorder; repeated native produc
   assert.equal(second.contextSnapshot.toolCalls[0].reused, true);
 });
 
-test('memory switches block historical bodies without removing native call/result pairs or blocking current queries', async () => {
+test('tool and knowledge memory is always restored while native call/result pairs remain intact', async () => {
   const f = fixture();
   f.replies.push(toolReply([{ id: 'p', name: 'get_product_detail', arguments: { productId: '1' } }, { id: 'r', name: 'search_knowledge', arguments: { query: '资料' } }]), final());
   const first = await f.ask('查询资料');
   const original = structuredClone(first.contextSnapshot);
-  for (const flags of [{ enabled: false, products: true, knowledge: true }, { enabled: true, products: false, knowledge: true }, { enabled: true, products: true, knowledge: false }]) {
-    f.cfg.memory.toolResults = flags;
-    f.replies.push((context, messages) => {
-      if (!flags.enabled || !flags.products) { assert.equal(context.productContext.products.length, 0); assert.doesNotMatch(JSON.stringify(messages), /DETAIL_1_v1/); }
-      if (!flags.enabled || !flags.knowledge) { assert.equal(context.initialEvidence.length, 0); assert.doesNotMatch(JSON.stringify(messages), /EVIDENCE_1/); }
-      assert.deepEqual(messages.filter(m => m.role === 'tool').map(m => m.toolCallId), ['p', 'r']);
-      return final();
-    });
-    await f.ask('继续', { contextBlocks: first.contextSnapshot.runtimeContextBlocks, priorTranscript: first.contextSnapshot.agentTranscript });
-  }
+  f.replies.push((context, messages) => {
+    assert.equal(context.productContext.products.length, 1);
+    assert.equal(context.initialEvidence.length, 2);
+    assert.deepEqual(messages.filter(m => m.role === 'tool').map(m => m.toolCallId), ['p', 'r']);
+    return final();
+  });
+  await f.ask('继续', { contextBlocks: first.contextSnapshot.runtimeContextBlocks, priorTranscript: first.contextSnapshot.agentTranscript });
   assert.deepEqual(first.contextSnapshot, original);
-  f.replies.push(toolReply([{ id: 'fresh', name: 'get_product_detail', arguments: { productId: '1' } }]), final());
-  const fresh = await f.ask('重新查询');
-  assert.equal(fresh.contextSnapshot.products.length, 1); assert.equal(fresh.contextSnapshot.runtimeContextBlocks.length, 1);
 });
 
 test('changed, deleted, unpermitted and failed validation resources cannot be injected as valid memory', async () => {
-  const f = fixture(); const first = await f.ask('查询', { requestContext: { productIds: ['1', '2'] } });
+  const f = fixture();
+  f.replies.push(toolReply([
+    { id: 'p1', name: 'get_product_detail', arguments: { productId: '1' } },
+    { id: 'p2', name: 'get_product_detail', arguments: { productId: '2' } },
+    { id: 'r1', name: 'search_knowledge', arguments: { query: '资料' } },
+  ]), final());
+  const first = await f.ask('查询', { requestContext: { productIds: ['1', '2'] } });
   f.data.set('1', product('1', 'v2')); f.data.delete('2'); f.evidence.delete(1); f.evidence.set(2, { ...hit(2), content: '更新资料' });
   const restored = await f.memory.restore('conversation-a', first.contextSnapshot.runtimeContextBlocks, f.cfg);
   assert.equal(restored.resources.length, 0);
@@ -126,15 +132,13 @@ test('changed, deleted, unpermitted and failed validation resources cannot be in
   assert.equal((await broken.restore('conversation-a', base.contextSnapshot.runtimeContextBlocks, DEFAULT_AGENT_CONFIGURATION)).resources.length, 0);
 });
 
-test('oversized unrecorded product bodies cannot bypass disabled memory through old native messages', async () => {
+test('oversized product bodies remain bounded by the current context projection', async () => {
   const f = fixture(); f.cfg.runtime.maxToolResultChars = 1000;
   f.data.set('1', { ...product('1'), description: 'OVERSIZED_OLD_DETAIL'.repeat(600) });
   f.replies.push(toolReply([{ id: 'large', name: 'get_product_detail', arguments: { productId: '1' } }]), final());
   const first = await f.ask('查询');
   assert.equal(first.contextSnapshot.runtimeContextBlocks.length, 0);
-  f.cfg.memory.toolResults.enabled = false;
-  f.replies.push((context, messages) => { assert.equal(context.productContext.products.length, 0); assert.doesNotMatch(JSON.stringify(messages), /OVERSIZED_OLD_DETAIL/); return final(); });
-  await f.ask('继续', { contextBlocks: [], priorTranscript: first.contextSnapshot.agentTranscript });
+  assert.doesNotMatch(JSON.stringify(first.contextSnapshot.runtimeContextBlocks), /OVERSIZED_OLD_DETAIL/);
 });
 
 test('newest versions win; restored resources are bounded and cannot leak across conversations', async () => {
@@ -202,13 +206,14 @@ test('evidence validation uses current live/published visibility and rejects cha
   assert.ok(queries.filter(q => q.sql.includes('FROM index_chunks')).every(q => q.sql.includes('c.version_id=kb.active_index_version_id')));
 });
 
-test('legacy settings accept defaults without changing persisted concurrency revisions', () => {
-  const old = structuredClone(DEFAULT_AGENT_CONFIGURATION); delete old.memory.toolResults;
+test('legacy settings drop removed memory switches without changing persisted concurrency revisions', () => {
+  const old = structuredClone(DEFAULT_AGENT_CONFIGURATION);
+  old.memory.toolResults = { enabled: true, products: true, knowledge: true };
   const parsed = parseAgentConfiguration(old);
-  assert.deepEqual(parsed.memory.toolResults, { enabled: true, products: true, knowledge: true });
+  assert.equal(parsed.memory.toolResults, undefined);
   assert.notEqual(storedAgentConfigurationRevision(old), agentConfigurationRevision(parsed));
   assert.equal(storedAgentConfigurationRevision(parsed), agentConfigurationRevision(parsed));
-  assert.throws(() => parseAgentConfiguration({ ...parsed, memory: { ...parsed.memory, toolResults: { enabled: 'false', products: true, knowledge: true } } }));
+  assert.equal(parseAgentConfiguration({ ...parsed, memory: { ...parsed.memory, toolResults: { enabled: 'false' } } }).memory.toolResults, undefined);
 });
 
 test('conversation snapshot loads only owner-scoped traces and preserves context blocks for later turns', async () => {

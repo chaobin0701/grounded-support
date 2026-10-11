@@ -20,6 +20,34 @@ export type ContextBudget = {
   summarizedThroughSequence: null;
 };
 
+/** Safe, user-facing projection of a context budget. Values are heuristic estimates. */
+export type ContextEstimate = {
+  contextWindowTokens: number;
+  inputBudgetTokens: number;
+  estimatedInputTokens: number;
+  remainingInputTokens: number;
+  usagePercent: number;
+  pressure: ContextPressure;
+  measurementSource: 'heuristic';
+};
+
+export function contextEstimate(budget: ContextBudget | undefined): ContextEstimate | undefined {
+  if (!budget) return undefined;
+  const remainingInputTokens = Math.max(0, budget.inputBudgetTokens - budget.estimatedInputTokens);
+  const usagePercent = budget.inputBudgetTokens > 0
+    ? Math.min(100, Math.max(0, Number((budget.estimatedInputTokens / budget.inputBudgetTokens * 100).toFixed(1))))
+    : 100;
+  return {
+    contextWindowTokens: budget.contextWindowTokens,
+    inputBudgetTokens: budget.inputBudgetTokens,
+    estimatedInputTokens: budget.estimatedInputTokens,
+    remainingInputTokens,
+    usagePercent,
+    pressure: budget.pressure,
+    measurementSource: budget.measurementSource,
+  };
+}
+
 export type ContextGovernorInput = {
   systemPrompt: string;
   userPrompt: string;
@@ -27,6 +55,34 @@ export type ContextGovernorInput = {
   rawMessageCount?: number;
   includedMessageCount?: number;
 };
+
+export type DynamicMemoryLimits = {
+  recentTurns: number;
+  snapshotMessages: number;
+  transcriptMaxMessages: number;
+  transcriptMaxTraces: number;
+  summaryTriggerMessages: number;
+  summaryKeepMessages: number;
+  summaryBatchMaxMessages: number;
+  summaryMaxChars: number;
+};
+
+/** Derive memory bounds from the active model window; these are not user settings. */
+export function memoryLimitsForContextWindow(contextWindowTokens: number): DynamicMemoryLimits {
+  const scale = Math.max(0.25, Math.min(4, contextWindowTokens / 32_000));
+  const recentTurns = Math.max(2, Math.min(20, Math.round(3 * Math.sqrt(scale))));
+  const summaryKeepMessages = recentTurns * 2;
+  return {
+    recentTurns,
+    snapshotMessages: Math.max(8, Math.min(80, recentTurns * 2)),
+    transcriptMaxMessages: Math.max(40, Math.min(500, Math.round(120 * scale))),
+    transcriptMaxTraces: Math.max(5, Math.min(100, Math.round(50 * Math.sqrt(scale)))),
+    summaryTriggerMessages: Math.max(8, recentTurns * 4),
+    summaryKeepMessages,
+    summaryBatchMaxMessages: Math.max(24, Math.min(200, Math.round(100 * scale))),
+    summaryMaxChars: Math.max(512, Math.min(6000, Math.round(1500 * Math.sqrt(scale)))),
+  };
+}
 
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 32_000;
 const DEFAULT_MAX_OUTPUT_TOKENS = 1_200;

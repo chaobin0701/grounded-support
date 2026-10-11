@@ -6,12 +6,10 @@ import type { CommentaryEvent, PublicProgressEvent } from '../../chat/chat.servi
 import type { AgentConfigurationSnapshot } from '../../config/agent-config';
 import type { AgentTranscriptMessage } from '../../chat/agent-transcript';
 import type { RequestContext } from '../../chat/request-context';
-import type { ProductPreparation } from '../../chat/product-context-preparer';
 import type { RestoredContext, RuntimeContextBlock } from '../context/context-contribution';
 
 export type AgentInput = {
   requestContext?: RequestContext;
-  productPreparation?: ProductPreparation;
   restoredContext?: RestoredContext;
   /** Trusted host extension point; never populated directly from a visitor request body. */
   initialContextBlocks?: RuntimeContextBlock[];

@@ -48,7 +48,7 @@ export class AdminChatTraceController {
     if (Array.isArray(context.executionSteps)) context.executionSteps = context.executionSteps.map(item => {
       if (item && typeof item === 'object' && item.name === 'load_skill') return { ...item, result: '专项指导已加载，完整内容需调试权限' };
       return item;
-    });
+    }).filter(item => !(item && typeof item === 'object' && (item as Record<string, unknown>).type === 'agent_setup'));
     if (Array.isArray(context.agentTranscript)) context.agentTranscript = context.agentTranscript.map(item => {
       if (item && typeof item === 'object' && item.toolName === 'load_skill') return { ...item, content: '专项指导已加载，完整内容需调试权限' };
       return item;
