@@ -3,13 +3,11 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { toggleCapability, validateAgentSettings } from '../src/agent-settings-form.ts';
 const settings = () => { const { version, answerInstructions, ...value } = JSON.parse(readFileSync(new URL('../../server/config/agent.json', import.meta.url))); return value; };
-test('default settings validate and memory cross-field errors identify the actionable field', () => {
+test('default settings validate and memory is managed by the model window', () => {
   const value = settings(); assert.deepEqual(validateAgentSettings(value), {});
-  value.memory.summaryKeepRecentTurns = value.memory.summaryTriggerTurns;
-  value.memory.snapshotTurns = 1;
   value.runtime.maxPlannerRounds = value.runtime.maxToolCalls;
   const errors = validateAgentSettings(value);
-  assert.ok(errors['memory.summaryKeepRecentTurns']); assert.ok(errors['memory.snapshotTurns']); assert.ok(errors['runtime.maxPlannerRounds']);
+  assert.ok(errors['runtime.maxPlannerRounds']);
 });
 test('questions, persona and integer bounds validate before save', () => {
   const value = settings(); value.welcome.suggestedQuestions = []; value.identity.persona = ' '; value.runtime.toolTimeoutMs = 1.5;
@@ -23,18 +21,12 @@ test('capability toggle treats local and MCP aliases as one operation; system en
   toggleCapability(value, group, true); assert.equal(value.runtime.allowedTools.filter(n => n === 'list_products').length, 1);
   toggleCapability(value, { system: true, tools: [{ name: 'load_skill' }] }, false); assert.ok(value.runtime.allowedTools.includes('load_skill'));
 });
-test('context memory switches remain independent booleans; disabling reuse never rewrites tool permissions', () => {
-  const value = settings(), allowed = [...value.runtime.allowedTools];
-  assert.deepEqual(value.memory.toolResults, { enabled: true, products: true, knowledge: true });
-  value.memory.toolResults.enabled = false;
+test('memory results are always enabled and the switches are absent from the admin panel', () => {
+  const value = settings();
+  assert.equal(value.memory.toolResults, undefined);
   assert.deepEqual(validateAgentSettings(value), {});
-  assert.deepEqual(value.runtime.allowedTools, allowed);
-  value.memory.toolResults.products = 'false';
-  assert.ok(validateAgentSettings(value)['memory.toolResults.products']);
-});
-test('the existing memory panel contains accessible master/product/RAG switches inside the read-only fieldset', () => {
   const source = readFileSync(new URL('../src/AgentConfigAdmin.vue', import.meta.url), 'utf8');
   assert.match(source, /fieldset[^>]+:disabled="!canEdit/);
-  for (const key of ['enabled', 'products', 'knowledge']) assert.ok(source.includes(`v-model="draft.memory.toolResults.${key}"`));
-  assert.match(source, /aria-label="跨轮复用工具资料"/);
+  assert.doesNotMatch(source, /draft\.memory\.toolResults/);
+  assert.match(source, /首轮对话/);
 });

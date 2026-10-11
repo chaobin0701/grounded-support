@@ -4,6 +4,7 @@ import { SearchService } from '../documents/search.service';
 import type { AgentConfiguration } from '../config/agent-config';
 import { readContextBlocks, canUseContextSource, evidenceDigest, type ContextResource, type RestoredContext } from '../ai/context/context-contribution';
 import { ContextGovernor } from './context-governor';
+import { hasToolCapability } from '../ai/tools/tool-capabilities';
 
 @Injectable()
 export class ContextMemoryService {
@@ -11,7 +12,6 @@ export class ContextMemoryService {
     @Optional() private readonly governor?: ContextGovernor) {}
 
   async restore(conversationId: string, blocks: unknown, configuration: AgentConfiguration): Promise<RestoredContext> {
-    const flags = configuration.memory.toolResults;
     const allowed = new Set(configuration.runtime.allowedTools);
     const unique = new Map<string, ContextResource>();
     const permittedKeys = new Set<string>();
@@ -28,8 +28,7 @@ export class ContextMemoryService {
     const candidates = [...unique.values()].slice(0, 44);
     const historyProductIds = candidates.filter(r => r.kind === 'product').map(r => r.data.id);
     const result: RestoredContext = { resources: [], products: [], evidence: [], historyProductIds,
-      diagnostics: { enabled: flags.enabled, candidates: candidates.length, restored: 0, omitted: candidates.length } };
-    if (!flags.enabled) return result;
+      diagnostics: { enabled: true, candidates: candidates.length, restored: 0, omitted: candidates.length } };
     const products = candidates.filter((r): r is Extract<ContextResource, { kind: 'product' }> => r.kind === 'product').slice(0, 20);
     const knowledge = candidates.filter((r): r is Extract<ContextResource, { kind: 'knowledge' }> => r.kind === 'knowledge').slice(0, 24);
     let revisions = new Map<string, string>();
@@ -41,9 +40,9 @@ export class ContextMemoryService {
       finally { if (timer) clearTimeout(timer); }
     };
     await Promise.all([
-      flags.products && products.length && (allowed.has('get_product_detail') || allowed.has('mcp_product_catalog_get_product_detail'))
+      products.length && [...allowed].some(name => hasToolCapability(name, 'product-detail'))
         ? bounded(this.catalog.revisions(products.map(r => r.data.id)), revisions).then(value => { revisions = value; }) : undefined,
-      flags.knowledge && knowledge.length && allowed.has('search_knowledge')
+      knowledge.length && allowed.has('search_knowledge')
         ? bounded(this.search.restoreEvidence(knowledge.map(r => r.data)), evidence).then(value => { evidence = value; }) : undefined,
     ]);
     const inputTokens = this.governor?.inspect({ systemPrompt: '', userPrompt: '', purpose: 'planner' }).inputBudgetTokens;
@@ -52,8 +51,8 @@ export class ContextMemoryService {
     for (const resource of candidates) {
       if (!permittedKeys.has(resource.key)) continue;
       const valid = resource.kind === 'product'
-        ? flags.products && !!resource.data.revision && revisions.get(resource.data.id) === resource.data.revision
-        : flags.knowledge && evidence.some(hit => hit.chunkId === resource.data.chunkId && hit.documentId === resource.data.documentId && evidenceDigest(hit) === resource.digest);
+        ? !!resource.data.revision && revisions.get(resource.data.id) === resource.data.revision
+        : evidence.some(hit => hit.chunkId === resource.data.chunkId && hit.documentId === resource.data.documentId && evidenceDigest(hit) === resource.digest);
       if (!valid) continue;
       const size = JSON.stringify(resource).length;
       if (used + size > budget) continue;

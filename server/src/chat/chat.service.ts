@@ -6,6 +6,7 @@ import type { AgentTranscriptMessage } from './agent-transcript';
 import type { AgentConfigurationSnapshot } from '../config/agent-config';
 import type { RequestContext } from './request-context';
 import type { RuntimeContextBlock } from '../ai/context/context-contribution';
+import type { ContextEstimate } from './context-governor';
 export type ChatAgentContext = { conversationId?: string; traceId?: string; priorTranscript?: AgentTranscriptMessage[]; configurationSnapshot?: AgentConfigurationSnapshot; requestContext?: RequestContext; priorProducts?: unknown[]; contextBlocks?: RuntimeContextBlock[]; currentContextBlocks?: RuntimeContextBlock[] };
 export { validateAnswer } from '../ai/agent/citation-validation';
 
@@ -24,12 +25,13 @@ export type PublicProgressEvent = {
   resultCount?: number;
 };
 export type ProcessEvent = ({ type: 'tool' } & ToolStep) | CommentaryEvent | PublicProgressEvent;
-export type ChatAnswer = { answer: string; refused: boolean; citations: Citation[]; toolSteps?: ToolStep[]; progressEvents?: ProcessEvent[] };
+export type ChatAnswer = { answer: string; refused: boolean; citations: Citation[]; toolSteps?: ToolStep[]; progressEvents?: ProcessEvent[]; context?: ContextEstimate };
 export type ChatStreamCallbacks = {
   onAnswerStarted?: (metadata: { citations: Citation[] }) => void;
   onAnswerDelta?: (text: string) => void;
   onProgress?: (event: PublicProgressEvent) => void;
   onCommentary?: (event: CommentaryEvent) => void;
+  onCommentaryDelta?: (event: CommentaryEvent) => void;
 };
 export type ChatRun = {
   traceId?: string;

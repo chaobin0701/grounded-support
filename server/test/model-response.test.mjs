@@ -8,6 +8,7 @@ import { ToolExecutionService } from '../dist/ai/tools/tool-execution.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
 import { ChatOrchestratorService } from '../dist/chat/chat-orchestrator.service.js';
 import { publicIntegrationError } from '../dist/integrations/quota-error.js';
+import { PLANNER_RESPONSE_FORMAT } from '../dist/ai/agent/planner-response-format.js';
 
 const final = (answer = '可以复用已有资料直接回答。', status = 'answered') => ({ content: JSON.stringify({ type: 'final', status, answer, citationIds: [], productIds: [] }), toolCalls: [] });
 const call = (id, name, args = {}) => ({ id, name, arguments: args });
@@ -19,7 +20,7 @@ function runtime(replies, definitions) {
   } }));
   const builder = new ContextBuilder();
   const llm = { model: 'test', structuredOutputMode: 'disabled', completeDetailed: async (_system, _user, _model, _purpose, options) => {
-    requests.push(options); assert.deepEqual(options.responseFormat, { type: 'json_object' });
+    requests.push(options); assert.deepEqual(options.responseFormat, PLANNER_RESPONSE_FORMAT);
     assert.ok(replies.length); return { ...replies.shift(), model: 'test', durationMs: 1, attempts: 1, inputTokens: 1, outputTokens: 1, totalTokens: 2 };
   } };
   const execution = new ToolExecutionService({ get: name => tools.find(tool => tool.name === name), list: () => tools }, new ToolPolicy());
@@ -48,13 +49,25 @@ test('content cannot execute legacy single/batch/array/DSML/mixed instructions o
   assert.doesNotMatch(PLANNER_PROTOCOL, /兼容回退|"type":"tool"|"type":"tools"/);
 });
 
-test('commentary is explicitly structured, optional, bounded and never extracted from private/raw text', () => {
+test('commentary is explicitly structured, optional and never extracted from private/raw text', () => {
   const calls = [call('1', 'list_products')];
   assert.equal(parseAgentResponse(JSON.stringify({ commentary: '我先查看产品目录。' }), calls).commentary, '我先查看产品目录。');
-  for (const content of ['', '普通文字', '{bad', JSON.stringify({ commentary: 1 }), JSON.stringify({ commentary: 'a'.repeat(161) }), JSON.stringify({ commentary: '<think>secret</think>' }), JSON.stringify({ commentary: 'productId: internal' }), JSON.stringify({ commentary: '说明', reasoning_content: 'secret' }), JSON.stringify({ type: 'tool', name: 'list_products', arguments: {} })]) {
+  assert.equal(parseAgentResponse(JSON.stringify({ commentary: 'a'.repeat(161) }), calls).commentary, 'a'.repeat(161));
+  for (const content of ['', '普通文字', '{bad', JSON.stringify({ commentary: 1 }), JSON.stringify({ commentary: '<think>secret</think>' }), JSON.stringify({ commentary: 'productId: internal' }), JSON.stringify({ commentary: '说明', reasoning_content: 'secret' }), JSON.stringify({ type: 'tool', name: 'list_products', arguments: {} })]) {
     const parsed = parseAgentResponse(content, calls); assert.equal(parsed.mode, 'native'); assert.equal(parsed.commentary, undefined);
   }
   assert.throws(() => parseAgentResponse('', [call('1', 'list_products'), call('1', 'search_knowledge')]), AgentProtocolError);
+});
+
+test('final metadata and answer are not rejected by arbitrary response-size caps', () => {
+  const answer = 'a'.repeat(1300);
+  const citationIds = Array.from({ length: 12 }, (_, index) => index + 1);
+  const productIds = Array.from({ length: 75 }, (_, index) => `product-${index}`);
+  const parsed = parseAgentResponse(JSON.stringify({ type: 'final', status: 'answered', answer, citationIds, productIds }));
+  assert.equal(parsed.mode, 'final');
+  assert.equal(parsed.final.answer, answer);
+  assert.equal(parsed.final.citationIds.length, citationIds.length);
+  assert.equal(parsed.final.productIds.length, productIds.length);
 });
 
 test('native batches execute sequentially, emit one model commentary before tools and retain it with native ids', async () => {

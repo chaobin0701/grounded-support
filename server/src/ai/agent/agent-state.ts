@@ -36,7 +36,7 @@ export type AgentModelCall = {
 };
 
 export type AgentExecutionStep = {
-  type: 'agent_setup' | 'skill_loaded' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
+  type: 'skill_loaded' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
   stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
   skillId?: string;
   selectedBy?: string;

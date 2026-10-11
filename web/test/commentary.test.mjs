@@ -16,3 +16,19 @@ test('legacy workspace transports commentary separately from answer deltas and r
     assert.deepEqual(events, [commentary]); assert.deepEqual(deltas, ['产品介绍']); assert.deepEqual(result, answer);
   } finally { globalThis.fetch = original; }
 });
+test('workspace merges streaming commentary deltas before the answer completes', async () => {
+  const original = globalThis.fetch;
+  const events = [], deltas = [];
+  const text = [
+    'event: commentary_started\ndata: {"id":"planner-1-commentary"}',
+    'event: commentary_delta\ndata: {"id":"planner-1-commentary","text":"我先查看"}',
+    'event: commentary_delta\ndata: {"id":"planner-1-commentary","text":"产品资料。"}',
+    `event: done\ndata: ${JSON.stringify({ answer: '完成', refused: false, citations: [] })}`,
+  ].join('\n\n');
+  globalThis.fetch = async () => new Response(text + '\n\n');
+  try {
+    await askInConversationStream('conversation', '介绍产品', delta => deltas.push(delta), 'request-2', event => events.push(event));
+    assert.deepEqual(deltas, []);
+    assert.deepEqual(events.map(item => item.text), ['我先查看', '我先查看产品资料。']);
+  } finally { globalThis.fetch = original; }
+});

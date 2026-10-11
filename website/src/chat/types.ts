@@ -29,6 +29,16 @@ export interface ChatAnswer {
   citations: Citation[];
   progressEvents?: ProcessEvent[];
   usage?: ModelUsage;
+  context?: ContextEstimate;
+}
+export interface ContextEstimate {
+  contextWindowTokens: number;
+  inputBudgetTokens: number;
+  estimatedInputTokens: number;
+  remainingInputTokens: number;
+  usagePercent: number;
+  pressure: "normal" | "elevated" | "high" | "overflow";
+  measurementSource: "heuristic";
 }
 export interface ModelUsage {
   inputTokens: number;
@@ -107,6 +117,7 @@ export interface ChatApi {
   create: () => Promise<ConversationItem>;
   messages: (id: string) => Promise<ChatMessage[]>;
   runs: (id: string) => Promise<ConversationRun[]>;
+  context?: (id: string) => Promise<ContextEstimate | null>;
   remove: (id: string) => Promise<void>;
   presentation: () => Promise<Presentation>;
   stream: (

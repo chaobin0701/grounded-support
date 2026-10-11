@@ -18,6 +18,35 @@ test('stream requests usage, handles split/final frames and never overwrites usa
   } finally {globalThis.fetch=originalFetch;}
 });
 
+test('stream preserves native tools and assembles multiple indexed tool calls', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.stream, true);
+    assert.deepEqual(body.response_format, { type: 'json_object' });
+    assert.equal(body.tools[0].function.name, 'get_product_detail');
+    const text = [
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+        { index: 0, id: 'call-a', function: { name: 'get_product_detail', arguments: '{"productId":"one"}' } },
+        { index: 1, id: 'call-b', function: { name: 'get_product_detail', arguments: '{"productId":"two"}' } },
+      ] } }] })}`,
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [
+        { index: 0, function: { arguments: '}' } },
+        { index: 1, function: { arguments: '}' } },
+      ] }, finish_reason: 'tool_calls' }] })}`,
+      'data: [DONE]',
+    ].join('\n\n');
+    return new Response(text);
+  };
+  try {
+    const provider = new OpenAICompatibleProvider({ apiKey: 'fixture', baseUrl: 'https://test.example.invalid', model: 'test', timeoutMs: 1000 });
+    const events = [];
+    for await (const event of provider.stream({ model: 'test', messages: [], tools: [{ name: 'get_product_detail', description: 'detail', parameters: { type: 'object' } }], responseFormat: { type: 'json_object' } })) events.push(event);
+    assert.deepEqual(events.filter(event => event.type === 'tool_call_delta').map(event => event.index), [0, 1, 0, 1]);
+    assert.equal(events.at(-1).type, 'completed');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('compatible stream negotiates unsupported usage options before any output, but does not retry authentication', async () => {
   const originalFetch=globalThis.fetch; let calls=0;
   globalThis.fetch=async(_url,init)=>{

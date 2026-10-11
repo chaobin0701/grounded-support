@@ -18,23 +18,17 @@ const skill = { id: 'product_consultation', name: '产品咨询', version: '2.0.
 test('Agent configuration is independently loaded, immutable and revisioned', () => {
   const original = config();
   assert.equal(readAgentConfiguration(''), DEFAULT_AGENT_CONFIGURATION);
-  assert.equal(original.memory.summaryTriggerTurns, 6);
-  assert.equal(original.memory.summaryKeepRecentTurns, 2);
+  assert.deepEqual(original.memory, {});
   assert.ok(Object.isFrozen(DEFAULT_AGENT_CONFIGURATION));
   assert.ok(Object.isFrozen(DEFAULT_AGENT_CONFIGURATION.welcome.suggestedQuestions));
   assert.throws(() => { DEFAULT_AGENT_CONFIGURATION.memory.recentTurns = 12; }, TypeError);
-  original.memory.recentTurns = 2;
+  original.identity.persona = 'changed';
   assert.notEqual(agentConfigurationRevision(original), agentConfigurationRevision(DEFAULT_AGENT_CONFIGURATION));
   assert.equal(agentConfigurationRevision(config()), agentConfigurationRevision(DEFAULT_AGENT_CONFIGURATION));
 });
 
 test('invalid settings fail closed, including impossible memory rules and unknown fields', () => {
   for (const modify of [
-    c => { c.memory.recentTurns = 0; },
-    c => { c.memory.snapshotTurns = 2; },
-    c => { c.memory.summaryKeepRecentTurns = c.memory.summaryTriggerTurns; },
-    c => { c.memory.summaryBatchMaxMessages = 4; },
-    c => { c.memory.summaryTriggerTurns = '6'; },
     c => { c.welcome.suggestedQuestions = []; },
     c => { c.welcome.suggestedQuestions = ['a']; },
     c => { c.answeringInstructions = ''; },
@@ -96,24 +90,21 @@ test('public welcome endpoint returns only approved presentation fields and crea
   assert.doesNotMatch(JSON.stringify(controller.presentation()), /persona|summaryInstructions|allowedTools/);
 });
 
-test('planner and context builder actually consume custom persona and memory', () => {
-  const agent = config(); agent.memory.recentTurns = 1; agent.memory.summaryMaxChars = 120;
+test('planner and context builder consume custom persona and dynamic memory limits', () => {
+  const agent = config();
   agent.identity.name = '测试助手'; agent.identity.role = '测试角色'; agent.identity.persona = '测试人设';
   const builder = new ContextBuilder({ agent });
   const built = builder.build({ question: '你好', summary: 'a'.repeat(200), recentHistory: [{ question: '旧问题', answer: '旧答案' }, { question: '新问题', answer: '新答案' }], toolResults: [] });
-  assert.equal(built.history.length, 1);
-  assert.equal(built.history[0].question, '新问题');
-  assert.equal(built.summary.length, 120);
+  assert.equal(built.history.length, 2);
+  assert.equal(built.summary.length, 200);
   const loop = new AgentLoop({}, builder, {}, undefined, { agent });
   assert.match(loop.prompt, /测试助手/); assert.match(loop.prompt, /测试角色/); assert.match(loop.prompt, /测试人设/);
   assert.match(loop.prompt, /原生 function tools/);
 });
 
-test('summary uses configured thresholds, retention, instruction and character limit', async () => {
+test('summary uses model-window-derived thresholds and the system instruction', async () => {
   const agent = config();
-  agent.memory.summaryTriggerTurns = 3; agent.memory.summaryKeepRecentTurns = 1;
-  agent.memory.summaryMaxChars = 100; agent.memory.summaryInstructions = 'custom summary';
-  const messages = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, role: index % 2 ? 'assistant' : 'user', content: `message ${index}` }));
+  const messages = Array.from({ length: 24 }, (_, index) => ({ id: index + 1, role: index % 2 ? 'assistant' : 'user', content: `message ${index}` }));
   let count = 4;
   const modelCalls = [];
   const writes = [];
@@ -121,7 +112,7 @@ test('summary uses configured thresholds, retention, instruction and character l
     query: async (sql, values) => {
       if (sql.startsWith('SELECT summary_through_message_id')) return { rows: [{ summaryThroughMessageId: null }] };
       if (sql.includes('FROM conversation_messages')) {
-        assert.equal(values[2], agent.memory.summaryBatchMaxMessages);
+        assert.equal(values[2], 100);
         return { rows: messages.slice(0, count) };
       }
       throw new Error(`Unexpected query ${sql}`);
@@ -135,25 +126,24 @@ test('summary uses configured thresholds, retention, instruction and character l
   const service = new ConversationService(db, {}, model, undefined, { agent });
   await service.updateSummary('conversation', 'previous');
   assert.equal(modelCalls.length, 0);
-  count = 6;
+  count = 24;
   await service.updateSummary('conversation', 'previous');
   assert.equal(modelCalls.length, 1);
-  assert.equal(modelCalls[0].system, 'custom summary');
-  assert.equal(modelCalls[0].user.messages.length, 4);
+  assert.match(modelCalls[0].system, /当前主题/);
+  assert.equal(modelCalls[0].user.messages.length, 18);
   assert.equal(modelCalls[0].user.previousSummary, 'previous');
-  assert.equal(writes[0].values[1].length, 100);
-  assert.equal(writes[0].values[2], 4);
+  assert.equal(writes[0].values[1].length, 200);
+  assert.equal(writes[0].values[2], 18);
 });
 
-test('snapshot reads its message and tool-transcript bounds from the same configuration', async () => {
-  const agent = config(); agent.memory.snapshotTurns = 10; agent.memory.transcriptMaxMessages = 10; agent.memory.transcriptMaxTraces = 2;
+test('snapshot derives message and tool-transcript bounds from the active model window', async () => {
   const statements = [];
   const database = { query: async (sql, values) => {
     statements.push({ sql, values });
     if (sql.startsWith('SELECT id, title, summary')) return { rows: [{ id: 'conversation', summary: '' }] };
     return { rows: [] };
   } };
-  await new ConversationService(database, {}, {}, undefined, { agent }).snapshot('owner', 'conversation');
-  assert.equal(statements.find(item => item.sql.includes('FROM conversation_messages')).values[1], 20);
-  assert.equal(statements.find(item => item.sql.includes('FROM chat_traces')).values[1], 2);
+  await new ConversationService(database, {}, { contextWindowTokens: 64000 }, undefined, { agent: config() }).snapshot('owner', 'conversation');
+  assert.equal(statements.find(item => item.sql.includes('FROM conversation_messages')).values[1], 8);
+  assert.equal(statements.find(item => item.sql.includes('FROM chat_traces')).values[1], 71);
 });

@@ -47,7 +47,9 @@ async function browse() {
   picker.openBrowse();
   await nextTick();
   measure();
-  search.value?.focus();
+  // On touch devices opening the catalogue should not summon the keyboard.
+  // Users can still tap the search field when they want to filter products.
+  if (!window.matchMedia("(max-width: 600px)").matches) search.value?.focus();
 }
 function close(focus = false) {
   const slash = state.opened && state.source === "slash";

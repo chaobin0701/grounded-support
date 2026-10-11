@@ -10,6 +10,7 @@ import type {
   CommentaryEvent,
   StreamCallbacks,
   ModelUsage,
+  ContextEstimate,
 } from "./types.ts";
 import { isChatStatus, isWebsiteQuota } from "./quota.ts";
 
@@ -53,12 +54,19 @@ export function parseAnswer(value: unknown): ChatAnswer {
       ? value.progressEvents.filter(value => isProgress(value) || isCommentary(value))
       : [],
     ...(isUsage(value.usage) ? { usage: value.usage } : {}),
+    ...(isContextEstimate(value.context) ? { context: value.context } : {}),
   };
 }
 function isUsage(value: unknown): value is ModelUsage {
   return object(value)
     && ["inputTokens", "outputTokens", "totalTokens", "reservedTokens", "unknownModelCalls"].every((key) => typeof value[key] === "number" && Number.isSafeInteger(value[key]) && Number(value[key]) >= 0)
     && ["actual", "pending", "incomplete"].includes(String(value.accounting)) && typeof value.includesSummary === "boolean";
+}
+function isContextEstimate(value: unknown): value is ContextEstimate {
+  return object(value)
+    && ["contextWindowTokens", "inputBudgetTokens", "estimatedInputTokens", "remainingInputTokens", "usagePercent"].every((key) => typeof value[key] === "number" && Number.isFinite(value[key]) && value[key] >= 0)
+    && ["normal", "elevated", "high", "overflow"].includes(String(value.pressure))
+    && value.measurementSource === "heuristic";
 }
 function isProgress(value: unknown): value is ProgressEvent {
   return (
@@ -72,7 +80,7 @@ function isProgress(value: unknown): value is ProgressEvent {
 }
 function isCommentary(value: unknown): value is CommentaryEvent {
   return object(value) && value.type === "commentary" && typeof value.id === "string"
-    && typeof value.text === "string" && !!value.text.trim() && value.text.length <= 160;
+    && typeof value.text === "string" && !!value.text.trim();
 }
 async function request(
   path: string,
@@ -140,6 +148,17 @@ export async function readAnswerStream(
   const decoder = new TextDecoder();
   let buffer = "";
   let answer: ChatAnswer | undefined;
+  // Planner commentary arrives as small deltas while the model is deciding
+  // which tools to call. Keep the wire protocol incremental, but expose the
+  // same complete CommentaryEvent shape to the UI and persisted history.
+  const commentaryBuffers = new Map<string, string>();
+  function emitCommentary(id: string, text: string, replace = false) {
+    if (!id || typeof text !== "string") return;
+    const next = replace ? text : `${commentaryBuffers.get(id) ?? ""}${text}`;
+    if (next === commentaryBuffers.get(id)) return;
+    commentaryBuffers.set(id, next);
+    if (next.trim()) callbacks.commentary?.({ type: "commentary", id, text: next });
+  }
   function frame(text: string) {
     let event = "message";
     const data: string[] = [];
@@ -155,6 +174,9 @@ export async function readAnswerStream(
         "answer_started",
         "progress",
         "commentary",
+        "commentary_started",
+        "commentary_delta",
+        "commentary_completed",
         "error",
         "done",
       ].includes(event)
@@ -181,7 +203,16 @@ export async function readAnswerStream(
     else if (event === "progress" && isProgress(payload))
       callbacks.progress(payload);
     else if (event === "commentary" && isCommentary(payload))
-      callbacks.commentary?.(payload);
+      emitCommentary(payload.id, payload.text, true);
+    else if (event === "commentary_started" && object(payload) && typeof payload.id === "string") {
+      commentaryBuffers.set(payload.id, "");
+    } else if (event === "commentary_delta" && object(payload)
+      && typeof payload.id === "string" && typeof payload.text === "string") {
+      emitCommentary(payload.id, payload.text);
+    } else if (event === "commentary_completed" && object(payload)
+      && typeof payload.id === "string" && typeof payload.text === "string") {
+      emitCommentary(payload.id, payload.text, true);
+    }
     else if (event === "answer_started" && object(payload))
       callbacks.started(citations(payload.citations));
     else if (event === "delta" || event === "answer_delta") {
@@ -225,6 +256,12 @@ export const chatApi: ChatApi = {
   async quota() {
     const data = await json("/quota");
     if (!isWebsiteQuota(data)) throw new ChatApiError(502, "额度数据格式异常。");
+    return data;
+  },
+  async context(id) {
+    const data = await json(`/conversations/${encodeURIComponent(id)}/context`);
+    if (data === null) return null;
+    if (!isContextEstimate(data)) throw new ChatApiError(502, "上下文估算格式异常。");
     return data;
   },
   async list() {

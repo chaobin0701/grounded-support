@@ -36,6 +36,22 @@ type ProfileRow = Record<string, unknown>;
 type ConnectionTestResult = { ok: true; model: string; durationMs: number; responsePreview: string; capabilities: { nativeTools: true; structuredOutput: true } };
 const connectionTestInput = profileInput.extend({ profileId: z.number().int().positive().optional() });
 const deleteInput = z.object({ replacementId: z.number().int().positive().optional() }).strict();
+const connectionResponseFormat = {
+  type: 'json_schema' as const,
+  json_schema: {
+    name: 'connection_probe',
+    strict: false,
+    schema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string' },
+        commentary: { type: 'string' },
+        probe: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+  },
+};
 
 @Injectable()
 export class LlmProfileService {
@@ -205,7 +221,7 @@ export class LlmProfileService {
   private async runConnectionTest(profile: LlmProfileRecord): Promise<ConnectionTestResult> {
     const provider = this.registry.createFromProfile(profile);
     try {
-      const response = await provider.chat({ model: profile.model, messages: [{ role: 'user', content: '仅返回 JSON 对象：{"message":"连接成功"}' }], responseFormat: { type: 'json_object' }, maxTokens: 64 });
+      const response = await provider.chat({ model: profile.model, messages: [{ role: 'user', content: '仅返回 JSON 对象：{"message":"连接成功"}' }], responseFormat: connectionResponseFormat, maxTokens: 64 });
       if (!response.content.trim()) throw new BadRequestException('模型返回为空，连接测试未完成');
       let body: unknown;
       try { body = JSON.parse(response.content); } catch { throw new BadRequestException('模型未返回合法 JSON，不满足 Agent 结构化输出要求'); }
@@ -215,7 +231,7 @@ export class LlmProfileService {
         model: profile.model,
         messages: [{ role: 'user', content: '请通过原生工具调用 connection_probe，参数为 {"probe":"connection-test"}。正文只返回 JSON 对象 {}，不要在正文中写工具指令。' }],
         tools: [{ name, description: '无副作用的连接能力测试，不执行任何业务操作', parameters: { type: 'object', properties: { probe: { type: 'string', enum: ['connection-test'] } }, required: ['probe'], additionalProperties: false } }],
-        toolChoice: { name }, responseFormat: { type: 'json_object' }, maxTokens: 128,
+        toolChoice: { name }, responseFormat: connectionResponseFormat, maxTokens: 128,
       });
       if (probe.toolCalls?.length !== 1 || probe.toolCalls[0]?.name !== name || !probe.toolCalls[0].id || !z.object({ probe: z.literal('connection-test') }).strict().safeParse(probe.toolCalls[0].arguments).success) throw new BadRequestException('模型未返回标准 tool_calls，不支持此 Agent 的原生工具调用要求');
       return { ok: true, model: response.model, durationMs: response.durationMs + probe.durationMs, responsePreview: '连接成功', capabilities: { nativeTools: true, structuredOutput: true } };

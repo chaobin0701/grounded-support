@@ -58,7 +58,7 @@ test('greetings in different languages can finish without classification, retrie
     assert.deepEqual(result.loadedSkills, []);
     assert.equal(result.contextSnapshot.skill, undefined);
     assert.equal(result.contextSnapshot.skillSelection, undefined);
-    assert.deepEqual(result.contextSnapshot.executionSteps.map(step => step.type), ['agent_setup', 'llm_call', 'validation']);
+    assert.deepEqual(result.contextSnapshot.executionSteps.map(step => step.type), ['llm_call', 'validation']);
     assert.equal(r.modelRequests[0].context.skill, undefined);
     assert.deepEqual(r.modelRequests[0].context.loadedSkills, []);
     assert.ok(r.modelRequests[0].options.tools.some(tool => tool.name === 'load_skill'));

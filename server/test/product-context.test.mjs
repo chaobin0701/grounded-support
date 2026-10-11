@@ -6,7 +6,6 @@ import { z } from 'zod';
 import { AskQuestionDto } from '../dist/chat/chat.dto.js';
 import { AgentMessageDto } from '../dist/integrations/integration.dto.js';
 import { normalizeRequestContext, contextFingerprint, messageContext } from '../dist/chat/request-context.js';
-import { ProductContextPreparer } from '../dist/chat/product-context-preparer.js';
 import { projectProductTranscript } from '../dist/chat/product-context.js';
 import { ToolExecutionService } from '../dist/ai/tools/tool-execution.js';
 import { ToolPolicy } from '../dist/ai/tools/tool-policy.js';
@@ -34,11 +33,7 @@ function fixture() {
     } },
   ];
   const execution = new ToolExecutionService({ list: () => tools, get: name => { const t = tools.find(t => t.name === name); if (!t) throw Error('missing'); return t; } }, new ToolPolicy());
-  const catalog = {
-    revisions: async ids => new Map(ids.filter(id => data.has(id)).map(id => [id, data.get(id).revision])),
-    getProductDetails: async ids => { counts.detail += ids.length; return ids.flatMap(id => data.has(id) ? [data.get(id)] : []); },
-  };
-  return { data, counts, execution, preparer: new ProductContextPreparer(catalog, execution), failSearch: () => { failSearch = true; } };
+  return { data, counts, execution };
 }
 const configuration = () => structuredClone(DEFAULT_AGENT_CONFIGURATION);
 const final = { content: JSON.stringify({ type: 'final', status: 'answered', answer: '这些产品可用于室内。', productIds: ['1'], citationIds: [123] }), model: 'fixture', inputTokens: 10, outputTokens: 5, totalTokens: 15 };
@@ -98,55 +93,18 @@ test('readable product names use validated non-overlapping UTF-16 ranges without
   assert.notEqual(contextFingerprint(context), contextFingerprint({ productIds: ['1'], productReferences: [{ productId: '1', offset: 8 }] }));
   assert.deepEqual(messageContext(context, [product('1')]), { ...context, products: [{ id: '1', name: '产品 1' }] });
 });
-test('five product details and current-question search finish before the first model call', async () => {
-  const f = fixture(); const cfg = configuration();
-  const prepared = await f.preparer.prepare('它们有什么区别？', ['1','2','3','4','5'], [], cfg);
-  assert.equal(prepared.products.length, 5);
-  assert.equal(prepared.executionState.callCount, 2);
-  assert.equal(f.counts.detail, 5); assert.equal(f.counts.search, 1);
-  assert.equal(prepared.evidence[0].chunkId, 123);
-});
-test('second turn reuses valid details; changed versions, summaries and disabled products do not', async () => {
-  const f = fixture(); const cfg = configuration();
-  const first = await f.preparer.prepare('适合卧室吗？', ['1','2'], [], cfg);
-  const second = await f.preparer.prepare('怎么清洁？', ['1'], first.products, cfg);
-  assert.equal(f.counts.detail, 2); assert.equal(f.counts.search, 2);
-  assert.equal(second.entries[0].outcome.trace.reused, true);
-  f.data.set('1', product('1','v2'));
-  const changed = await f.preparer.prepare('价格多少？', ['1'], first.products, cfg);
-  assert.equal(f.counts.detail, 3); assert.equal(changed.products[0].revision, 'v2');
-  const summaryOnly = { id: '2', name: '摘要', revision: 'v1' };
-  await f.preparer.prepare('功率多少？', ['2'], [summaryOnly], cfg);
-  assert.equal(f.counts.detail, 4);
-  f.data.delete('1');
-  const deleted = await f.preparer.prepare('价格多少？', ['1'], changed.products, cfg);
-  assert.equal(deleted.products.length, 0); assert.equal(deleted.entries[0].outcome.result.errorCode, 'product_not_found');
-});
-test('preload obeys permissions and the same per-run budget; failures stay recoverable', async () => {
-  const f = fixture(); const cfg = configuration();
-  cfg.runtime.allowedTools = ['search_knowledge'];
-  const denied = await f.preparer.prepare('产品如何使用？', ['1'], [product('1')], cfg);
-  assert.equal(f.counts.detail, 0); assert.equal(denied.products.length, 0);
-  assert.equal(denied.entries[0].outcome.result.errorCode, 'tool_not_allowed');
-  cfg.runtime.allowedTools = ['get_product_detail', 'search_knowledge']; cfg.runtime.maxToolCalls = 1;
-  const limited = await f.preparer.prepare('产品如何使用？', ['1','2'], [], cfg);
-  assert.equal(limited.products.length, 2); assert.equal(limited.executionState.callCount, 1);
-  assert.equal(limited.entries[1].outcome.result.errorCode, 'tool_call_limit_exceeded');
-  f.failSearch(); cfg.runtime.maxToolCalls = 6;
-  const failed = await f.preparer.prepare('产品如何使用？', ['missing','1'], [], cfg);
-  assert.equal(failed.products.length, 1); assert.equal(failed.evidence.length, 0);
-  assert.equal(failed.entries.at(-1).outcome.result.errorCode, 'tool_timeout');
-});
 test('same product appears only once in actual model messages, including a repeated native tool request and next turn', async () => {
   const f = fixture(); const builder = new ContextBuilder();
   const requests = []; let first = true;
   const llm = { model: 'fixture', completeDetailed: async (_s, _u, _m, _p, options) => {
-    assert.ok(f.counts.search > 0); requests.push(structuredClone(options.messages));
+    requests.push(structuredClone(options.messages));
     if (first) { first = false; return { ...final, content: '', toolCalls: [{ id: 'detail-call', name: 'get_product_detail', arguments: { productId: '1' } }] }; }
+    if (f.counts.search === 0) return { ...final, content: '', toolCalls: [{ id: 'search-call', name: 'search_knowledge', arguments: { query: '米家电暖器 卧室' } }] };
+    if (requests.length > 3) return { ...final, content: JSON.stringify({ type: 'final', status: 'answered', answer: '资料已复用。', citationIds: [], productIds: ['1'] }) };
     return final;
   } };
   const runner = new AgentRunner(new AgentLoop(llm, builder, f.execution), builder);
-  const orchestrator = new ChatOrchestratorService(runner, llm, undefined, undefined, undefined, undefined, f.preparer);
+  const orchestrator = new ChatOrchestratorService(runner, llm);
   const question = '米家电暖器适合卧室吗？';
   const reference = { productId: '1', offset: 0, length: 5 };
   const run1 = await orchestrator.askDetailed(question, [], '', undefined, undefined, undefined, undefined, undefined, { conversationId: 'same-conversation', traceId: 'turn-1', requestContext: { productIds: ['1'], productReferences: [reference] } });
@@ -157,17 +115,21 @@ test('same product appears only once in actual model messages, including a repea
   assert.ok(requests[0].some(m => m.role === 'user' && JSON.parse(m.content).context?.productReferences?.[0]?.length === 5));
   assert.equal(JSON.parse(requests[0].at(-1).content).question, question);
   const run2 = await orchestrator.askDetailed('怎么清洁？', [], '', undefined, undefined, undefined, undefined, undefined, { conversationId: 'same-conversation', traceId: 'turn-2', requestContext: { productIds: ['1'] }, priorTranscript: original, priorProducts: run1.contextSnapshot.products });
-  assert.equal(f.counts.detail, 1); assert.equal(f.counts.search, 2);
-  assert.equal(run2.result.refused, false); assert.equal(run2.result.citations[0].chunkId, 123);
+  assert.equal(f.counts.detail, 1); assert.equal(f.counts.search, 1);
+  assert.equal(run2.result.refused, false);
+  let detailSeen = false;
   for (const messages of requests) {
-    assert.equal(JSON.stringify(messages).split('DETAIL_BODY_1_v1').length - 1, 1);
+    const detailOccurrences = JSON.stringify(messages).split('DETAIL_BODY_1_v1').length - 1;
+    assert.ok(detailOccurrences <= 1);
+    detailSeen ||= detailOccurrences === 1;
     const payload = JSON.parse(messages.at(-1).content);
     assert.equal(payload.agentTranscript, undefined);
-    assert.equal(payload.productContext.products.length, 1);
+    assert.ok(payload.productContext.products.length <= 1);
   }
+  assert.equal(detailSeen, true);
   assert.match(original.find(m => m.role === 'tool').content, /DETAIL_BODY_1_v1/);
-  assert.equal(run1.contextSnapshot.toolCalls[0].reused, true);
-  assert.equal(run2.contextSnapshot.productPreparation[0].reused, true);
+  assert.equal(run1.contextSnapshot.toolCalls.some(call => call.name === 'get_product_detail'), true);
+  assert.equal(run2.contextSnapshot.productPreparation, undefined);
   assert.deepEqual(original, run1.contextSnapshot.agentTranscript); // No rewriting audit history.
 });
 test('missing product never re-injects stale historical detail, and native pairs stay intact', () => {
@@ -198,12 +160,6 @@ test('repositioning a reference cannot reuse a different pending request body', 
   const db = { query: async sql => sql.includes('FROM conversation_runs WHERE conversation_id') ? { rows: [{ id: 'run', question: '如何使用？', context: { productIds: ['1'], productReferences: [{ productId: '1', offset: 0 }] }, status: 'completed' }] } : { rows: [] } };
   const service = new ConversationService(db, {}, {});
   await assert.rejects(() => service.ask('owner', 'conversation', '如何使用？', undefined, undefined, 'same-key', undefined, undefined, { productIds: ['1'], productReferences: [{ productId: '1', offset: 2 }] }), e => e.getStatus() === 409);
-});
-test('all-missing batch is a recorded preparation failure, not a forced refusal', async () => {
-  const f = fixture(); const result = await f.preparer.prepare('哪个适合卧室？', ['missing-a','missing-b'], [], configuration());
-  assert.equal(result.entries[0].outcome.result.errorCode, 'product_not_found');
-  assert.deepEqual(result.entries[0].outcome.result.data.missingProductIds, ['missing-a','missing-b']);
-  assert.equal(result.products.length, 0); assert.equal(result.evidence.length, 1);
 });
 test('truncated tool content still becomes a reference, without duplicating the canonical detail', () => {
   const p = product('1'); const context = new ContextBuilder().build({ question: '如何使用？', summary: '', recentHistory: [], nativeTranscript: true, products: [p], toolResults: [{ tool: 'get_product_detail', productRef: p.id, result: JSON.stringify(p).slice(0, 100) + '[tool_result_truncated]' }] });

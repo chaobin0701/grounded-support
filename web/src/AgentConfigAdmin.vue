@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Bot, ChevronDown, ChevronUp, LockKeyhole, Plus, RefreshCw, Save, Trash2 } from '@lucide/vue';
 import { adminApi, AdminApiError, type AgentConfigurationView, type AgentEditableConfiguration } from './admin-api';
-import { advancedMemoryFields, memoryFields, runtimeFields, toggleCapability, validateAgentSettings } from './agent-settings-form';
+import { runtimeFields, toggleCapability, validateAgentSettings } from './agent-settings-form';
 import AdminPageHeader from './ui/AdminPageHeader.vue';
 import UiDialog from './ui/UiDialog.vue';
 import ToastNotice from './ui/ToastNotice.vue';
@@ -43,7 +43,7 @@ async function save() {
   attempted.value = true;
   const invalid = Object.keys(errors.value);
   if (invalid.length) {
-    const first = invalid[0]; tab.value = first.startsWith('memory.') || first.startsWith('welcome.') ? 'memory' : first.startsWith('runtime.') ? 'advanced' : 'basic';
+    const first = invalid[0]; tab.value = first.startsWith('welcome.') ? 'basic' : first.startsWith('memory.') ? 'memory' : first.startsWith('runtime.') ? 'advanced' : 'basic';
     error.value = '请检查标出的字段；高级记忆字段可在折叠区域中查看。'; return;
   }
   const id = ++requestId; saving.value = true; error.value = ''; conflict.value = false;
@@ -123,10 +123,7 @@ onUnmounted(() => { requestId++; removeNavigationGuard(); window.removeEventList
               <label class="full">基本人设<textarea v-model="draft.identity.persona" rows="4" maxlength="8000" :aria-invalid="!!visibleError('identity.persona')" @blur="touched['identity.persona'] = true" /><small class="field-error">{{ visibleError('identity.persona') }}</small></label>
               <label class="full">基础业务指导<textarea v-model="draft.answeringInstructions" rows="9" maxlength="12000" :aria-invalid="!!visibleError('answeringInstructions')" @blur="touched['answeringInstructions'] = true" /><small>基础问答始终由默认提示词处理。专项 Skill 按需读取，不必预选。</small><small class="field-error">{{ visibleError('answeringInstructions') }}</small></label>
             </div>
-          </template>
-
-          <template v-else-if="tab === 'memory'">
-            <div class="agent-section-head"><h2>首轮对话</h2></div>
+            <div class="agent-section-head separated"><h2>首轮对话</h2><p>配置新会话首次打开时展示的标题、说明和推荐问题。</p></div>
             <div class="agent-welcome-grid"><div class="agent-form-grid">
               <label class="full">欢迎标题<input v-model="draft.welcome.title" maxlength="200" :aria-invalid="!!visibleError('welcome.title')" @blur="touched['welcome.title'] = true" /><small class="field-error">{{ visibleError('welcome.title') }}</small></label>
               <label class="full">欢迎说明<textarea v-model="draft.welcome.description" rows="2" maxlength="500" :aria-invalid="!!visibleError('welcome.description')" @blur="touched['welcome.description'] = true" /><small class="field-error">{{ visibleError('welcome.description') }}</small></label>
@@ -135,15 +132,11 @@ onUnmounted(() => { requestId++; removeNavigationGuard(); window.removeEventList
                 <small class="field-error">{{ visibleError('welcome.suggestedQuestions') }}</small><p class="agent-hint">1–6 条，每条 2–200 个字符。</p>
               </div>
             </div><aside class="agent-welcome-preview"><small>首轮效果预览</small><strong>{{ draft.welcome.title || '欢迎标题' }}</strong><p>{{ draft.welcome.description }}</p><ul><li v-for="(question, index) in draft.welcome.suggestedQuestions" :key="index">{{ question || '推荐问题' }}</li></ul></aside></div>
+          </template>
+
+          <template v-else-if="tab === 'memory'">
             <div class="agent-section-head separated"><h2>会话记忆</h2></div>
-            <div class="agent-capability-grid" aria-label="工具资料记忆">
-              <article class="agent-capability"><div class="agent-capability-head"><div><h3>跨轮复用工具资料</h3></div><label class="agent-toggle"><input v-model="draft.memory.toolResults.enabled" type="checkbox" role="switch" aria-label="跨轮复用工具资料" /></label></div><p>模型调用和被动预加载的资料统一恢复。关闭不删除记录，也不影响本轮工具结果。</p></article>
-              <article class="agent-capability"><div class="agent-capability-head"><div><h3>复用产品详情</h3></div><label class="agent-toggle"><input v-model="draft.memory.toolResults.products" type="checkbox" role="switch" aria-label="复用产品详情" :disabled="!draft.memory.toolResults.enabled" /></label></div><p>版本未变且产品仍可用时复用，不需要每轮重新引用产品。</p></article>
-              <article class="agent-capability"><div class="agent-capability-head"><div><h3>复用知识库片段</h3></div><label class="agent-toggle"><input v-model="draft.memory.toolResults.knowledge" type="checkbox" role="switch" aria-label="复用知识库片段" :disabled="!draft.memory.toolResults.enabled" /></label></div><p>只恢复仍可检索的原始片段；新问题仍可补充检索。</p></article>
-            </div>
-            <p class="agent-hint">沿用历史轨迹读取窗口，并受资料字符预算限制。已更新、停用、归档的资料不会作为有效记忆恢复。</p>
-            <div class="agent-form-grid"><label v-for="field in memoryFields" :key="field.key">{{ field.label }}<input v-model.number="draft.memory[field.key]" type="number" :min="field.min" :max="field.max" step="1" :aria-invalid="!!visibleError(`memory.${field.key}`)" @blur="touched[`memory.${field.key}`] = true" /><small>{{ field.hint }}</small><small class="field-error">{{ visibleError(`memory.${field.key}`) }}</small></label></div>
-            <details class="agent-detail" :open="attempted && (!!errors['memory.summaryInstructions'] || advancedMemoryFields.some(field => errors[`memory.${field.key}`]))"><summary>高级记忆设置<ChevronDown :size="14" /></summary><div class="agent-form-grid"><label v-for="field in advancedMemoryFields" :key="field.key">{{ field.label }}<input v-model.number="draft.memory[field.key]" type="number" :min="field.min" :max="field.max" step="1" :aria-invalid="!!visibleError(`memory.${field.key}`)" @blur="touched[`memory.${field.key}`] = true" /><small>{{ field.hint }}</small><small class="field-error">{{ visibleError(`memory.${field.key}`) }}</small></label><label class="full">摘要指导<textarea v-model="draft.memory.summaryInstructions" rows="5" maxlength="8000" @blur="touched['memory.summaryInstructions'] = true" /><small class="field-error">{{ visibleError('memory.summaryInstructions') }}</small></label></div></details>
+            <div class="agent-note"><strong>上下文管理：自动管理</strong><p>系统根据当前模型服务的上下文窗口和最大输出 tokens，动态计算输入预算，并在规划、工具执行后和最终回答前自动整理上下文。</p><p>当前模型：{{ configuration.model.contextWindowTokens.toLocaleString() }} tokens 上下文 / {{ configuration.model.maxOutputTokens.toLocaleString() }} tokens 最大输出。</p><p>产品详情、知识库片段和跨轮工具资料默认复用，并根据资料有效性、优先级和剩余预算自动保留或压缩。</p></div>
           </template>
 
           <template v-else-if="tab === 'capabilities'">

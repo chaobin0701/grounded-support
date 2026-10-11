@@ -20,14 +20,7 @@ export interface AgentConfigurationView {
   responseStyle: { tone: 'professional' | 'friendly' | 'concise'; detail: 'brief' | 'balanced' | 'detailed' };
   enabledSkills: string[];
   settings: AgentEditableConfiguration;
-  memory: {
-    toolResults: { enabled: boolean; products: boolean; knowledge: boolean };
-    recentTurns: number; snapshotTurns: number;
-    transcriptMaxMessages: number; transcriptMaxTraces: number;
-    summaryTriggerTurns: number; summaryKeepRecentTurns: number;
-    summaryMaxChars: number; summaryBatchMaxMessages: number;
-    summaryInstructions: string;
-  };
+  memory: Record<string, never>;
   welcome: { title: string; description: string; suggestedQuestions: string[] };
   answerInstructions: string;
   model: { name: string; contextWindowTokens: number; maxOutputTokens: number };
@@ -223,7 +216,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
     dataSource?: string;
     toolCalls?: { name: string; arguments: Record<string, unknown>; ok: boolean; durationMs: number }[];
     executionSteps?: {
-      type: 'agent_setup' | 'skill_loaded' | 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
+      type: 'skill_loaded' | 'skill_selection' | 'preflight' | 'llm_call' | 'tool_call' | 'validation';
       stage: 'planning' | 'final_answer' | 'tool' | 'answer_guard';
       skillId?: string;
       selectedBy?: string;
@@ -232,6 +225,7 @@ export interface ChatTraceDetail extends ChatTraceItem {
       retrievalMode?: string;
       name?: string;
       model?: string;
+      origin?: 'preload' | 'model';
       ok: boolean;
       durationMs: number;
       inputTokens?: number | null;

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { ProductDetail } from '../tools/product-catalog/product-catalog.service';
 import type { SearchHit } from '../../documents/fuse-search-results';
 import type { ToolResult } from '../tools/tool-result';
+import { hasToolCapability } from '../tools/tool-capabilities';
 
 // Only explicitly declared, bounded business fields can become model memory.
 // This is not a dump of arbitrary tool payloads, credentials or instructions.
@@ -40,8 +41,8 @@ export function evidenceDigest(hit: SearchHit): string {
     hit.originalFilename, hit.content, hit.sourceStartLine, hit.sourceEndLine])).digest('hex');
 }
 export function canUseContextSource(source: string, allowedTools: readonly string[]): boolean {
-  return allowedTools.includes(source) || (['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(source)
-    && allowedTools.some(name => ['get_product_detail', 'mcp_product_catalog_get_product_detail'].includes(name)));
+  return allowedTools.includes(source) || (hasToolCapability(source, 'product-detail')
+    && allowedTools.some(name => hasToolCapability(name, 'product-detail')));
 }
 export function productResources(result: ToolResult): ContextResource[] {
   if (!result.success) return [];

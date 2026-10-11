@@ -41,7 +41,7 @@ export class McpModule implements OnModuleInit, OnApplicationShutdown {
         toolName: event.toolName,
         ...(event.errorCode ? { errorCode: event.errorCode } : {}),
       });
-    }, plugin.toolPlanning?.[tool.name], plugin.toolContextProjectors?.[tool.name]));
+    }, plugin.toolPlanning?.[tool.name], plugin.toolContextProjectors?.[tool.name], plugin.toolCapabilities?.[tool.name]));
   }
 
   async onApplicationShutdown(): Promise<void> { await this.plugins.stopAll(); }

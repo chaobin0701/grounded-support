@@ -65,6 +65,24 @@ API_PROXY_TARGET=http://127.0.0.1:3000
 
 `API_PROXY_TARGET` 仅用于开发和预览代理，配置变动需重启开发进程。旧 `VITE_ASSISTANT_URL` 已移除并不再读取；助手始终留在本官网。不要在前端环境变量放入密钥。
 
+### 本地启动速查
+
+推荐在仓库根目录启动统一热更新监督器：
+
+```bash
+node scripts/dev-supervisor.mjs
+```
+
+它只启动 Docker 数据库，并运行 API `3000`、后台/聊天前端 `8848` 和 Worker；官网需要另开终端：
+
+```bash
+cd website
+npm ci                 # 首次运行
+npm run dev            # 官网 http://localhost:8849
+```
+
+官网的 `/api/*` 会代理到 `http://127.0.0.1:3000`，例如 `http://localhost:8849/api/chat/quota`。如果修改了 `API_PROXY_TARGET`，需要重启官网进程；不要把 `8081` 作为本地 API 地址，8081 是 Docker Web 映射端口，不是当前热更新 API。
+
 后端仍执行来源白名单校验。父项目开发监督进程的 `ALLOWED_ORIGINS` 已补充官网 8849 与构建预览 8850（localhost 和 127.0.0.1）；使用其他域名部署时需显式加入对应官网来源。不要通过移除 Origin 请求头或关闭校验绕过这一边界。
 
 ## 验证和静态发布

@@ -9,9 +9,9 @@ const nativeCall = z.object({
 const finalResponse = z.object({
   type: z.literal('final'),
   status: z.enum(['answered', 'refused']),
-  answer: z.string().trim().min(1).max(1200),
-  citationIds: z.array(z.number().int()).max(5),
-  productIds: z.array(z.string()).max(10),
+  answer: z.string().trim().min(1),
+  citationIds: z.array(z.number().int()),
+  productIds: z.array(z.string()),
 }).strict();
 
 export class AgentProtocolError extends Error {
@@ -28,10 +28,10 @@ export type AgentModelResponse =
 
 // Commentary is optional public copy, never raw content or a reasoning field.
 // A malformed/missing commentary must not prevent a valid native call.
-function publicCommentary(value: unknown, calls: readonly LlmToolCall[]): string | undefined {
+export function publicCommentary(value: unknown, calls: readonly LlmToolCall[] = []): string | undefined {
   if (typeof value !== 'string') return undefined;
   const text = value.trim();
-  if (!text || text.length > 160 || /[<>\u0000-\u001f]|DSML|reasoning_content|tool_calls|productId|citationIds|api[_ -]?key|authorization|https?:\/\/|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/iu.test(text)) return undefined;
+  if (!text || /[<>\u0000-\u001f]|DSML|reasoning_content|tool_calls|productId|citationIds|api[_ -]?key|authorization|https?:\/\/|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}/iu.test(text)) return undefined;
   if (calls.some(call => text.includes(call.name) || Object.entries(call.arguments).some(([key, value]) => /id$|key|token|secret|authorization/iu.test(key) && typeof value === 'string' && value.length >= 4 && text.includes(value)))) return undefined;
   return text;
 }

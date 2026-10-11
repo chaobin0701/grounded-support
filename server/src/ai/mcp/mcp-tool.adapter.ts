@@ -5,6 +5,7 @@ import type { ToolContext } from '../tools/tool-context';
 import type { ToolResult } from '../tools/tool-result';
 import type { McpClientAdapter } from './mcp-client.adapter';
 import type { ContextProjector } from '../context/context-contribution';
+import type { AgentToolCapability } from '../tools/tool-capabilities';
 
 export type McpToolEvent = {
   type: 'started' | 'completed' | 'failed';
@@ -13,12 +14,13 @@ export type McpToolEvent = {
   errorCode?: string;
 };
 
-export function adaptMcpTool(pluginId: string, client: McpClientAdapter, tool: McpTool, onEvent?: (event: McpToolEvent, context: ToolContext) => void, planning?: AgentToolPlanning, contributeContext?: ContextProjector): AgentTool {
+export function adaptMcpTool(pluginId: string, client: McpClientAdapter, tool: McpTool, onEvent?: (event: McpToolEvent, context: ToolContext) => void, planning?: AgentToolPlanning, contributeContext?: ContextProjector, capabilities?: readonly AgentToolCapability[]): AgentTool {
   const name = `mcp_${pluginId}_${tool.name}`;
   return {
     name,
     description: tool.description ?? `MCP tool ${tool.name}`,
     inputSchema: jsonSchemaToZod(tool.inputSchema),
+    ...(capabilities ? { capabilities } : {}),
     ...(planning ? { planning } : {}),
     ...(contributeContext ? { contributeContext } : {}),
     async execute(input: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {

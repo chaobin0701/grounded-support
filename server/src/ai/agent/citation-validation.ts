@@ -13,8 +13,8 @@ export function validateAnswer(raw: string, hits: SearchHit[]): ChatAnswer {
   }
   if (!parsed || typeof parsed !== 'object') return refusal;
   const result = parsed as Record<string, unknown>;
-  if (result.status !== 'answered' || typeof result.answer !== 'string' || !result.answer.trim() || result.answer.length > 1200) return refusal;
-  if (!Array.isArray(result.citationIds) || result.citationIds.length === 0 || result.citationIds.length > 5) return refusal;
+  if (result.status !== 'answered' || typeof result.answer !== 'string' || !result.answer.trim()) return refusal;
+  if (!Array.isArray(result.citationIds) || result.citationIds.length === 0) return refusal;
   const byId = new Map(hits.map((hit) => [hit.chunkId, hit]));
   const ids = result.citationIds;
   if (ids.some((id) => !Number.isInteger(id) || !byId.has(id))) return refusal;

@@ -17,14 +17,14 @@ export function validateAgentAnswer(
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     if (parsed.status === 'refused') {
-      return typeof parsed.answer === 'string' && parsed.answer.trim() && parsed.answer.length <= 1200
+      return typeof parsed.answer === 'string' && parsed.answer.trim()
         ? { answer: parsed.answer.trim(), refused: true, citations: [] }
         : refusal;
     }
-    if (parsed.status !== 'answered' || typeof parsed.answer !== 'string' || !parsed.answer.trim() || parsed.answer.length > 1200) return refusal;
+    if (parsed.status !== 'answered' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) return refusal;
     const citationIds = parsed.citationIds;
     const productIds = parsed.productIds;
-    if (!Array.isArray(citationIds) || !Array.isArray(productIds) || citationIds.length > 5 || productIds.length > 10) return refusal;
+    if (!Array.isArray(citationIds) || !Array.isArray(productIds)) return refusal;
     const byProduct = new Map(products.map((product) => [product.id, product]));
 
     // This first version validates the response protocol only. The model may

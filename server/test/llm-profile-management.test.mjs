@@ -63,9 +63,9 @@ test('connection test uses unsaved form values without creating or activating a 
   assert.equal(f.sent[0].apiKey, 'new-api-key'); assert.equal(f.sent[0].timeoutMs, 45000);
   assert.equal(f.sent[1].maxTokens, 64); assert.equal(f.calls.length, 0); assert.equal(f.activated.length, 0);
   assert.deepEqual(result.capabilities, { nativeTools: true, structuredOutput: true });
-  assert.equal(f.sent.length, 3); assert.deepEqual(f.sent[1].responseFormat, { type: 'json_object' });
+  assert.equal(f.sent.length, 3); assert.equal(f.sent[1].responseFormat.type, 'json_schema');
   assert.deepEqual(f.sent[2].toolChoice, { name: 'connection_probe' });
-  assert.deepEqual(f.sent[2].responseFormat, { type: 'json_object' });
+  assert.equal(f.sent[2].responseFormat.type, 'json_schema');
 });
 test('connection capabilities reject text-only endpoints, legacy calls and malformed native arguments without activating anything', async () => {
   for (const options of [{ content: '连接成功' }, { content: '{"message":"错误内容"}' }, { toolCalls: [] }, { toolCalls: [{ id: '1', name: 'connection_probe', arguments: { probe: 'wrong' } }] }]) {

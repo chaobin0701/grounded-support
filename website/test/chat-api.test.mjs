@@ -15,6 +15,18 @@ test('公开说明是独立事件；不会拼入最终回答，历史与 done �
     assert.deepEqual((await chatApi.messages('conversation'))[0].progressEvents, [commentary]);
   } finally { globalThis.fetch = original; }
 });
+test('规划说明可以逐段接收，并按同一 ID 合并为一条安全事件', async () => {
+  const lines = [];
+  const text = [
+    'event: commentary_started\ndata: {"id":"planner-1-commentary"}',
+    'event: commentary_delta\ndata: {"id":"planner-1-commentary","text":"我先查看"}',
+    'event: commentary_delta\ndata: {"id":"planner-1-commentary","text":"产品资料。"}',
+    'event: commentary_completed\ndata: {"id":"planner-1-commentary","text":"我先查看产品资料。"}',
+    `event: done\ndata: ${JSON.stringify({ ...answer, progressEvents: [{ type: 'commentary', id: 'planner-1-commentary', text: '我先查看产品资料。' }] })}`,
+  ].join('\n\n');
+  await readAnswerStream(response(`${text}\n\n`, true), { delta: () => {}, progress: () => {}, started: () => {}, commentary: event => lines.push(event) });
+  assert.deepEqual(lines.map(item => item.text), ['我先查看', '我先查看产品资料。']);
+});
 const event = {
   type: "progress",
   id: "tool-start",

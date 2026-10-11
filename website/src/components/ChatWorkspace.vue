@@ -15,6 +15,7 @@ import ChatHistoryMenu from "./ChatHistoryMenu.vue";
 import ChatMarkdown from "./ChatMarkdown.vue";
 import ChatWelcome from "./ChatWelcome.vue";
 import ChatQuota from "./ChatQuota.vue";
+import ChatContext from "./ChatContext.vue";
 import ProductReferencePicker from "./ProductReferencePicker.vue";
 import InlineComposer from "./InlineComposer.vue";
 import UserMessageContent from "./UserMessageContent.vue";
@@ -295,7 +296,7 @@ onBeforeUnmount(() => {
             重新连接
           </button>
         </div>
-        <div class="chat-toolbar" aria-label="会话操作与额度">
+        <div class="chat-toolbar" aria-label="会话操作、额度与上下文">
           <template v-if="mode === 'full'">
             <button
               v-if="chat.hasContent()"
@@ -309,6 +310,7 @@ onBeforeUnmount(() => {
             <ChatHistoryMenu />
           </template>
           <ChatQuota />
+          <ChatContext />
         </div>
         <form class="chat-composer" :class="{ 'chat-composer--compact': compactComposer, 'chat-composer--with-products': state.products.length }" @submit.prevent="send">
           <InlineComposer ref="composer" :id="`chat-input-${mode}`" :text="state.draft" :products="state.products"

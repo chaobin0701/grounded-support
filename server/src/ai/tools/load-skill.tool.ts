@@ -10,6 +10,7 @@ const inputSchema = z.object({ skillId: z.string().regex(/^[a-z][a-z0-9_]{0,79}$
 @Injectable()
 export class LoadSkillTool implements AgentTool<z.infer<typeof inputSchema>> {
   readonly name = 'load_skill';
+  readonly capabilities = ['skill'] as const;
   readonly description = '按需读取可用专项 Skill 的详细指导。普通问答和产品查询可直接执行，不必先加载；只能使用可用 Skill 摘要中列出的 skillId。';
   readonly inputSchema = inputSchema;
   readonly planning = { canBatch: false, dependency: '需要使用专项指导时单独读取，再根据内容决定后续动作。' };

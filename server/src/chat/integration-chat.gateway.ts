@@ -41,7 +41,7 @@ export class IntegrationChatGateway {
   }
 
   publicResult(result: PublicAgentResult): PublicAgentResult {
-    const { conversationId, runId, traceId, status, answer, refused, citations, usage, progressEvents } = result;
-    return { conversationId, runId, traceId, status, answer, refused, citations, ...(usage ? { usage } : {}), ...(progressEvents ? { progressEvents } : {}) };
+    const { conversationId, runId, traceId, status, answer, refused, citations, usage, context, progressEvents } = result;
+    return { conversationId, runId, traceId, status, answer, refused, citations, ...(usage ? { usage } : {}), ...(context ? { context } : {}), ...(progressEvents ? { progressEvents } : {}) };
   }
 }

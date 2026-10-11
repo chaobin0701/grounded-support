@@ -70,7 +70,7 @@ Idempotency-Key: <每次新请求唯一，重试复用同一个>
 
 同一应用、用户、Idempotency-Key 的已完成请求返回同一结果，不再次调用模型或计入应用配额。修改问题或输入 conversationId 后复用同一个 key 返回 409；运行中的请求返回 409；失败 / 过期后使用新的 key 重试。删除会话后原请求不能重放。无 key 时服务端生成随机值，调用方应主动提供 key，尤其是首条消息。
 
-`stream: true` 返回 SSE：`run_started` → 可选的 `commentary` 和公开 `progress` → `answer_started` → 原生 `answer_delta` → `answer_completed` → `done`。每个工具批次的模型公开说明在工具开始前发送，形如 `{"type":"commentary","id":"planner-1-tools-commentary","text":"我先查看产品目录。"}`，应独立显示，不拼入答案。它不是内部推理，也不是工具执行结果；不要据此判断步骤已成功。不同决策可能跳过部分事件（例如直接回答或拒答）。`done.progressEvents` 和历史消息保留公开过程；重放只返回完成结果，不伪造逐字流。流开始后失败发 `error`；`model_protocol_error`（502）表示模型响应协议异常，不是业务拒答。连接断开不表示取消执行，可通过运行接口恢复状态。
+`stream: true` 返回 SSE：`run_started` → 可选的 `commentary_started` / `commentary_delta` / `commentary_completed` 和公开 `progress` → `answer_started` → 原生 `answer_delta` → `answer_completed` → `done`。每个工具批次的模型公开说明在工具开始前按同一 ID 分段发送，例如 `commentary_delta` 的数据为 `{"id":"planner-1-commentary","text":"我先查看"}`，应独立显示，不拼入答案。它不是内部推理，也不是工具执行结果；不要据此判断步骤已成功。原生工具参数、内部调用 ID 和未解析 JSON 不进入客户端。不同决策可能跳过部分事件（例如直接回答或拒答）。`done.progressEvents` 和历史消息保留合并后的公开过程；重放只返回完成结果，不伪造逐字流。流开始后失败发 `error`；`model_protocol_error`（502）表示模型响应协议异常，不是业务拒答。连接断开不表示取消执行，可通过运行接口恢复状态。
 
 POST SSE 使用 `fetch` / `ReadableStream`，而不是只支持 GET 的浏览器 EventSource。
 

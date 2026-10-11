@@ -150,11 +150,10 @@ Idempotency-Key: <本次问题的唯一请求标识>
 - 使用产品接口返回的准确 ID，不是会话 UUID。每个 ID 为 1–80 个字符，去除首尾空格并自动去重，最多 5 个不同产品；超过返回 400。
 - 产品 ID 表示本轮关联，不会永久绑定会话。不接受客户端价格、规格、工具结果或提示词。未传或空数组保持普通聊天行为。
 - 新的前端应把产品名称保留在 message（Cookie 接口为 question）正文中，并可附加 `productReferences: [{ "productId": "xiaomi-electric-warmer", "offset": 8, "length": 5 }]`。例如正文 `这个产品怎么样\n米家电暖器` 的名称从位置 8 开始、长度 5；前端将该范围的现有文字渲染为标签，不额外插入名称。offset/length 使用完整正文的 UTF-16 单位，从 0 开始，必须为整数，length 为 1–200；范围不可越界或重叠。名称属于提问文字，不是可信产品事实，不必强制换行。
-- 每个 productId 必须属于 productIds 且只能引用一次，最多 5 个。历史仅 offset（没有 length）的引用继续采用旧的插入标签语义；仅传 productIds 也兼容。位置和样式不改变产品事实来源或预加载规则。
-- 完成鉴权、额度和幂等检查后，服务端在第一次模型调用前准备产品详情与当前问题的知识库资料。只复用同一会话中完整且目录版本有效的详情；产品变更、删除或停用后不使用旧详情。
-- 同一版本的详情在模型上下文中只保留一份；新问题仍会检索相关资料，模型可以补充工具调用。多个缺失详情合并为一次数据库读取，加一次检索共占两次执行预算；复用详情不占新执行次数。预加载遵守现有工具权限、超时和单轮调用预算，无效产品或准备失败会记录到轨迹，不直接触发拒答。
+- 每个 productId 必须属于 productIds 且只能引用一次，最多 5 个。历史仅 offset（没有 length）的引用继续采用旧的插入标签语义；仅传 productIds 也兼容。位置和样式不改变产品事实来源；productIds 只作为结构化上下文提供给模型。
+- 完成鉴权、额度和幂等检查后，服务端不会根据 productIds 预先查询产品或知识库。模型会自行判断是否调用 get_product_detail；该工具支持 productId，或使用最多 5 个 productIds 一次查询多个产品。
 - 幂等比较包含产品 ID 集合及可选引用位置和长度；仅 productIds 的顺序和重复不影响重放，但同一 key 换产品、移动引用位置或改变长度返回 409。刷新或重试须保留原正文与 context；旧的未确认请求不得换成新格式后使用同一 key 重发。
-- 历史用户消息的 `context` 返回 productIds、可选 productReferences 和已确认产品的名称，便于还原标签；运行记录也返回请求 context。完整预加载结果、版本、复用状态和耗时仅在管理员轨迹中查看。
+- 历史用户消息的 `context` 返回 productIds、可选 productReferences 和已确认产品的名称，便于还原标签；产品事实必须来自模型实际工具调用或已恢复的有效工具资料。
 - 现有 Cookie 聊天接口 `/api/chat` 及其会话消息/SSE 接口使用 `question` 而非 `message`，同样支持此 context。
 
 ```json
@@ -166,6 +165,15 @@ Idempotency-Key: <本次问题的唯一请求标识>
   "answer": "产品介绍……",
   "refused": false,
   "citations": [],
+  "context": {
+    "contextWindowTokens": 32000,
+    "inputBudgetTokens": 29200,
+    "estimatedInputTokens": 14500,
+    "remainingInputTokens": 14700,
+    "usagePercent": 49.7,
+    "pressure": "normal",
+    "measurementSource": "heuristic"
+  },
   "usage": {
     "inputTokens": 1000,
     "outputTokens": 100,
@@ -182,6 +190,7 @@ Idempotency-Key: <本次问题的唯一请求标识>
 - `traceId`、`runId` 可能为 null。排查时可把完整 conversationId / traceId 交给有调试权限的管理员。
 - `citations` 为资料来源数组，可能为空。知识库来源可包含 chunkId、documentId、documentTitle、originalFilename、sourceStartLine、sourceEndLine。
 - `usage` 是本次响应时的用量快照，摘要异步完成后可能更新；不要把同一请求的多个快照重复累加。
+- `context` 是本轮最终上下文的近似估算，不等同于供应商 Token 账单；可使用 `estimatedInputTokens / inputBudgetTokens` 展示当前占用。
 - `accounting` 为 actual（已知实际用量）、pending（尚有预留）或 incomplete（用量不完整）；includesSummary 标识当前统计是否已包含摘要调用。
 
 ## SSE 流式回答
@@ -192,14 +201,17 @@ Idempotency-Key: <本次问题的唯一请求标识>
 | --- | --- |
 | run_started | conversationId、clientRequestId、replayed；立即保存会话 ID 和请求标识 |
 | progress | 公开的阶段、状态、简短说明；仅作为过程提示，不拼进答案 |
-| commentary | `{ "type": "commentary", "id": "planner-1-tools-commentary", "text": "我先查看产品目录。" }`；模型生成的公开操作说明，在原生工具执行前发送，独立展示，不拼进答案 |
+| commentary_started | `{ "id": "planner-1-commentary" }`；说明开始，初始化同一 ID 的缓冲区 |
+| commentary_delta | `{ "id": "planner-1-commentary", "text": "我先查看" }`；模型生成的公开说明增量，按 ID 追加，不拼进答案 |
+| commentary_completed | `{ "id": "planner-1-commentary", "text": "我先查看产品目录。" }`；说明完整内容，前端可用它校准增量文本 |
+| commentary | 兼容旧客户端的完整公开说明事件；新客户端优先处理 `commentary_*` 事件 |
 | answer_started | 回答开始及引用信息 |
 | answer_delta | `{ "text": "增量文本" }`；逐段追加到回答 |
 | answer_completed | 回答文本生成结束及引用信息；仍等待 done |
 | done | 完整结果，结构同 JSON 响应；以 answer 校准最终文本并完成本轮 |
 | error | status、message，可附 code、retryAt；标记未完成并停止本轮 UI 加载状态 |
 
-根据模型决策，部分中间事件可能缺省。`commentary` 不代表步骤已成功，不是内部推理；说明缺失不影响执行。`done.progressEvents` 与历史消息保留公开过程。`model_protocol_error`（502）表示模型响应协议异常，与模型主动拒答不同。幂等重放可以直接返回 done，不伪造 answer_delta。不能把一次网络读取当作一个事件，也不能把 TCP 分块当作一个完整汉字。
+根据模型决策，部分中间事件可能缺省。`commentary_*` 不代表步骤已成功，不是内部推理；说明缺失不影响执行。原生工具参数、内部调用 ID 和未解析 JSON 不会进入客户端 SSE。`done.progressEvents` 与历史消息保留合并后的公开过程。`model_protocol_error`（502）表示模型响应协议异常，与模型主动拒答不同。幂等重放可以直接返回 done，不伪造 answer_delta。不能把一次网络读取当作一个事件，也不能把 TCP 分块当作一个完整汉字。
 
 下面的读取函数处理 UTF-8 拆包、跨块事件、多行 data 和 LF / CRLF 分隔；不依赖人为延时。
 

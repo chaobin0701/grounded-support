@@ -14,6 +14,7 @@ const inputSchema = z.object({
 @Injectable()
 export class KnowledgeSearchTool implements AgentTool<z.infer<typeof inputSchema>> {
   readonly name = 'search_knowledge';
+  readonly capabilities = ['knowledge-search'] as const;
   readonly description = '查询已上传的商家资料，只返回资料中可以验证的内容。';
   readonly inputSchema = inputSchema;
   readonly planning = { canBatch: true } as const;

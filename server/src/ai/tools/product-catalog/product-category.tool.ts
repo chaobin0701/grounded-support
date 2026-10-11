@@ -8,6 +8,7 @@ import { ProductCatalogService } from './product-catalog.service';
 @Injectable()
 export class ProductCategoryTool implements AgentTool<Record<string, never>> {
   readonly name = 'list_product_categories';
+  readonly capabilities = ['product-category'] as const;
   readonly description = '读取官网产品目录中的全部产品分类。只读、数据库数据。';
   readonly inputSchema = z.object({});
   readonly planning = { canBatch: true } as const;

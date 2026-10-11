@@ -31,12 +31,19 @@ export class AgentApiController {
       response.flushHeaders();
       const send = (event: string, data: unknown) => { if (!response.destroyed && !response.writableEnded) response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
       send('run_started', { conversationId: prepared.admission.conversationId, clientRequestId: prepared.admission.clientRequestId, replayed: Boolean(prepared.admission.cached) });
+      const commentaryIds = new Set<string>();
+      const startCommentary = (id: string) => {
+        if (commentaryIds.has(id)) return;
+        commentaryIds.add(id);
+        send('commentary_started', { id });
+      };
       try {
         const result = await this.gateway.execute(prepared, this.requestId(request), {
           onAnswerStarted: metadata => send('answer_started', metadata),
           onAnswerDelta: text => send('answer_delta', { text }),
           onProgress: event => send('progress', event),
-          onCommentary: event => send('commentary', event),
+          onCommentaryDelta: ({ id, text }) => { startCommentary(id); send('commentary_delta', { id, text }); },
+          onCommentary: ({ id, text }) => { startCommentary(id); send('commentary_completed', { id, text }); },
         });
         send('answer_completed', { citations: result.citations });
         send('done', this.gateway.publicResult(result));

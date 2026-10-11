@@ -60,7 +60,17 @@ export class AgentSettingsService implements OnModuleInit {
 
   private fromRow(row: Row): AgentConfigurationSnapshot {
     const configuration = parseAgentConfiguration(row.configuration);
-    if (storedAgentConfigurationRevision(row.configuration) !== row.revision) throw new Error('Agent settings revision mismatch');
+    const calculatedRevision = storedAgentConfigurationRevision(row.configuration);
+    // Rows written before dynamic memory management contain the removed
+    // memory fields. Their historical revision was calculated by the old
+    // schema/parser, so it cannot be reproduced after normalization. Keep
+    // the row readable and let the next explicit save rewrite it canonically.
+    const rawMemory = row.configuration && typeof row.configuration === 'object' && !Array.isArray(row.configuration)
+      ? (row.configuration as Record<string, unknown>).memory
+      : undefined;
+    const legacyMemory = rawMemory && typeof rawMemory === 'object' && !Array.isArray(rawMemory)
+      && Object.keys(rawMemory).some(key => key !== 'toolResults');
+    if (calculatedRevision !== row.revision && !legacyMemory) throw new Error('Agent settings revision mismatch');
     return Object.freeze({ configuration, revision: row.revision, configurationVersion: row.version,
       updatedAt: new Date(row.updatedAt).toISOString(), updatedBy: row.updatedBy });
   }
