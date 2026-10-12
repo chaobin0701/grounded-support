@@ -112,7 +112,8 @@ async function main() {
       console.log('\n[pm2] 2. Building server and running migrations...');
       run(npmCommand, ['run', 'build'], serverRoot);
       try {
-        run(npmCommand, ['run', 'db:migrate'], serverRoot);
+        const dbUrl = dotEnv.DATABASE_URL || process.env.DATABASE_URL || `postgres://${dotEnv.POSTGRES_USER || 'grounded'}:${dotEnv.POSTGRES_PASSWORD || 'grounded-local-only-2026'}@127.0.0.1:${dotEnv.POSTGRES_PORT || '5433'}/${dotEnv.POSTGRES_DB || 'grounded_support'}`;
+        run(npmCommand, ['run', 'db:migrate'], serverRoot, { ...process.env, ...dotEnv, DATABASE_URL: dbUrl });
       } catch (err) {
         console.warn('[pm2] Warning: db:migrate failed, continuing anyway...');
       }
