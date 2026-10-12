@@ -15,6 +15,6 @@ export default defineConfig(({ mode }) => {
     plugins: [vue()],
     build: { assetsInlineLimit: 0 },
     server: { host: "127.0.0.1", port: 8849, strictPort: true, proxy },
-    preview: { proxy },
+    preview: { host: "0.0.0.0", port: 8849, strictPort: true, proxy },
   };
 });

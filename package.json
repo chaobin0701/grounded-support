@@ -1,0 +1,17 @@
+{
+  "name": "grounded-support-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-supervisor.mjs",
+    "prod:start": "node scripts/pm2-supervisor.mjs start",
+    "prod:stop": "node scripts/pm2-supervisor.mjs stop",
+    "prod:restart": "node scripts/pm2-supervisor.mjs restart",
+    "prod:reload": "node scripts/pm2-supervisor.mjs reload",
+    "prod:status": "node scripts/pm2-supervisor.mjs status",
+    "prod:logs": "node scripts/pm2-supervisor.mjs logs",
+    "build": "npm --prefix server run build && npm --prefix web run build && npm --prefix website run build",
+    "test": "npm --prefix server run test && npm --prefix web run test && npm --prefix website run test"
+  }
+}

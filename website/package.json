@@ -10,7 +10,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:once": "vite",
     "build": "vue-tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1 --port 8850 --strictPort",
+    "preview": "vite preview",
     "test": "node --experimental-strip-types --test test/*.test.mjs"
   },
   "dependencies": {

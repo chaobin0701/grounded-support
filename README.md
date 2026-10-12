@@ -59,26 +59,46 @@ cp .env.example .env
 
 至少设置 `.env` 中的 `POSTGRES_PASSWORD` 和长度不少于 32 字节的 `JWT_SECRET`。要使用实际模型回答和向量检索，还需在后台配置相应服务，或填写本地模型／Embedding 环境变量；不要将密钥提交到 Git。
 
-**Docker 启动后台服务：**
+### 方式一：本地生产常驻运行（推荐 · PM2 守护）
+
+适合需要**长期稳定运行、免去繁重 Docker 编译、关闭终端依然在线**的场景。原生极速构建（几秒完成），内存占用极低（仅数百兆），支持进程守护与崩溃自启：
+
+```bash
+# 1. 首次准备依赖
+cd server && npm ci && cd ../web && npm ci && cd ../website && npm ci && cd ..
+
+# 2. 一键编译并以 PM2 后台常驻启动（API、Worker、管理后台、企业官网）
+npm run prod:start
+```
+
+- **企业官网**：[http://localhost:8849](http://localhost:8849)
+- **管理后台**：[http://localhost:8848/admin](http://localhost:8848/admin)
+- **常用管理命令**：
+  - `npm run prod:status`：查看所有服务运行状态
+  - `npm run prod:logs`：查看实时日志
+  - `npm run prod:restart`：重启服务
+  - `npm run prod:stop`：停止服务
+
+> **数据库提示**：该模式下数据库可直接使用轻量 Docker 数据库（`docker compose up -d postgres`），亦可在 `.env` 中配置云端数据库（如 Supabase / Neon 等自带 pgvector 的 Serverless PG，免本地数据库进程）。首次使用后台可执行 `cd server && npm run admin:bootstrap` 创建初始管理员。
+
+### 方式二：本地热更新开发（实时编码调试）
+
+适合日常修改代码、需要 Vite / TypeScript 热重载的开发场景：
+
+```bash
+node scripts/dev-supervisor.mjs
+```
+
+监督进程保持 API、Worker 和 `web` 热更新在线（管理后台位于 [http://localhost:8848/admin](http://localhost:8848/admin)）。另开终端运行 `cd website && npm run dev` 启动企业官网（[http://localhost:8849](http://localhost:8849)）。
+
+### 方式三：全容器 Docker 模式（完整容器化交付）
 
 ```bash
 docker compose up --build -d
 docker compose ps
 ```
 
-打开 [http://localhost:8081](http://localhost:8081/)；管理后台位于 `/admin`。首次使用后台时，运行 `docker compose run --rm -it api node dist/admin/bootstrap.js` 创建超级管理员。此命令仅在管理员表为空时有效。
-
-**本地热更新开发：**
-
-```bash
-cd server && npm ci
-cd ../web && npm ci
-cd ../website && npm ci
-cd ..
-node scripts/dev-supervisor.mjs
-```
-
-开发监督进程使用 Docker 数据库，保持 API、Worker 和 `web` 在线；管理后台访问 [http://localhost:8848/admin](http://localhost:8848/admin)。另开终端运行 `cd website && npm run dev`，企业官网访问 [http://localhost:8849](http://localhost:8849/)；官网的产品和对话依赖 API 在线。详细启动步骤见[本地开发说明](docs/local-development.md)，开发与生产部署细节见 [官网说明](website/README.md) 和 [生产部署文档](docs/production-deployment.md)。
+打开 [http://localhost:8081](http://localhost:8081/)；管理后台位于 `/admin`。详细启动步骤见[本地开发说明](docs/local-development.md)，开发与生产部署细节见 [官网说明](website/README.md) 和 [生产部署文档](docs/production-deployment.md)。
 
 ## 关键流程
 

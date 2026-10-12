@@ -6,7 +6,8 @@
   "scripts": {
     "build": "vue-tsc --noEmit && vite build",
     "dev": "vite",
-    "test": "node --experimental-strip-types --test test/*.test.mjs"
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "preview": "vite preview"
   },
   "dependencies": {
     "@lobehub/icons-static-svg": "1.95.1",
