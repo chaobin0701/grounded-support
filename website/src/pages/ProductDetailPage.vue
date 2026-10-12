@@ -12,6 +12,7 @@ const product = ref<Product | null>(null);
 const loading = ref(true);
 const error = ref("");
 const source = computed(() => safeUrl(product.value?.sourceUrl));
+const manual = computed(() => safeUrl(product.value?.specifications?.["电子说明书"]));
 const productBrand = computed(() =>
   product.value?.brand === "Midea"
     ? "美的"
@@ -67,6 +68,13 @@ onBeforeUnmount(() => controller?.abort());
               rel="noopener noreferrer"
               class="button button-primary"
               >查看官方资料 <ArrowUpRight :size="18" /></a
+            ><a
+              v-if="manual"
+              :href="manual"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="button button-outline"
+              ><BookOpen :size="18" /> 电子说明书</a
             ><button
               type="button"
               @click="chat.openWidget({ id: product.id, name: product.name })"
@@ -80,7 +88,7 @@ onBeforeUnmount(() => controller?.abort());
       <div class="detail-info">
         <section v-reveal>
           <p class="eyebrow">了解产品</p>
-          <h2>产品介绍</h2>
+          <h2>产品介绍与使用指南</h2>
           <RichDescription
             v-if="product.description"
             :text="product.description"
@@ -96,7 +104,16 @@ onBeforeUnmount(() => controller?.abort());
           <dl class="spec-list">
             <div v-for="(value, label) in product.specifications" :key="label">
               <dt>{{ label }}</dt>
-              <dd>{{ value }}</dd>
+              <dd v-if="String(label) === '电子说明书' && safeUrl(value)">
+                <a
+                  :href="safeUrl(value)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="text-link"
+                  >官方支持与说明书 <ArrowUpRight :size="14"
+                /></a>
+              </dd>
+              <dd v-else>{{ value }}</dd>
             </div>
           </dl>
           <p v-if="!Object.keys(product.specifications).length">
