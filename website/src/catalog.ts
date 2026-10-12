@@ -22,6 +22,18 @@ export function safeUrl(value: unknown): string {
   }
 }
 
+export function safeManualUrl(value: unknown): string {
+  if (typeof value !== "string" || !value) return "";
+  if (
+    value.startsWith("/manuals/") &&
+    value.endsWith(".pdf") &&
+    !value.includes("..")
+  ) {
+    return value;
+  }
+  return safeUrl(value);
+}
+
 export function isProduct(value: unknown): value is Product {
   if (!value || typeof value !== "object") return false;
   const p = value as Record<string, unknown>;

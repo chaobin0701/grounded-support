@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { ArrowLeft, ArrowUpRight, BookOpen } from "@lucide/vue";
-import { fetchProduct, safeUrl, type Product } from "../catalog";
+import { fetchProduct, safeManualUrl, type Product } from "../catalog";
 import { chat } from "../chat/service";
 import ProductImage from "../components/ProductImage.vue";
 import RichDescription from "../components/RichDescription.vue";
@@ -11,7 +11,11 @@ const route = useRoute();
 const product = ref<Product | null>(null);
 const loading = ref(true);
 const error = ref("");
-const source = computed(() => safeUrl(product.value?.sourceUrl));
+const manual = computed(
+  () =>
+    safeManualUrl(product.value?.specifications?.["电子说明书"]) ||
+    (product.value?.id ? `/manuals/${encodeURIComponent(product.value.id)}.pdf` : "")
+);
 const productBrand = computed(() =>
   product.value?.brand === "Midea"
     ? "美的"
@@ -61,12 +65,12 @@ onBeforeUnmount(() => controller?.abort());
           </p>
           <div class="detail-actions">
             <a
-              v-if="source"
-              :href="source"
+              v-if="manual"
+              :href="manual"
               target="_blank"
-              rel="noopener noreferrer"
+              download
               class="button button-primary"
-              >查看官方资料 <ArrowUpRight :size="18" /></a
+              ><BookOpen :size="18" /> 电子说明书</a
             ><button
               type="button"
               @click="chat.openWidget({ id: product.id, name: product.name })"
@@ -80,12 +84,12 @@ onBeforeUnmount(() => controller?.abort());
       <div class="detail-info">
         <section v-reveal>
           <p class="eyebrow">了解产品</p>
-          <h2>产品介绍</h2>
+          <h2>产品介绍与使用指南</h2>
           <RichDescription
             v-if="product.description"
             :text="product.description"
           />
-          <p v-else>暂无更详细的描述，请查看官方资料。</p>
+          <p v-else>暂无更详细的描述。</p>
           <RouterLink to="/support#documents" class="text-link"
             ><BookOpen :size="17" />查阅使用与服务资料 <ArrowUpRight :size="16"
           /></RouterLink>
@@ -96,7 +100,16 @@ onBeforeUnmount(() => controller?.abort());
           <dl class="spec-list">
             <div v-for="(value, label) in product.specifications" :key="label">
               <dt>{{ label }}</dt>
-              <dd>{{ value }}</dd>
+              <dd v-if="String(label) === '电子说明书' && safeManualUrl(value)">
+                <a
+                  :href="safeManualUrl(value)"
+                  target="_blank"
+                  download
+                  class="text-link"
+                  >下载电子说明书 (PDF) <ArrowUpRight :size="14"
+                /></a>
+              </dd>
+              <dd v-else>{{ value }}</dd>
             </div>
           </dl>
           <p v-if="!Object.keys(product.specifications).length">
