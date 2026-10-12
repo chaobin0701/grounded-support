@@ -184,7 +184,7 @@ test("正文移除重复注释说明，Footer 声明与产品事实入口保留"
   assert.match(app, /无合作或代理关系/);
   assert.match(app, /设计参考/);
   const detail = await read("src/pages/ProductDetailPage.vue");
-  assert.match(detail, /查看官方资料/);
+  assert.match(detail, /电子说明书/);
   assert.match(detail, /价格以官方渠道为准/);
   assert.match(detail, /productBrand/);
 });

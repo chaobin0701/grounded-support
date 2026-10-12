@@ -27,8 +27,8 @@ INSERT INTO catalog_products (
 电机+支柱组件 ×1、风扇组件（前网/风叶/后网） ×1、底座 ×1、底座螺栓 ×1、风扇专用螺栓扳手 ×1、网罩旋钮 ×1、电源线 ×1、使用说明书 ×1。',
   '¥289',
   'https://i1.mifile.cn/f/i/16/chain/airfan1x/specs-airfan1x-01.jpg',
-  'https://www.mi.com/airfan1x/specs',
-  '{"官方型号":"BPLDS01DM","额定功率":"15 W","额定电压":"220 V / 50 Hz","最大风量":"23.1 m³/min","最低噪音":"26.6 dB(A)","净重":"2.8 kg","摆头角度":"水平 140° / 俯仰 39°","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"BPLDS01DM","额定功率":"15 W","额定电压":"220 V / 50 Hz","最大风量":"23.1 m³/min","最低噪音":"26.6 dB(A)","净重":"2.8 kg","摆头角度":"水平 140° / 俯仰 39°","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"/manuals/xiaomi-fan-1x.pdf"}'::jsonb,
   1, true
 ),
 (
@@ -54,8 +54,8 @@ INSERT INTO catalog_products (
 电饭煲主机 ×1、大金涂层内胆 ×1、可立式饭勺 ×1、粥勺 ×1、量杯 ×1、食品级蒸笼 ×1、电源线 ×1、使用说明书 ×1。',
   '¥399',
   'https://c1.mifile.cn/f/i/16/chain/dianfanguo2/dfg2-info-head-4l.jpg',
-  'https://www.mi.com/dianfanbao2/specs',
-  '{"官方型号":"IHFB01CM","额定容积":"3.0 L","额定功率":"1130 W","加热方式":"IH 电磁加热","内胆材质":"合金烈火厚釜（大金PFA涂层）","净重":"4.4 kg","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"IHFB01CM","额定容积":"3.0 L","额定功率":"1130 W","加热方式":"IH 电磁加热","内胆材质":"合金烈火厚釜（大金PFA涂层）","净重":"4.4 kg","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"/manuals/xiaomi-ih-rice-cooker-3l.pdf"}'::jsonb,
   2, true
 ),
 (
@@ -79,8 +79,8 @@ INSERT INTO catalog_products (
 电水壶壶体 ×1、360°旋转电源底座 ×1、使用说明书 ×1。',
   '¥99',
   'https://c1.mifile.cn/f/i/16/chain/electric-kettle/kettle-specs.jpg',
-  'https://www.mi.com/electric-kettle/specs',
-  '{"官方型号":"MJDSH01YM","额定容量":"1.5 L","额定功率":"1800 W","额定电压":"220 V / 50 Hz","内胆材质":"食品接触级 304 不锈钢","净重":"1.1 kg","尺寸":"216 × 152 × 252 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJDSH01YM","额定容量":"1.5 L","额定功率":"1800 W","额定电压":"220 V / 50 Hz","内胆材质":"食品接触级 304 不锈钢","净重":"1.1 kg","尺寸":"216 × 152 × 252 mm","电子说明书":"/manuals/xiaomi-electric-kettle.pdf"}'::jsonb,
   3, true
 ),
 (
@@ -105,8 +105,8 @@ INSERT INTO catalog_products (
 恒温电水壶主机 ×1、电源加热底座 ×1、使用说明书 ×1。',
   '¥199',
   'https://c1.mifile.cn/f/i/16/chain/kettle/box-info.jpg',
-  'https://www.mi.com/kettle/specs',
-  '{"官方型号":"YM-K1501","额定容量":"1.5 L","额定功率":"1800 W","连接方式":"蓝牙 4.0 BLE","保温范围":"40℃ - 90℃（最长12小时）","净重":"1.24 kg","尺寸":"204 × 145 × 235 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"YM-K1501","额定容量":"1.5 L","额定功率":"1800 W","连接方式":"蓝牙 4.0 BLE","保温范围":"40℃ - 90℃（最长12小时）","净重":"1.24 kg","尺寸":"204 × 145 × 235 mm","电子说明书":"/manuals/xiaomi-smart-kettle.pdf"}'::jsonb,
   4, true
 ),
 (
@@ -131,8 +131,8 @@ INSERT INTO catalog_products (
 电磁炉主机 ×1、可拆卸硅胶防滑防溢圈 ×1、使用说明书 ×1。',
   '¥299',
   'https://c1.mifile.cn/f/i/16/chain/induction-cooker/specs-1.jpg',
-  'https://www.mi.com/induction-cooker/specs',
-  '{"官方型号":"DCL01CM","额定功率":"2100 W","额定电压":"220 V / 50 Hz","火力档位":"99 档可调","能效等级":"3 级","净重":"约 2.1 kg","尺寸":"280 × 265 × 70 mm","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"DCL01CM","额定功率":"2100 W","额定电压":"220 V / 50 Hz","火力档位":"99 档可调","能效等级":"3 级","净重":"约 2.1 kg","尺寸":"280 × 265 × 70 mm","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"/manuals/xiaomi-induction-cooker.pdf"}'::jsonb,
   5, true
 ),
 (
@@ -159,8 +159,8 @@ INSERT INTO catalog_products (
 扫地机器人主机 ×1、充电座 ×1、电源线 ×1、尘盒主刷清理割刀 ×1、使用说明书 ×1。',
   '¥1,699',
   'https://c1.mifile.cn/f/i/16/chain/miuav/wrj-download.jpg',
-  'https://www.mi.com/roomrobot/specs',
-  '{"官方型号":"SDJQR01RR","主机额定功率":"55 W","最大吸力":"1800 Pa","电池容量":"5200 mAh (14.4V 锂离子电池)","尘盒容量":"420 mL","净重":"约 3.8 kg","主机尺寸":"345 × 345 × 96 mm","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"SDJQR01RR","主机额定功率":"55 W","最大吸力":"1800 Pa","电池容量":"5200 mAh (14.4V 锂离子电池)","尘盒容量":"420 mL","净重":"约 3.8 kg","主机尺寸":"345 × 345 × 96 mm","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","电子说明书":"/manuals/xiaomi-robot-vacuum.pdf"}'::jsonb,
   6, true
 ),
 (
@@ -184,8 +184,8 @@ INSERT INTO catalog_products (
 吸尘器主机 ×1、金属延长接杆 ×1、软绒电动地刷 ×1、电动除螨刷 ×1、缝隙吸头 ×1、二合一毛刷 ×1、挂墙充电收纳支架 ×1、电源适配器 ×1、使用说明书 ×1。',
   '¥1,299',
   'https://c1.mifile.cn/f/i/16/chain/vacuum-cleaner/specs-1.jpg',
-  'https://www.mi.com/vacuum-cleaner/specs',
-  '{"官方型号":"SCWXCQ01RR","额定功率":"350 W","额定电压":"21.6 V","最大吸入功率":"100 AW","电池容量":"2500 mAh","主机净重":"约 1.5 kg","续航时间":"标准模式约 30 分钟 / MAX 模式约 6 分钟","充电时间":"约 3.5 小时","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"SCWXCQ01RR","额定功率":"350 W","额定电压":"21.6 V","最大吸入功率":"100 AW","电池容量":"2500 mAh","主机净重":"约 1.5 kg","续航时间":"标准模式约 30 分钟 / MAX 模式约 6 分钟","充电时间":"约 3.5 小时","电子说明书":"/manuals/xiaomi-handheld-vacuum.pdf"}'::jsonb,
   7, true
 ),
 (
@@ -214,8 +214,8 @@ INSERT INTO catalog_products (
 台灯主机 ×1、电源适配器 ×1、使用说明书 ×1。',
   '¥179',
   'https://c1.mifile.cn/f/i/16/chain/mjsmartlamp-1s/specs-main.jpg',
-  'https://www.mi.com/mjsmartlamp-1s/specs',
-  '{"官方型号":"MJTD01SYL","光通量":"520 lm","显色指数":"Ra90","色温范围":"2600 K – 5000 K","亮度范围":"1% – 100%","额定功率":"9 W (42颗×0.5W/LED模块)","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","智能生态":"米家 App / Apple HomeKit","净重":"约 800 g","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJTD01SYL","光通量":"520 lm","显色指数":"Ra90","色温范围":"2600 K – 5000 K","亮度范围":"1% – 100%","额定功率":"9 W (42颗×0.5W/LED模块)","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","智能生态":"米家 App / Apple HomeKit","净重":"约 800 g","电子说明书":"/manuals/xiaomi-desk-lamp-1s.pdf"}'::jsonb,
   8, true
 ),
 (
@@ -238,8 +238,8 @@ INSERT INTO catalog_products (
 床头灯主机 ×1、电源适配器 ×1、使用说明书 ×1。',
   '¥169',
   'https://c1.mifile.cn/f/i/16/chain/mj-bedsidelamp2/specs-1.jpg',
-  'https://www.mi.com/mj-bedsidelamp2/specs',
-  '{"官方型号":"MJCTD02YL","光通量":"480 lm（3500K、最大亮度）","显色指数":"Ra80","色彩调节":"WRGB 全彩","色温调节":"1700 K – 6500 K","额定功率":"9 W","连接方式":"Wi-Fi 2.4GHz + 蓝牙 4.2 BLE","支持生态":"米家 App / Apple HomeKit","净重":"约 780 g","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJCTD02YL","光通量":"480 lm（3500K、最大亮度）","显色指数":"Ra80","色彩调节":"WRGB 全彩","色温调节":"1700 K – 6500 K","额定功率":"9 W","连接方式":"Wi-Fi 2.4GHz + 蓝牙 4.2 BLE","支持生态":"米家 App / Apple HomeKit","净重":"约 780 g","电子说明书":"/manuals/xiaomi-bedside-lamp-2.pdf"}'::jsonb,
   9, true
 ),
 (
@@ -263,8 +263,8 @@ INSERT INTO catalog_products (
 感应夜灯主机 ×1、3M安装胶垫 ×1、挂绳 ×1、5号(AA)碱性电池 ×3、使用说明书 ×1。',
   '¥49',
   'https://c1.mifile.cn/f/i/16/chain/nightlight/mj-nightlight-specs.jpg',
-  'https://www.mi.com/nightlight/specs',
-  '{"官方型号":"MJYD01YL","色温":"2700 K 暖黄光","亮度档位":"低档 0.7 lm / 高档 3.8 lm","感应范围":"正前 5-7 米，角度 120°","供电方式":"3 节 AA (5号) 碱性电池","额定功率":"0.25 W","工作温度":"-10℃ ~ +40℃","尺寸":"直径 84 × 厚 36 mm","净重":"141 g (含电池)","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJYD01YL","色温":"2700 K 暖黄光","亮度档位":"低档 0.7 lm / 高档 3.8 lm","感应范围":"正前 5-7 米，角度 120°","供电方式":"3 节 AA (5号) 碱性电池","额定功率":"0.25 W","工作温度":"-10℃ ~ +40℃","尺寸":"直径 84 × 厚 36 mm","净重":"141 g (含电池)","电子说明书":"/manuals/xiaomi-motion-nightlight.pdf"}'::jsonb,
   10, true
 ),
 (
@@ -292,8 +292,8 @@ INSERT INTO catalog_products (
 摄像机主机 ×1、电源适配器 ×1、电源连接线 ×1、挂墙配件包（底座/螺丝） ×1、使用说明书 ×1。',
   '¥199',
   'https://c1.mifile.cn/f/i/16/chain/camera-360/specs.jpg',
-  'https://www.mi.com/camera-360/specs',
-  '{"官方型号":"MJSXJ05CM","分辨率":"1920 × 1080 (1080p)","镜头光圈":"F2.1","视角范围":"水平 360° / 垂直 96°","本地存储":"MicroSD 卡（最大支持 64GB，Class 10）","视频编码":"H.265","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","净重":"239 g","尺寸":"118 × 78 × 78 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJSXJ05CM","分辨率":"1920 × 1080 (1080p)","镜头光圈":"F2.1","视角范围":"水平 360° / 垂直 96°","本地存储":"MicroSD 卡（最大支持 64GB，Class 10）","视频编码":"H.265","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","净重":"239 g","尺寸":"118 × 78 × 78 mm","电子说明书":"/manuals/xiaomi-camera-360-1080p.pdf"}'::jsonb,
   11, true
 ),
 (
@@ -317,8 +317,8 @@ INSERT INTO catalog_products (
 温湿度计主机 ×1、磁吸墙贴支架 ×1、7号 (AAA) 碱性电池 ×1、使用说明书 ×1。',
   '¥69',
   'https://c1.mifile.cn/f/i/16/chain/mj-humiture/mj-humiture-specs.jpg',
-  'https://www.mi.com/mj-humiture/specs',
-  '{"官方型号":"LYWSDCGQ/01ZM","屏幕尺寸":"1.78 英寸 LCD","温度测量范围":"-9.9℃ ～ 60.0℃ (误差 ±0.3℃)","湿度测量范围":"0% ～ 99.9% RH (误差 ±3%)","供电电池":"1 节 AAA (7号) 电池","连接方式":"蓝牙 4.0 BLE","尺寸":"60.8 × 60.8 × 22.5 mm","净重":"43 g","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"LYWSDCGQ/01ZM","屏幕尺寸":"1.78 英寸 LCD","温度测量范围":"-9.9℃ ～ 60.0℃ (误差 ±0.3℃)","湿度测量范围":"0% ～ 99.9% RH (误差 ±3%)","供电电池":"1 节 AAA (7号) 电池","连接方式":"蓝牙 4.0 BLE","尺寸":"60.8 × 60.8 × 22.5 mm","净重":"43 g","电子说明书":"/manuals/xiaomi-bluetooth-thermohygrometer.pdf"}'::jsonb,
   12, true
 ),
 (
@@ -342,8 +342,8 @@ INSERT INTO catalog_products (
 电暖器主机 ×1、底座支撑脚架 ×2、安装螺丝 ×4、内六角螺丝刀 ×1、使用说明书 ×1。',
   '¥299',
   'https://c1.mifile.cn/f/i/16/chain/warmer-electric/specs-1.jpg',
-  'https://www.mi.com/warmer-electric/specs',
-  '{"官方型号":"KRDNQ01ZM","额定功率":"2200 W (高档) / 1500 W (中档)","额定电压":"220 V / 50 Hz","适用面积":"10 – 20 ㎡","防护等级":"IPX4 防水","控制方式":"机身触控 + 米家 App + 小爱语音","净重":"约 5.3 kg","尺寸":"780 × 526 × 216 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"KRDNQ01ZM","额定功率":"2200 W (高档) / 1500 W (中档)","额定电压":"220 V / 50 Hz","适用面积":"10 – 20 ㎡","防护等级":"IPX4 防水","控制方式":"机身触控 + 米家 App + 小爱语音","净重":"约 5.3 kg","尺寸":"780 × 526 × 216 mm","电子说明书":"/manuals/xiaomi-electric-warmer.pdf"}'::jsonb,
   13, true
 ),
 (
@@ -372,7 +372,7 @@ INSERT INTO catalog_products (
   '¥1,499',
   'https://c1.mifile.cn/f/i/16/chain/airpro/airpro-02.jpg',
   'https://www.mi.com/airpro',
-  '{"官方型号":"AC-M3-CA","颗粒物 CADR":"500 m³/h","甲醛 CADR":"200 m³/h","适用面积":"35 – 60 ㎡","额定功率":"66 W","显示屏幕":"OLED 屏幕带三色指示灯环","传感器":"激光颗粒物传感器 + 温湿度传感器","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","净重":"约 9.7 kg","尺寸":"735 × 260 × 260 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  '{"官方型号":"AC-M3-CA","颗粒物 CADR":"500 m³/h","甲醛 CADR":"200 m³/h","适用面积":"35 – 60 ㎡","额定功率":"66 W","显示屏幕":"OLED 屏幕带三色指示灯环","传感器":"激光颗粒物传感器 + 温湿度传感器","连接方式":"Wi-Fi IEEE 802.11 b/g/n 2.4GHz","净重":"约 9.7 kg","尺寸":"735 × 260 × 260 mm","电子说明书":"/manuals/xiaomi-air-purifier-pro.pdf"}'::jsonb,
   14, true
 ),
 (
@@ -398,8 +398,8 @@ INSERT INTO catalog_products (
 新风机主机 ×1、墙面固定挂板 ×1、进风风管组件 ×1、防雨风帽 ×1、初效滤网 ×1、中效滤芯 ×1、高效滤芯 ×1、电源线 ×1、使用说明书 ×1。',
   '¥2,699',
   'https://i1.mifile.cn/f/i/16/chain/fresh-air-ventilator/specs-01.jpg',
-  'https://www.mi.com/fresh-air-ventilator/specs',
-  '{"官方型号":"MJXFJ-300-G1","额定风量":"300 m³/h","辅热功率":"800 W","额定总功率":"842 W","适用面积":"≤ 105 ㎡","最大噪声":"≤ 36 dB(A)（睡眠档低至 20.4 dB）","传感器类型":"激光粉尘传感器 + 红外 CO2 传感器","整机净重":"约 16 kg","尺寸":"970 × 365 × 230 mm","电子说明书":"https://www.mi.com/service/support/"}'::jsonb,
+  NULL,
+  '{"官方型号":"MJXFJ-300-G1","额定风量":"300 m³/h","辅热功率":"800 W","额定总功率":"842 W","适用面积":"≤ 105 ㎡","最大噪声":"≤ 36 dB(A)（睡眠档低至 20.4 dB）","传感器类型":"激光粉尘传感器 + 红外 CO2 传感器","整机净重":"约 16 kg","尺寸":"970 × 365 × 230 mm","电子说明书":"/manuals/xiaomi-fresh-air-ventilator.pdf"}'::jsonb,
   15, true
 )
 ON CONFLICT (id) DO UPDATE SET
